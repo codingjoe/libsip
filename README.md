@@ -106,6 +106,18 @@ asyncio.run(main())
 and automatically handle digest authentication challenges (RFC 3261 §22). Once registered,
 inbound INVITE requests are dispatched exactly as with `IncomingCallProtocol`.
 
+**Authentication flow:**
+
+1. On `connection_made`, `register()` is called automatically, sending an unauthenticated
+   `REGISTER` request.
+2. The carrier typically responds with `401 Unauthorized` (or `407 Proxy Auth Required`),
+   including a `WWW-Authenticate` (or `Proxy-Authenticate`) Digest challenge.
+3. `RegisterProtocol` computes the MD5 digest response from the challenge parameters and
+   your credentials, then automatically resends the `REGISTER` with an `Authorization`
+   (or `Proxy-Authorization`) header.
+4. On a `200 OK` response, `registered()` is called — override it to react.
+5. Inbound `INVITE` requests received after registration are dispatched to `invite_received`.
+
 ```python
 import asyncio
 
@@ -133,7 +145,7 @@ async def main():
     await loop.create_datagram_endpoint(
         lambda: MyProtocol(
             server_addr=("sip.carrier.example", 5060),
-            aor="sip:youruser@carrier.example",
+            aor="sip:youruser@carrier.example",    # your SIP Address of Record
             username="youruser",
             password="yourpassword",
         ),
@@ -148,8 +160,11 @@ asyncio.run(main())
 `RegisterProtocol` exposes:
 
 - `register()` — sends a REGISTER request (called automatically on connection).
-- `registered()` — called when the carrier confirms registration; override to react.
+- `registered()` — called when the carrier confirms registration (200 OK); override to react.
 - All `IncomingCallProtocol` methods (`invite_received`, `create_call`, etc.).
+
+The `aor` parameter is your SIP Address of Record, e.g. `sip:user@carrier.example`.
+The domain part is used as the Request-URI for the REGISTER request.
 
 #### Whisper transcription
 
