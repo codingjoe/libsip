@@ -1,6 +1,6 @@
 """Tests for SIP message parsing and serialization."""
 
-from sip.messages import Request, Response, parse
+from sip.messages import Request, Response, SIPMessage
 
 
 class TestRequest:
@@ -63,7 +63,7 @@ class TestParse:
             b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
             b"\r\n"
         )
-        result = parse(data)
+        result = SIPMessage.parse(data)
         assert isinstance(result, Request)
         assert result.method == "INVITE"
         assert result.uri == "sip:bob@biloxi.com"
@@ -76,7 +76,7 @@ class TestParse:
     def test_parse__request__with_body(self):
         """Parse a SIP request with a body from bytes."""
         data = b"INVITE sip:bob@biloxi.com SIP/2.0\r\nContent-Length: 4\r\n\r\ntest"
-        result = parse(data)
+        result = SIPMessage.parse(data)
         assert isinstance(result, Request)
         assert result.body == b"test"
 
@@ -87,7 +87,7 @@ class TestParse:
             b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
             b"\r\n"
         )
-        result = parse(data)
+        result = SIPMessage.parse(data)
         assert isinstance(result, Response)
         assert result.status_code == 200
         assert result.reason == "OK"
@@ -100,7 +100,7 @@ class TestParse:
     def test_parse__response__with_body(self):
         """Parse a SIP response with a body from bytes."""
         data = b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest"
-        result = parse(data)
+        result = SIPMessage.parse(data)
         assert isinstance(result, Response)
         assert result.body == b"test"
 
@@ -111,7 +111,7 @@ class TestParse:
             uri="sip:registrar.biloxi.com",
             headers={"From": "sip:bob@biloxi.com"},
         )
-        assert parse(bytes(request)) == request
+        assert SIPMessage.parse(bytes(request)) == request
 
     def test_parse__roundtrip_response(self):
         """Round-trip a SIP response through parse and bytes."""
@@ -120,4 +120,4 @@ class TestParse:
             reason="Not Found",
             headers={"From": "sip:bob@biloxi.com"},
         )
-        assert parse(bytes(response)) == response
+        assert SIPMessage.parse(bytes(response)) == response
