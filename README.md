@@ -100,6 +100,57 @@ asyncio.run(main())
   incoming RTP audio.
 - `reject(status_code, reason)` – sends a non-2xx response (default `486 Busy Here`).
 
+#### Carrier registration and inbound calls
+
+`RegisterProtocol` extends `IncomingCallProtocol` to register with a carrier's SIP server
+and automatically handle digest authentication challenges (RFC 3261 §22). Once registered,
+inbound INVITE requests are dispatched exactly as with `IncomingCallProtocol`.
+
+```python
+import asyncio
+
+from sip.calls import IncomingCall, RegisterProtocol
+
+
+class MyCall(IncomingCall):
+    def audio_received(self, data: bytes) -> None:
+        print(f"Received {len(data)} bytes of Opus audio")
+
+
+class MyProtocol(RegisterProtocol):
+    def registered(self) -> None:
+        print("Registered with carrier — ready to receive calls")
+
+    def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
+        asyncio.create_task(call.answer())
+
+    def create_call(self, request, addr) -> MyCall:
+        return MyCall(request, addr, self.send)
+
+
+async def main():
+    loop = asyncio.get_running_loop()
+    await loop.create_datagram_endpoint(
+        lambda: MyProtocol(
+            server_addr=("sip.carrier.example", 5060),
+            aor="sip:youruser@carrier.example",
+            username="youruser",
+            password="yourpassword",
+        ),
+        local_addr=("0.0.0.0", 5060),
+    )
+    await asyncio.Future()  # run until cancelled
+
+
+asyncio.run(main())
+```
+
+`RegisterProtocol` exposes:
+
+- `register()` — sends a REGISTER request (called automatically on connection).
+- `registered()` — called when the carrier confirms registration; override to react.
+- All `IncomingCallProtocol` methods (`invite_received`, `create_call`, etc.).
+
 #### Whisper transcription
 
 Install with the `whisper` extra to transcribe calls using
@@ -125,7 +176,7 @@ class TranscribedCall(WhisperCall):
 
 class MyProtocol(IncomingCallProtocol):
     def create_call(self, request, addr) -> TranscribedCall:
-        return TranscribedCall(request, addr, self._transport, model="base")
+        return TranscribedCall(request, addr, self.send, model="base")
 
     def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
         asyncio.create_task(call.answer())

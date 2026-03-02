@@ -1,10 +1,18 @@
 """Tests for SIP call handling."""
 
 import asyncio
+import hashlib
 from unittest.mock import MagicMock
 
 import pytest
-from sip.calls import IncomingCall, IncomingCallProtocol, RTPProtocol
+from sip.calls import (
+    IncomingCall,
+    IncomingCallProtocol,
+    RegisterProtocol,
+    RTPProtocol,
+    _digest_response,
+    _parse_auth_challenge,
+)
 from sip.messages import Message, Request, Response
 
 
@@ -339,3 +347,284 @@ class TestIncomingCallProtocol:
         protocol.connection_made(MagicMock())
         call = protocol.create_call(make_invite(), ("192.0.2.1", 5060))
         assert isinstance(call, CustomCall)
+
+
+def make_register_protocol(
+    server_addr=("192.0.2.2", 5060),
+    aor="sip:alice@example.com",
+    username="alice",
+    password="test-password",  # noqa: S107
+) -> RegisterProtocol:
+    """Return a RegisterProtocol without triggering connection_made."""
+    return RegisterProtocol(server_addr, aor, username, password)
+
+
+class TestParseAuthChallenge:
+    def test_parses_realm_and_nonce(self):
+        """Parse realm and nonce from a Digest challenge header."""
+        header = 'Digest realm="example.com", nonce="abc123"'
+        params = _parse_auth_challenge(header)
+        assert params["realm"] == "example.com"
+        assert params["nonce"] == "abc123"
+
+    def test_parses_qop(self):
+        """Parse qop value from a Digest challenge header."""
+        header = 'Digest realm="example.com", nonce="abc", qop="auth"'
+        params = _parse_auth_challenge(header)
+        assert params["qop"] == "auth"
+
+    def test_parses_opaque(self):
+        """Parse opaque value from a Digest challenge header."""
+        header = 'Digest realm="r", nonce="n", opaque="xyz"'
+        params = _parse_auth_challenge(header)
+        assert params["opaque"] == "xyz"
+
+    def test_empty_header_returns_empty_dict(self):
+        """Return an empty dict for an empty or missing header value."""
+        assert _parse_auth_challenge("") == {}
+
+
+class TestDigestResponse:
+    def test_no_qop(self):
+        """Compute correct MD5 digest without qop per RFC 2617."""
+        ha1 = hashlib.md5(b"alice:example.com:test-password").hexdigest()  # noqa: S324
+        ha2 = hashlib.md5(b"REGISTER:sip:example.com").hexdigest()  # noqa: S324
+        expected = hashlib.md5(f"{ha1}:nonce123:{ha2}".encode()).hexdigest()  # noqa: S324
+        result = _digest_response(
+            username="alice",
+            password="test-password",  # noqa: S106
+            realm="example.com",
+            nonce="nonce123",
+            method="REGISTER",
+            uri="sip:example.com",
+        )
+        assert result == expected
+
+    def test_with_qop_auth(self):
+        """Compute correct MD5 digest with qop=auth per RFC 2617."""
+        ha1 = hashlib.md5(b"alice:example.com:test-password").hexdigest()  # noqa: S324
+        ha2 = hashlib.md5(b"REGISTER:sip:example.com").hexdigest()  # noqa: S324
+        expected = hashlib.md5(  # noqa: S324
+            f"{ha1}:nonce123:00000001:cnonce1:auth:{ha2}".encode()
+        ).hexdigest()
+        result = _digest_response(
+            username="alice",
+            password="test-password",  # noqa: S106
+            realm="example.com",
+            nonce="nonce123",
+            method="REGISTER",
+            uri="sip:example.com",
+            qop="auth",
+            nc="00000001",
+            cnonce="cnonce1",
+        )
+        assert result == expected
+
+
+class TestRegisterProtocol:
+    def test_registrar_uri__strips_user_from_aor(self):
+        """Derive registrar URI from AOR by stripping the user part."""
+        p = make_register_protocol(aor="sip:alice@example.com")
+        assert p._registrar_uri == "sip:example.com"
+
+    def test_registrar_uri__preserves_port(self):
+        """Preserve a non-default port in the derived registrar URI."""
+        p = make_register_protocol(aor="sip:alice@example.com:5080")
+        assert p._registrar_uri == "sip:example.com:5080"
+
+    def test_connection_made__sends_register(self):
+        """Send a REGISTER request immediately after connection is made."""
+        p = make_register_protocol()
+        transport = MagicMock()
+        p.connection_made(transport)
+        transport.sendto.assert_called_once()
+        data, addr = transport.sendto.call_args[0]
+        assert b"REGISTER sip:example.com SIP/2.0" in data
+        assert addr == ("192.0.2.2", 5060)
+
+    def test_register__includes_required_headers(self):
+        """REGISTER request includes From, To, Call-ID, CSeq, Contact and Expires."""
+        p = make_register_protocol()
+        transport = MagicMock()
+        p.connection_made(MagicMock())
+        p._transport = transport
+        transport.reset_mock()
+        p.register()
+        data, _ = transport.sendto.call_args[0]
+        assert b"From: sip:alice@example.com" in data
+        assert b"To: sip:alice@example.com" in data
+        assert b"Contact: <sip:alice@example.com>" in data
+        assert b"Expires: 3600" in data
+
+    def test_register__increments_cseq(self):
+        """CSeq increments with each REGISTER sent."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        assert p._cseq == 1
+        p.register()
+        assert p._cseq == 2
+
+    def test_register__with_authorization(self):
+        """Authorization header is included when credentials are provided."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        p.register(authorization='Digest username="alice"')
+        data, _ = transport.sendto.call_args[0]
+        assert b'Authorization: Digest username="alice"' in data
+
+    def test_register__with_proxy_authorization(self):
+        """Proxy-Authorization header is included for proxy challenges."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        p.register(proxy_authorization='Digest username="alice"')
+        data, _ = transport.sendto.call_args[0]
+        assert b'Proxy-Authorization: Digest username="alice"' in data
+
+    def test_response_received__200_ok_calls_registered(self):
+        """Receiving 200 OK for REGISTER triggers registered()."""
+        calls = []
+
+        class ConcreteProtocol(RegisterProtocol):
+            def registered(self):
+                calls.append(True)
+
+        p = ConcreteProtocol(("192.0.2.2", 5060), "sip:alice@example.com", "a", "b")
+        p.connection_made(MagicMock())
+        p.response_received(
+            Response(status_code=200, reason="OK", headers={"CSeq": "1 REGISTER"}),
+            ("192.0.2.2", 5060),
+        )
+        assert calls == [True]
+
+    def test_response_received__200_non_register_does_not_call_registered(self):
+        """Receiving 200 OK for a non-REGISTER method does not call registered()."""
+        calls = []
+
+        class ConcreteProtocol(RegisterProtocol):
+            def registered(self):
+                calls.append(True)
+
+        p = ConcreteProtocol(("192.0.2.2", 5060), "sip:alice@example.com", "a", "b")
+        p.connection_made(MagicMock())
+        p.response_received(
+            Response(status_code=200, reason="OK", headers={"CSeq": "1 INVITE"}),
+            ("192.0.2.2", 5060),
+        )
+        assert calls == []
+
+    def test_response_received__401_retries_with_authorization(self):
+        """Receiving 401 triggers a re-REGISTER with an Authorization header."""
+        p = make_register_protocol(username="alice", password="test-password")  # noqa: S106
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        challenge = 'Digest realm="example.com", nonce="abc123"'
+        p.response_received(
+            Response(
+                status_code=401,
+                reason="Unauthorized",
+                headers={"WWW-Authenticate": challenge, "CSeq": "1 REGISTER"},
+            ),
+            ("192.0.2.2", 5060),
+        )
+        data, _ = transport.sendto.call_args[0]
+        assert b"Authorization: Digest" in data
+        assert b'username="alice"' in data
+        assert b'realm="example.com"' in data
+        assert b'nonce="abc123"' in data
+        assert b'algorithm="MD5"' in data
+
+    def test_response_received__407_retries_with_proxy_authorization(self):
+        """Receiving 407 triggers a re-REGISTER with a Proxy-Authorization header."""
+        p = make_register_protocol(username="alice", password="test-password")  # noqa: S106
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        challenge = 'Digest realm="example.com", nonce="xyz"'
+        p.response_received(
+            Response(
+                status_code=407,
+                reason="Proxy Auth Required",
+                headers={"Proxy-Authenticate": challenge, "CSeq": "1 REGISTER"},
+            ),
+            ("192.0.2.2", 5060),
+        )
+        data, _ = transport.sendto.call_args[0]
+        assert b"Proxy-Authorization: Digest" in data
+        assert b'username="alice"' in data
+
+    def test_response_received__401_with_qop_auth_includes_nc_cnonce(self):
+        """401 with qop=auth causes the retry to include nc and cnonce fields."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        challenge = 'Digest realm="example.com", nonce="n", qop="auth"'
+        p.response_received(
+            Response(
+                status_code=401,
+                reason="Unauthorized",
+                headers={"WWW-Authenticate": challenge, "CSeq": "1 REGISTER"},
+            ),
+            ("192.0.2.2", 5060),
+        )
+        data, _ = transport.sendto.call_args[0]
+        assert b"qop=auth" in data
+        assert b"nc=00000001" in data
+        assert b"cnonce=" in data
+
+    def test_response_received__401_with_opaque_echoes_opaque(self):
+        """The opaque field from the challenge is echoed back in the Authorization."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        transport = p._transport
+        transport.reset_mock()
+        challenge = 'Digest realm="example.com", nonce="n", opaque="secret-opaque"'
+        p.response_received(
+            Response(
+                status_code=401,
+                reason="Unauthorized",
+                headers={"WWW-Authenticate": challenge, "CSeq": "1 REGISTER"},
+            ),
+            ("192.0.2.2", 5060),
+        )
+        data, _ = transport.sendto.call_args[0]
+        assert b'opaque="secret-opaque"' in data
+
+    def test_response_received__other_status__returns_not_implemented(self):
+        """An unhandled status code returns NotImplemented."""
+        p = make_register_protocol()
+        p.connection_made(MagicMock())
+        result = p.response_received(
+            Response(status_code=500, reason="Server Error", headers={"CSeq": "1 REGISTER"}),
+            ("192.0.2.2", 5060),
+        )
+        assert result is NotImplemented
+
+    def test_registered__returns_not_implemented(self):
+        """Base registered() returns NotImplemented."""
+        p = make_register_protocol()
+        assert p.registered() is NotImplemented
+
+    def test_invite_received_after_register(self):
+        """INVITE dispatching still works after registration (inherits IncomingCallProtocol)."""
+        calls = []
+
+        class ConcreteProtocol(RegisterProtocol):
+            def invite_received(self, call, addr):
+                calls.append((call, addr))
+
+        p = ConcreteProtocol(("192.0.2.2", 5060), "sip:alice@example.com", "a", "b")
+        p.connection_made(MagicMock())
+        request = Request(
+            method="INVITE",
+            uri="sip:alice@example.com",
+            headers={"From": "sip:bob@example.com"},
+        )
+        p.request_received(request, ("192.0.2.1", 5060))
+        assert len(calls) == 1
+        assert isinstance(calls[0][0], IncomingCall)

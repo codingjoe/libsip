@@ -3,12 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
+import re
+import uuid
 from collections.abc import Callable
 
 from .aio import SessionInitiationProtocol
 from .messages import Message, Request, Response
 
-__all__ = ["IncomingCall", "IncomingCallProtocol", "RTPProtocol"]
+__all__ = ["IncomingCall", "IncomingCallProtocol", "RegisterProtocol", "RTPProtocol"]
+
+
+def _parse_auth_challenge(header: str) -> dict[str, str]:
+    """Parse Digest challenge parameters from a WWW-Authenticate/Proxy-Authenticate header."""
+    _, _, params_str = header.partition(" ")
+    params = {}
+    for part in re.split(r",\s*(?=[a-zA-Z])", params_str):
+        key, _, value = part.partition("=")
+        if key.strip():
+            params[key.strip()] = value.strip().strip('"')
+    return params
+
+
+def _digest_response(
+    *,
+    username: str,
+    password: str,
+    realm: str,
+    nonce: str,
+    method: str,
+    uri: str,
+    qop: str | None = None,
+    nc: str = "00000001",
+    cnonce: str | None = None,
+) -> str:
+    """Compute an RFC 2617 / RFC 3261 §22 MD5 digest response."""
+    ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()  # noqa: S324
+    ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()  # noqa: S324
+    if qop in ("auth", "auth-int"):
+        return hashlib.md5(  # noqa: S324
+            f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}".encode()
+        ).hexdigest()
+    return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()  # noqa: S324
 
 
 class RTPProtocol(asyncio.DatagramProtocol):
@@ -116,4 +153,106 @@ class IncomingCallProtocol(SessionInitiationProtocol):
 
     def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
         """Handle an incoming call. Override in subclasses to process calls."""
+        return NotImplemented
+
+
+class RegisterProtocol(IncomingCallProtocol):
+    """SIP UAC: registers with a carrier via digest auth and handles inbound calls."""
+
+    def __init__(
+        self,
+        server_addr: tuple[str, int],
+        aor: str,
+        username: str,
+        password: str,
+    ) -> None:
+        self._server_addr = server_addr
+        self._aor = aor
+        self._username = username
+        self._password = password
+        self._call_id = str(uuid.uuid4())
+        self._cseq = 0
+
+    @property
+    def _registrar_uri(self) -> str:
+        """Registrar Request-URI derived from the AOR (e.g. sip:example.com)."""
+        scheme, _, rest = self._aor.partition(":")
+        _, _, hostport = rest.partition("@")
+        return f"{scheme}:{hostport}"
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
+        """Store the transport and send the initial REGISTER request."""
+        super().connection_made(transport)
+        self.register()
+
+    def register(
+        self,
+        authorization: str | None = None,
+        proxy_authorization: str | None = None,
+    ) -> None:
+        """Send a REGISTER request to the carrier, optionally with credentials."""
+        self._cseq += 1
+        headers = {
+            "From": self._aor,
+            "To": self._aor,
+            "Call-ID": self._call_id,
+            "CSeq": f"{self._cseq} REGISTER",
+            "Contact": f"<{self._aor}>",
+            "Expires": "3600",
+            "Max-Forwards": "70",
+        }
+        if authorization is not None:
+            headers["Authorization"] = authorization
+        if proxy_authorization is not None:
+            headers["Proxy-Authorization"] = proxy_authorization
+        self.send(
+            Request(method="REGISTER", uri=self._registrar_uri, headers=headers),
+            self._server_addr,
+        )
+
+    def response_received(self, response: Response, addr: tuple[str, int]) -> None:
+        """Handle REGISTER responses including digest auth challenges (RFC 3261 §22)."""
+        if response.status_code == 200 and "REGISTER" in response.headers.get("CSeq", ""):
+            self.registered()
+            return
+        if response.status_code in (401, 407):
+            is_proxy = response.status_code == 407
+            challenge_key = "Proxy-Authenticate" if is_proxy else "WWW-Authenticate"
+            params = _parse_auth_challenge(response.headers.get(challenge_key, ""))
+            realm = params.get("realm", "")
+            nonce = params.get("nonce", "")
+            opaque = params.get("opaque")
+            qop_options = params.get("qop", "")
+            qop = "auth" if "auth" in qop_options.split(",") else None
+            nc = "00000001"
+            cnonce = os.urandom(8).hex() if qop else None
+            digest = _digest_response(
+                username=self._username,
+                password=self._password,
+                realm=realm,
+                nonce=nonce,
+                method="REGISTER",
+                uri=self._registrar_uri,
+                qop=qop,
+                nc=nc,
+                cnonce=cnonce,
+            )
+            auth_value = (
+                f'Digest username="{self._username}", realm="{realm}", '
+                f'nonce="{nonce}", uri="{self._registrar_uri}", '
+                f'response="{digest}", algorithm="MD5"'
+            )
+            if qop:
+                auth_value += f', qop={qop}, nc={nc}, cnonce="{cnonce}"'
+            if opaque:
+                auth_value += f', opaque="{opaque}"'
+            if is_proxy:
+                self.register(proxy_authorization=auth_value)
+            else:
+                self.register(authorization=auth_value)
+            return
+        return NotImplemented
+
+    def registered(self) -> None:
+        """Handle a confirmed carrier registration. Override to react."""
         return NotImplemented
