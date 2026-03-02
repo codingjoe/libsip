@@ -102,3 +102,6 @@ ENV/
 
 # SCM
 _version.py
+
+# uv
+uv.lock

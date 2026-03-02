@@ -15,22 +15,63 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           path: dist/*
-  PyTest:
+  pytest:
+    name: pytest
     strategy:
       matrix:
+        os:
+          - ubuntu-latest
         python-version:
           - "3.10"
           - "3.11"
           - "3.12"
           - "3.13"
           - "3.14"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv run --group test pytest -m "not cli"
+      - run: uv run --group test pytest
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  pytest-extras:
+    name: pytest
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+        python-version:
+          - "3.10"
+          - "3.14"
+        extra:
+          - pygments
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run --group=test --extra=${{ matrix.extra }} pytest
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+  pytest-os:
+    name: pytest
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        python-version:
+          - "3.10"
+          - "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run --group=test pytest
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

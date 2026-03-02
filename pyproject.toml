@@ -33,6 +33,12 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 
+[project.optional-dependencies]
+pygments = ["Pygments"]
+
+[project.entry-points."pygments.lexers"]
+sip = "sip.lexers:SIPLexer"
+
 [tool.flit.module]
 name = "sip"
 
@@ -48,9 +54,6 @@ test = [
 [project.urls]
 Project-URL = "https://github.com/codingjoe/sip"
 Changelog = "https://github.com/codingjoe/sip/releases"
-
-[tool.flit.module]
-name = "sip"
 
 [tool.setuptools_scm]
 write_to = "sip/_version.py"
