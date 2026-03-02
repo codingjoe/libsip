@@ -1,12 +1,12 @@
 """Tests for SIP message parsing and serialization."""
 
-from sip.messages import Request, Response, SIPMessage
+from sip.messages import Request, Response, Message
 
 
 class TestSIPMessage:
     def test_first_line__not_implemented(self):
         """Return NotImplemented when calling _first_line on SIPMessage."""
-        message = SIPMessage()
+        message = Message()
         assert message._first_line() == NotImplemented
 
     def test_parse__request(self):
@@ -16,7 +16,7 @@ class TestSIPMessage:
             b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
             b"\r\n"
         )
-        result = SIPMessage.parse(data)
+        result = Message.parse(data)
         assert isinstance(result, Request)
         assert result.method == "INVITE"
         assert result.uri == "sip:bob@biloxi.com"
@@ -29,7 +29,7 @@ class TestSIPMessage:
     def test_parse__request__with_body(self):
         """Parse a SIP request with a body from bytes."""
         data = b"INVITE sip:bob@biloxi.com SIP/2.0\r\nContent-Length: 4\r\n\r\ntest"
-        result = SIPMessage.parse(data)
+        result = Message.parse(data)
         assert isinstance(result, Request)
         assert result.body == b"test"
 
@@ -40,7 +40,7 @@ class TestSIPMessage:
             b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
             b"\r\n"
         )
-        result = SIPMessage.parse(data)
+        result = Message.parse(data)
         assert isinstance(result, Response)
         assert result.status_code == 200
         assert result.reason == "OK"
@@ -53,7 +53,7 @@ class TestSIPMessage:
     def test_parse__response__with_body(self):
         """Parse a SIP response with a body from bytes."""
         data = b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest"
-        result = SIPMessage.parse(data)
+        result = Message.parse(data)
         assert isinstance(result, Response)
         assert result.body == b"test"
 
@@ -64,7 +64,7 @@ class TestSIPMessage:
             uri="sip:registrar.biloxi.com",
             headers={"From": "sip:bob@biloxi.com"},
         )
-        assert SIPMessage.parse(bytes(request)) == request
+        assert Message.parse(bytes(request)) == request
 
     def test_parse__roundtrip_response(self):
         """Round-trip a SIP response through parse and bytes."""
@@ -73,7 +73,7 @@ class TestSIPMessage:
             reason="Not Found",
             headers={"From": "sip:bob@biloxi.com"},
         )
-        assert SIPMessage.parse(bytes(response)) == response
+        assert Message.parse(bytes(response)) == response
 
 
 class TestRequest:

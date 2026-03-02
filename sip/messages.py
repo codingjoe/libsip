@@ -5,8 +5,11 @@ from __future__ import annotations
 import dataclasses
 
 
+__all__ = ["Request", "Response"]
+
+
 @dataclasses.dataclass(kw_only=True, frozen=True)
-class SIPMessage:
+class Message:
     """A SIP message (RFC 3261 §7)."""
 
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -47,7 +50,7 @@ class SIPMessage:
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
-class Request(SIPMessage):
+class Request(Message):
     """A SIP request message (RFC 3261 §7.1)."""
 
     method: str
@@ -58,7 +61,7 @@ class Request(SIPMessage):
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
-class Response(SIPMessage):
+class Response(Message):
     """A SIP response message (RFC 3261 §7.2)."""
 
     status_code: int

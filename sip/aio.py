@@ -6,7 +6,7 @@ import asyncio
 import errno
 import logging
 
-from .messages import Request, Response, SIPMessage
+from .messages import Request, Response, Message
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Dispatch a received datagram to the appropriate handler."""
-        match SIPMessage.parse(data):
+        match Message.parse(data):
             case Request() as request:
                 self.request_received(request, addr)
             case Response() as response:
