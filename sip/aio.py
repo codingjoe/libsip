@@ -6,7 +6,6 @@ import asyncio
 import errno
 import logging
 
-from .calls import IncomingCall
 from .messages import Message, Request, Response
 
 logger = logging.getLogger(__name__)
@@ -32,18 +31,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 self.response_received(response, addr)
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
-        """Dispatch a received SIP request to the appropriate handler."""
-        match request.method:
-            case "INVITE":
-                self.invite_received(
-                    IncomingCall(request, addr, self._transport),
-                    addr,
-                )
-            case _:
-                return NotImplemented
-
-    def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
-        """Handle an incoming call. Override in subclasses to process calls."""
+        """Handle a received SIP request. Override in subclasses to process requests."""
         return NotImplemented
 
     def response_received(self, response: Response, addr: tuple[str, int]) -> None:

@@ -8,6 +8,8 @@ Python asyncio library for SIP telephony ([RFC 3261](https://tools.ietf.org/html
 python3 -m pip install libsip  # lightweight, without any dependencies
 # or
 python3 -m pip install libsip[pygments]  # with Pygments syntax highlighting support
+# or
+python3 -m pip install libsip[whisper]  # with OpenAI Whisper transcription support
 ```
 
 ## Usage
@@ -61,26 +63,25 @@ asyncio.run(main())
 
 #### Incoming call handler
 
-Subclass `IncomingCall` and override `handle` to process audio data received over RTP.
-Register it with `SessionInitiationProtocol` by overriding `invite_received`:
+`IncomingCallProtocol` extends `SessionInitiationProtocol` and dispatches INVITE
+requests to `invite_received`. Subclass `IncomingCall` and override `handle` to
+process the RTP audio stream:
 
 ```python
 import asyncio
-import sip
+
+from sip.calls import IncomingCall, IncomingCallProtocol
 
 
-class MyCall(sip.IncomingCall):
+class MyCall(IncomingCall):
     def handle(self, audio: bytes) -> None:
         # Process raw RTP audio payload (e.g. write to a file or pipe)
         print(f"Received {len(audio)} bytes of audio")
 
 
-class MyProtocol(sip.SIP):
-    def invite_received(self, call: sip.IncomingCall, addr: tuple[str, int]) -> None:
+class MyProtocol(IncomingCallProtocol):
+    def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
         asyncio.create_task(call.answer())  # send 200 OK and open RTP port
-
-    def response_received(self, response: sip.Response, addr: tuple[str, int]) -> None:
-        print(response, addr)
 
 
 async def main():
@@ -92,14 +93,54 @@ async def main():
 asyncio.run(main())
 ```
 
-`IncomingCall` also exposes:
+`IncomingCall` exposes:
 
 - `caller` – the SIP address from the `From` header.
 - `answer()` – coroutine that sends `200 OK` with an SDP body and opens a UDP port for
   incoming RTP audio.
 - `reject(status_code, reason)` – sends a non-2xx response (default `486 Busy Here`).
 
+#### Whisper transcription
 
+Install with the `whisper` extra to transcribe calls using
+[OpenAI Whisper](https://github.com/openai/whisper):
+
+```bash
+pip install libsip[whisper]
+```
+
+Subclass `WhisperCall` and override `transcription_received` to handle the output:
+
+```python
+import asyncio
+
+from sip.calls import IncomingCall, IncomingCallProtocol
+from sip.whisper import WhisperCall
+
+
+class TranscribedCall(WhisperCall):
+    def transcription_received(self, text: str) -> None:
+        print(f"Transcription: {text}")
+
+
+class MyProtocol(IncomingCallProtocol):
+    def create_call(self, request, addr) -> TranscribedCall:
+        return TranscribedCall(request, addr, self._transport, model="base")
+
+    def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
+        asyncio.create_task(call.answer())
+
+
+async def main():
+    loop = asyncio.get_running_loop()
+    await loop.create_datagram_endpoint(MyProtocol, local_addr=("0.0.0.0", 5060))
+    await asyncio.sleep(3600)
+
+
+asyncio.run(main())
+```
+
+## SIP lexer plugin for [Pygments](https://pygments.org/)
 
 The SIP library comes with a lexer plugin for [Pygments](https://pygments.org/) to
 highlight SIP messages. It's based on the HTTP lexer and adds SIP-specific keywords.

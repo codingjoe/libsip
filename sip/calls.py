@@ -4,26 +4,28 @@ from __future__ import annotations
 
 import asyncio
 
+from .aio import SessionInitiationProtocol
 from .messages import Request, Response
 
-__all__ = ["IncomingCall"]
+__all__ = ["IncomingCall", "IncomingCallProtocol", "RTPProtocol"]
 
 _RTP_HEADER_SIZE = 12
 
 
-class _RTPProtocol(asyncio.DatagramProtocol):
-    """Receive and dispatch RTP audio packets to the call handler."""
-
-    def __init__(self, call: IncomingCall) -> None:
-        self._call = call
+class RTPProtocol(asyncio.DatagramProtocol):
+    """An asyncio DatagramProtocol that strips RTP headers and dispatches audio payloads."""
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Strip RTP header and forward audio payload to the call handler."""
+        """Strip RTP header and forward audio payload."""
         if len(data) > _RTP_HEADER_SIZE:
-            self._call.handle(data[_RTP_HEADER_SIZE:])
+            self.handle(data[_RTP_HEADER_SIZE:])
+
+    def handle(self, audio: bytes) -> None:
+        """Handle incoming audio data. Override in subclasses."""
+        return NotImplemented
 
 
-class IncomingCall:
+class IncomingCall(RTPProtocol):
     """An incoming SIP call."""
 
     def __init__(
@@ -45,7 +47,7 @@ class IncomingCall:
         """Answer the call and start receiving audio via RTP."""
         loop = asyncio.get_running_loop()
         rtp_transport, _ = await loop.create_datagram_endpoint(
-            lambda: _RTPProtocol(self),
+            lambda: self,
             local_addr=("0.0.0.0", 0),  # noqa: S104
         )
         local_addr = rtp_transport.get_extra_info("sockname")
@@ -91,6 +93,22 @@ class IncomingCall:
             self._addr,
         )
 
-    def handle(self, audio: bytes) -> None:
-        """Handle incoming audio data."""
+
+class IncomingCallProtocol(SessionInitiationProtocol):
+    """SIP protocol with incoming call (INVITE) support."""
+
+    def request_received(self, request: Request, addr: tuple[str, int]) -> None:
+        """Dispatch an INVITE request to invite_received."""
+        match request.method:
+            case "INVITE":
+                self.invite_received(self.create_call(request, addr), addr)
+            case _:
+                return NotImplemented
+
+    def create_call(self, request: Request, addr: tuple[str, int]) -> IncomingCall:
+        """Create an IncomingCall for an INVITE. Override to use a custom call class."""
+        return IncomingCall(request, addr, self._transport)
+
+    def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
+        """Handle an incoming call. Override in subclasses to process calls."""
         return NotImplemented

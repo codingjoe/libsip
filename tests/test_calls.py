@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from sip.calls import IncomingCall, _RTPProtocol
+from sip.calls import IncomingCall, IncomingCallProtocol, RTPProtocol
 from sip.messages import Message, Request
 
 
@@ -35,26 +35,43 @@ def make_call(transport: MagicMock | None = None) -> IncomingCall:
 
 class TestRTPProtocol:
     def test_datagram_received__forwards_audio(self):
-        """Strip RTP header and forward audio payload to the call handler."""
-        call = MagicMock()
-        protocol = _RTPProtocol(call)
+        """Strip RTP header and forward audio payload via handle."""
+        received = []
+
+        class ConcreteRTP(RTPProtocol):
+            def handle(self, audio: bytes) -> None:
+                received.append(audio)
+
+        protocol = ConcreteRTP()
         rtp_packet = b"\x80\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00" + b"audio"
         protocol.datagram_received(rtp_packet, ("192.0.2.1", 5004))
-        call.handle.assert_called_once_with(b"audio")
+        assert received == [b"audio"]
 
     def test_datagram_received__skips_short_packet(self):
         """Skip packets shorter than the minimum RTP header size."""
-        call = MagicMock()
-        protocol = _RTPProtocol(call)
-        protocol.datagram_received(b"\x80\x00", ("192.0.2.1", 5004))
-        call.handle.assert_not_called()
+        received = []
+
+        class ConcreteRTP(RTPProtocol):
+            def handle(self, audio: bytes) -> None:
+                received.append(audio)
+
+        ConcreteRTP().datagram_received(b"\x80\x00", ("192.0.2.1", 5004))
+        assert received == []
 
     def test_datagram_received__skips_exact_header_size(self):
         """Skip packets that contain only an RTP header with no audio payload."""
-        call = MagicMock()
-        protocol = _RTPProtocol(call)
-        protocol.datagram_received(b"\x80" * 12, ("192.0.2.1", 5004))
-        call.handle.assert_not_called()
+        received = []
+
+        class ConcreteRTP(RTPProtocol):
+            def handle(self, audio: bytes) -> None:
+                received.append(audio)
+
+        ConcreteRTP().datagram_received(b"\x80" * 12, ("192.0.2.1", 5004))
+        assert received == []
+
+    def test_handle__returns_not_implemented(self):
+        """Return NotImplemented for unhandled audio data."""
+        assert RTPProtocol().handle(b"audio") is NotImplemented
 
 
 class TestIncomingCall:
@@ -166,7 +183,6 @@ class TestIncomingCall:
             sent_bytes, _ = transport.sendto.call_args[0]
             response = Message.parse(sent_bytes)
 
-            # Extract the RTP port from the SDP body and send a test packet
             sdp_line = next(
                 line
                 for line in response.body.decode().splitlines()
@@ -174,7 +190,6 @@ class TestIncomingCall:
             )
             rtp_port = int(sdp_line.split()[1])
 
-            # Send a fake RTP packet directly to the local RTP socket
             loop = asyncio.get_running_loop()
             send_transport, _ = await loop.create_datagram_endpoint(
                 asyncio.DatagramProtocol,
@@ -239,3 +254,63 @@ class TestIncomingCall:
         sent_bytes, _ = transport.sendto.call_args[0]
         response = Message.parse(sent_bytes)
         assert extra_header not in response.headers
+
+
+class TestIncomingCallProtocol:
+    def test_request_received__invite__calls_invite_received(self):
+        """Dispatch an INVITE request to invite_received with an IncomingCall."""
+        calls = []
+
+        class ConcreteProtocol(IncomingCallProtocol):
+            def invite_received(self, call, addr):
+                calls.append((call, addr))
+
+        protocol = ConcreteProtocol()
+        protocol._transport = MagicMock()
+        request = Request(
+            method="INVITE",
+            uri="sip:alice@atlanta.com",
+            headers={"From": "sip:bob@biloxi.com"},
+        )
+        addr = ("192.0.2.1", 5060)
+        protocol.request_received(request, addr)
+        assert len(calls) == 1
+        call, called_addr = calls[0]
+        assert isinstance(call, IncomingCall)
+        assert call.caller == "sip:bob@biloxi.com"
+        assert called_addr == addr
+
+    def test_request_received__non_invite__returns_not_implemented(self):
+        """Return NotImplemented for non-INVITE requests."""
+        protocol = IncomingCallProtocol()
+        request = Request(method="OPTIONS", uri="sip:alice@atlanta.com")
+        assert protocol.request_received(request, ("192.0.2.1", 5060)) is NotImplemented
+
+    def test_invite_received__returns_not_implemented(self):
+        """Return NotImplemented for unhandled incoming calls."""
+        protocol = IncomingCallProtocol()
+        assert protocol.invite_received(MagicMock(), ("192.0.2.1", 5060)) is NotImplemented
+
+    def test_create_call__returns_incoming_call(self):
+        """Return an IncomingCall bound to the SIP transport."""
+        protocol = IncomingCallProtocol()
+        protocol._transport = MagicMock()
+        request = make_invite()
+        addr = ("192.0.2.1", 5060)
+        call = protocol.create_call(request, addr)
+        assert isinstance(call, IncomingCall)
+        assert call.caller == "sip:bob@biloxi.com"
+
+    def test_create_call__custom_class(self):
+        """Use the overridden create_call to produce a custom call object."""
+        class CustomCall(IncomingCall):
+            pass
+
+        class CustomProtocol(IncomingCallProtocol):
+            def create_call(self, request, addr) -> CustomCall:
+                return CustomCall(request, addr, self._transport)
+
+        protocol = CustomProtocol()
+        protocol._transport = MagicMock()
+        call = protocol.create_call(make_invite(), ("192.0.2.1", 5060))
+        assert isinstance(call, CustomCall)
