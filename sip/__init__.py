@@ -2,7 +2,7 @@
 
 from . import _version
 from .messages import Request, Response, SIPMessage
-from .protocol import SIP, SessionInitiationProtocol
+from .aio import SIP, SessionInitiationProtocol
 
 __version__ = _version.version
 VERSION = _version.version_tuple

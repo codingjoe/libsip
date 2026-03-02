@@ -4,7 +4,7 @@ import errno
 
 import pytest
 from sip.messages import Request, Response
-from sip.protocol import SessionInitiationProtocol
+from sip.aio import SessionInitiationProtocol
 
 
 class ConcreteProtocol(SessionInitiationProtocol):
