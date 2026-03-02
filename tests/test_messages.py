@@ -118,7 +118,7 @@ class TestResponse:
         )
 
     def test_response__bytes__with_body(self):
-        """Serialize a SIP response with a body to bytes."""
+        """Serialize a SIP response with a body to bytes (explicit Content-Length kept)."""
         response = Response(
             status_code=200,
             reason="OK",
@@ -126,3 +126,11 @@ class TestResponse:
             body=b"test",
         )
         assert bytes(response) == (b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest")
+
+    def test_response__bytes__with_body__auto_content_length(self):
+        """Auto-calculate Content-Length when body is present and header is not set."""
+        response = Response(status_code=200, reason="OK", body=b"test")
+        serialized = bytes(response)
+        assert b"Content-Length: 4" in serialized
+        parsed = Message.parse(serialized)
+        assert parsed.body == b"test"

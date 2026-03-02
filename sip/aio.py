@@ -16,12 +16,6 @@ __all__ = ["SIP", "SessionInitiationProtocol"]
 class SessionInitiationProtocol(asyncio.DatagramProtocol):
     """An asyncio protocol handler for the Session Initiation Protocol (RFC 3261)."""
 
-    __slots__ = ("_transport",)
-
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport for sending SIP messages."""
-        self._transport = transport
-
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Dispatch a received datagram to the appropriate handler."""
         match Message.parse(data):

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sip.calls import IncomingCall, IncomingCallProtocol, RTPProtocol
-from sip.messages import Message, Request
+from sip.messages import Message, Request, Response
 
 
 def make_invite(headers: dict | None = None) -> Request:
@@ -24,23 +24,27 @@ def make_invite(headers: dict | None = None) -> Request:
     )
 
 
-def make_call(transport: MagicMock | None = None) -> IncomingCall:
-    """Return an IncomingCall with a mock transport."""
+def make_call(send: MagicMock | None = None) -> IncomingCall:
+    """Return an IncomingCall with a mock send callable."""
     return IncomingCall(
         make_invite(),
         ("192.0.2.1", 5060),
-        transport or MagicMock(),
+        send or MagicMock(),
     )
 
 
 class TestRTPProtocol:
+    def test_rtp_header_size__is_class_attr(self):
+        """rtp_header_size is a class attribute set to the standard 12-byte header."""
+        assert RTPProtocol.rtp_header_size == 12
+
     def test_datagram_received__forwards_audio(self):
-        """Strip RTP header and forward audio payload via handle."""
+        """Strip RTP header and forward audio payload via audio_received."""
         received = []
 
         class ConcreteRTP(RTPProtocol):
-            def handle(self, audio: bytes) -> None:
-                received.append(audio)
+            def audio_received(self, data: bytes) -> None:
+                received.append(data)
 
         protocol = ConcreteRTP()
         rtp_packet = b"\x80\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00" + b"audio"
@@ -52,8 +56,8 @@ class TestRTPProtocol:
         received = []
 
         class ConcreteRTP(RTPProtocol):
-            def handle(self, audio: bytes) -> None:
-                received.append(audio)
+            def audio_received(self, data: bytes) -> None:
+                received.append(data)
 
         ConcreteRTP().datagram_received(b"\x80\x00", ("192.0.2.1", 5004))
         assert received == []
@@ -63,15 +67,15 @@ class TestRTPProtocol:
         received = []
 
         class ConcreteRTP(RTPProtocol):
-            def handle(self, audio: bytes) -> None:
-                received.append(audio)
+            def audio_received(self, data: bytes) -> None:
+                received.append(data)
 
         ConcreteRTP().datagram_received(b"\x80" * 12, ("192.0.2.1", 5004))
         assert received == []
 
-    def test_handle__returns_not_implemented(self):
+    def test_audio_received__returns_not_implemented(self):
         """Return NotImplemented for unhandled audio data."""
-        assert RTPProtocol().handle(b"audio") is NotImplemented
+        assert RTPProtocol().audio_received(b"audio") is NotImplemented
 
 
 class TestIncomingCall:
@@ -88,36 +92,34 @@ class TestIncomingCall:
         )
         assert call.caller == ""
 
-    def test_handle__returns_not_implemented(self):
+    def test_audio_received__returns_not_implemented(self):
         """Return NotImplemented for unhandled audio data."""
-        assert make_call().handle(b"audio") is NotImplemented
+        assert make_call().audio_received(b"audio") is NotImplemented
 
     def test_reject__sends_busy_here_by_default(self):
         """Send a 486 Busy Here response when no status code is given."""
-        transport = MagicMock()
-        make_call(transport).reject()
-        transport.sendto.assert_called_once()
-        sent_bytes, addr = transport.sendto.call_args[0]
-        response = Message.parse(sent_bytes)
+        send = MagicMock()
+        make_call(send).reject()
+        send.assert_called_once()
+        response, addr = send.call_args[0]
+        assert isinstance(response, Response)
         assert response.status_code == 486
         assert response.reason == "Busy Here"
         assert addr == ("192.0.2.1", 5060)
 
     def test_reject__custom_status(self):
         """Send the specified status code and reason."""
-        transport = MagicMock()
-        make_call(transport).reject(status_code=603, reason="Decline")
-        sent_bytes, _ = transport.sendto.call_args[0]
-        response = Message.parse(sent_bytes)
+        send = MagicMock()
+        make_call(send).reject(status_code=603, reason="Decline")
+        response, _ = send.call_args[0]
         assert response.status_code == 603
         assert response.reason == "Decline"
 
     def test_reject__copies_dialog_headers(self):
         """Copy Via, To, From, Call-ID, and CSeq headers into the response."""
-        transport = MagicMock()
-        make_call(transport).reject()
-        sent_bytes, _ = transport.sendto.call_args[0]
-        response = Message.parse(sent_bytes)
+        send = MagicMock()
+        make_call(send).reject()
+        response, _ = send.call_args[0]
         assert response.headers["Via"] == "SIP/2.0/UDP pc33.atlanta.com"
         assert response.headers["To"] == "sip:alice@atlanta.com"
         assert response.headers["From"] == "sip:bob@biloxi.com"
@@ -128,27 +130,26 @@ class TestIncomingCall:
         """Send a 200 OK response with an SDP body when answering."""
 
         async def run() -> None:
-            transport = MagicMock()
-            await make_call(transport).answer()
-            transport.sendto.assert_called_once()
-            sent_bytes, addr = transport.sendto.call_args[0]
-            response = Message.parse(sent_bytes)
+            send = MagicMock()
+            await make_call(send).answer()
+            send.assert_called_once()
+            response, addr = send.call_args[0]
             assert response.status_code == 200
             assert response.reason == "OK"
             assert addr == ("192.0.2.1", 5060)
 
         asyncio.run(run())
 
-    def test_answer__sdp_contains_audio_line(self):
-        """Include an audio media line in the SDP body of the 200 OK."""
+    def test_answer__sdp_contains_opus_audio_line(self):
+        """Include an Opus audio media line in the SDP body of the 200 OK."""
 
         async def run() -> None:
-            transport = MagicMock()
-            await make_call(transport).answer()
-            sent_bytes, _ = transport.sendto.call_args[0]
-            response = Message.parse(sent_bytes)
+            send = MagicMock()
+            await make_call(send).answer()
+            response, _ = send.call_args[0]
             assert b"m=audio" in response.body
-            assert b"RTP/AVP" in response.body
+            assert b"RTP/AVP 111" in response.body
+            assert b"a=rtpmap:111 opus/48000/2" in response.body
 
         asyncio.run(run())
 
@@ -156,10 +157,9 @@ class TestIncomingCall:
         """Copy Via, To, From, Call-ID, and CSeq headers into the 200 OK."""
 
         async def run() -> None:
-            transport = MagicMock()
-            await make_call(transport).answer()
-            sent_bytes, _ = transport.sendto.call_args[0]
-            response = Message.parse(sent_bytes)
+            send = MagicMock()
+            await make_call(send).answer()
+            response, _ = send.call_args[0]
             assert response.headers["Via"] == "SIP/2.0/UDP pc33.atlanta.com"
             assert response.headers["To"] == "sip:alice@atlanta.com"
             assert response.headers["From"] == "sip:bob@biloxi.com"
@@ -169,19 +169,18 @@ class TestIncomingCall:
         asyncio.run(run())
 
     def test_answer__rtp_receives_audio(self):
-        """Deliver audio from RTP packets to the call's handle method via the RTP socket."""
+        """Deliver audio from RTP packets to the call's audio_received via the RTP socket."""
         received_audio = []
 
         class AudioCapture(IncomingCall):
-            def handle(self, audio: bytes) -> None:
-                received_audio.append(audio)
+            def audio_received(self, data: bytes) -> None:
+                received_audio.append(data)
 
         async def run() -> None:
-            transport = MagicMock()
-            call = AudioCapture(make_invite(), ("192.0.2.1", 5060), transport)
+            send = MagicMock()
+            call = AudioCapture(make_invite(), ("192.0.2.1", 5060), send)
             await call.answer()
-            sent_bytes, _ = transport.sendto.call_args[0]
-            response = Message.parse(sent_bytes)
+            response, _ = send.call_args[0]
 
             sdp_line = next(
                 line
@@ -204,19 +203,18 @@ class TestIncomingCall:
         assert received_audio == [b"audio"]
 
     def test_answer__rtp_receives_multiple_packets(self):
-        """Call handle with each RTP payload when multiple packets arrive."""
+        """Call audio_received with each RTP payload when multiple packets arrive."""
         received_audio = []
 
         class AudioCapture(IncomingCall):
-            def handle(self, audio: bytes) -> None:
-                received_audio.append(audio)
+            def audio_received(self, data: bytes) -> None:
+                received_audio.append(data)
 
         async def run() -> None:
-            transport = MagicMock()
-            call = AudioCapture(make_invite(), ("192.0.2.1", 5060), transport)
+            send = MagicMock()
+            call = AudioCapture(make_invite(), ("192.0.2.1", 5060), send)
             await call.answer()
-            sent_bytes, _ = transport.sendto.call_args[0]
-            response = Message.parse(sent_bytes)
+            response, _ = send.call_args[0]
             sdp_line = next(
                 line
                 for line in response.body.decode().splitlines()
@@ -238,25 +236,51 @@ class TestIncomingCall:
         asyncio.run(run())
         assert received_audio == [b"chunk1", b"chunk2"]
 
-    @pytest.mark.parametrize(
-        "extra_header",
-        ["X-Custom"],
-    )
+    @pytest.mark.parametrize("extra_header", ["X-Custom"])
     def test_reject__excludes_extra_headers(self, extra_header):
         """Exclude non-dialog headers from the reject response."""
-        transport = MagicMock()
+        send = MagicMock()
         call = IncomingCall(
             make_invite({extra_header: "value"}),
             ("192.0.2.1", 5060),
-            transport,
+            send,
         )
         call.reject()
-        sent_bytes, _ = transport.sendto.call_args[0]
-        response = Message.parse(sent_bytes)
+        response, _ = send.call_args[0]
         assert extra_header not in response.headers
+
+    def test_answer__content_length_serialized(self):
+        """Content-Length is automatically included when the response is serialized."""
+
+        async def run() -> None:
+            send = MagicMock()
+            await make_call(send).answer()
+            response, addr = send.call_args[0]
+            # Serialize via IncomingCallProtocol.send to confirm Content-Length is added
+            serialized = bytes(response)
+            parsed = Message.parse(serialized)
+            assert "Content-Length" in parsed.headers
+
+        asyncio.run(run())
 
 
 class TestIncomingCallProtocol:
+    def test_connection_made__stores_transport(self):
+        """Store the transport when a connection is established."""
+        protocol = IncomingCallProtocol()
+        transport = MagicMock()
+        protocol.connection_made(transport)
+        assert protocol._transport is transport
+
+    def test_send__serializes_and_forwards_to_transport(self):
+        """Serialize the message and forward it to the underlying transport."""
+        protocol = IncomingCallProtocol()
+        protocol.connection_made(MagicMock())
+        response = Response(status_code=200, reason="OK")
+        addr = ("192.0.2.1", 5060)
+        protocol.send(response, addr)
+        protocol._transport.sendto.assert_called_once_with(bytes(response), addr)
+
     def test_request_received__invite__calls_invite_received(self):
         """Dispatch an INVITE request to invite_received with an IncomingCall."""
         calls = []
@@ -266,7 +290,7 @@ class TestIncomingCallProtocol:
                 calls.append((call, addr))
 
         protocol = ConcreteProtocol()
-        protocol._transport = MagicMock()
+        protocol.connection_made(MagicMock())
         request = Request(
             method="INVITE",
             uri="sip:alice@atlanta.com",
@@ -292,9 +316,9 @@ class TestIncomingCallProtocol:
         assert protocol.invite_received(MagicMock(), ("192.0.2.1", 5060)) is NotImplemented
 
     def test_create_call__returns_incoming_call(self):
-        """Return an IncomingCall bound to the SIP transport."""
+        """Return an IncomingCall bound to the protocol's send method."""
         protocol = IncomingCallProtocol()
-        protocol._transport = MagicMock()
+        protocol.connection_made(MagicMock())
         request = make_invite()
         addr = ("192.0.2.1", 5060)
         call = protocol.create_call(request, addr)
@@ -303,14 +327,15 @@ class TestIncomingCallProtocol:
 
     def test_create_call__custom_class(self):
         """Use the overridden create_call to produce a custom call object."""
+
         class CustomCall(IncomingCall):
             pass
 
         class CustomProtocol(IncomingCallProtocol):
             def create_call(self, request, addr) -> CustomCall:
-                return CustomCall(request, addr, self._transport)
+                return CustomCall(request, addr, self.send)
 
         protocol = CustomProtocol()
-        protocol._transport = MagicMock()
+        protocol.connection_made(MagicMock())
         call = protocol.create_call(make_invite(), ("192.0.2.1", 5060))
         assert isinstance(call, CustomCall)

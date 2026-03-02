@@ -3,40 +3,41 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 from .aio import SessionInitiationProtocol
-from .messages import Request, Response
+from .messages import Message, Request, Response
 
 __all__ = ["IncomingCall", "IncomingCallProtocol", "RTPProtocol"]
 
-_RTP_HEADER_SIZE = 12
-
 
 class RTPProtocol(asyncio.DatagramProtocol):
-    """An asyncio DatagramProtocol that strips RTP headers and dispatches audio payloads."""
+    """An asyncio DatagramProtocol for receiving RTP audio streams (RFC 3550)."""
+
+    rtp_header_size = 12
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Strip RTP header and forward audio payload."""
-        if len(data) > _RTP_HEADER_SIZE:
-            self.handle(data[_RTP_HEADER_SIZE:])
+        """Strip the fixed-size RTP header and forward the audio payload."""
+        if len(data) > self.rtp_header_size:
+            self.audio_received(data[self.rtp_header_size:])
 
-    def handle(self, audio: bytes) -> None:
-        """Handle incoming audio data. Override in subclasses."""
+    def audio_received(self, data: bytes) -> None:
+        """Handle a decoded RTP audio payload. Override in subclasses."""
         return NotImplemented
 
 
 class IncomingCall(RTPProtocol):
-    """An incoming SIP call."""
+    """An inbound SIP call: answers or rejects the INVITE and receives Opus audio via RTP."""
 
     def __init__(
         self,
         request: Request,
         addr: tuple[str, int],
-        transport: asyncio.DatagramTransport,
+        send: Callable[..., None],
     ) -> None:
         self._request = request
         self._addr = addr
-        self._transport = transport
+        self._send = send
 
     @property
     def caller(self) -> str:
@@ -44,7 +45,7 @@ class IncomingCall(RTPProtocol):
         return self._request.headers.get("From", "")
 
     async def answer(self) -> None:
-        """Answer the call and start receiving audio via RTP."""
+        """Answer the call and start receiving Opus audio via RTP (RFC 7587)."""
         loop = asyncio.get_running_loop()
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: self,
@@ -54,41 +55,37 @@ class IncomingCall(RTPProtocol):
         sdp = (
             f"v=0\r\n"
             f"c=IN IP4 {local_addr[0]}\r\n"
-            f"m=audio {local_addr[1]} RTP/AVP 0\r\n"
+            f"m=audio {local_addr[1]} RTP/AVP 111\r\n"
+            f"a=rtpmap:111 opus/48000/2\r\n"
         ).encode()
-        self._transport.sendto(
-            bytes(
-                Response(
-                    status_code=200,
-                    reason="OK",
-                    headers={
-                        **{
-                            key: value
-                            for key, value in self._request.headers.items()
-                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                        },
-                        "Content-Type": "application/sdp",
-                        "Content-Length": str(len(sdp)),
+        self._send(
+            Response(
+                status_code=200,
+                reason="OK",
+                headers={
+                    **{
+                        key: value
+                        for key, value in self._request.headers.items()
+                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
                     },
-                    body=sdp,
-                )
+                    "Content-Type": "application/sdp",
+                },
+                body=sdp,
             ),
             self._addr,
         )
 
     def reject(self, status_code: int = 486, reason: str = "Busy Here") -> None:
         """Reject the call."""
-        self._transport.sendto(
-            bytes(
-                Response(
-                    status_code=status_code,
-                    reason=reason,
-                    headers={
-                        key: value
-                        for key, value in self._request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
-                )
+        self._send(
+            Response(
+                status_code=status_code,
+                reason=reason,
+                headers={
+                    key: value
+                    for key, value in self._request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
             ),
             self._addr,
         )
@@ -96,6 +93,14 @@ class IncomingCall(RTPProtocol):
 
 class IncomingCallProtocol(SessionInitiationProtocol):
     """SIP protocol with incoming call (INVITE) support."""
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
+        """Store the transport for sending SIP messages."""
+        self._transport = transport
+
+    def send(self, message: Message, addr: tuple[str, int]) -> None:
+        """Serialize and send a SIP message to the given address."""
+        self._transport.sendto(bytes(message), addr)
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Dispatch an INVITE request to invite_received."""
@@ -107,7 +112,7 @@ class IncomingCallProtocol(SessionInitiationProtocol):
 
     def create_call(self, request: Request, addr: tuple[str, int]) -> IncomingCall:
         """Create an IncomingCall for an INVITE. Override to use a custom call class."""
-        return IncomingCall(request, addr, self._transport)
+        return IncomingCall(request, addr, self.send)
 
     def invite_received(self, call: IncomingCall, addr: tuple[str, int]) -> None:
         """Handle an incoming call. Override in subclasses to process calls."""

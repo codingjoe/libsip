@@ -46,8 +46,11 @@ class Message:
 
     def __bytes__(self) -> bytes:
         """Serialize to bytes."""
+        headers = dict(self.headers)
+        if self.body:
+            headers.setdefault("Content-Length", str(len(self.body)))
         header_lines = "".join(
-            f"{name}: {value}\r\n" for name, value in self.headers.items()
+            f"{name}: {value}\r\n" for name, value in headers.items()
         )
         return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + self.body
 

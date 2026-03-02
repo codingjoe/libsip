@@ -35,7 +35,7 @@ requires-python = ">=3.10"
 
 [project.optional-dependencies]
 pygments = ["Pygments"]
-whisper = ["openai-whisper"]
+whisper = ["openai-whisper", "opuslib"]
 
 [project.entry-points."pygments.lexers"]
 sip = "sip.lexers:SIPLexer"

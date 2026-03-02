@@ -1,7 +1,6 @@
 """Tests for the SIP asyncio protocol handler."""
 
 import errno
-from unittest.mock import MagicMock
 
 import pytest
 from sip.aio import SessionInitiationProtocol
@@ -23,13 +22,6 @@ class ConcreteProtocol(SessionInitiationProtocol):
 
 
 class TestSessionInitiationProtocol:
-    def test_connection_made__stores_transport(self):
-        """Store the transport for later use when a connection is established."""
-        protocol = SessionInitiationProtocol()
-        transport = MagicMock()
-        protocol.connection_made(transport)
-        assert protocol._transport is transport
-
     def test_datagram_received__request(self):
         """Dispatch a received SIP request datagram to request_received."""
         protocol = ConcreteProtocol()

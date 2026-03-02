@@ -64,7 +64,7 @@ asyncio.run(main())
 #### Incoming call handler
 
 `IncomingCallProtocol` extends `SessionInitiationProtocol` and dispatches INVITE
-requests to `invite_received`. Subclass `IncomingCall` and override `handle` to
+requests to `invite_received`. Subclass `IncomingCall` and override `audio_received` to
 process the RTP audio stream:
 
 ```python
@@ -74,9 +74,9 @@ from sip.calls import IncomingCall, IncomingCallProtocol
 
 
 class MyCall(IncomingCall):
-    def handle(self, audio: bytes) -> None:
-        # Process raw RTP audio payload (e.g. write to a file or pipe)
-        print(f"Received {len(audio)} bytes of audio")
+    def audio_received(self, data: bytes) -> None:
+        # Process raw Opus RTP payload (e.g. decode and write to a file or pipe)
+        print(f"Received {len(data)} bytes of Opus audio")
 
 
 class MyProtocol(IncomingCallProtocol):
@@ -87,7 +87,7 @@ class MyProtocol(IncomingCallProtocol):
 async def main():
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(MyProtocol, local_addr=("0.0.0.0", 5060))
-    await asyncio.sleep(3600)
+    await asyncio.Future()  # run until cancelled
 
 
 asyncio.run(main())
@@ -134,7 +134,7 @@ class MyProtocol(IncomingCallProtocol):
 async def main():
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(MyProtocol, local_addr=("0.0.0.0", 5060))
-    await asyncio.sleep(3600)
+    await asyncio.Future()  # run until cancelled
 
 
 asyncio.run(main())
