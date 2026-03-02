@@ -1,61 +1,16 @@
 """Tests for SIP message parsing and serialization."""
+import pytest
 
 from sip.messages import Request, Response, SIPMessage
 
 
-class TestRequest:
-    def test_request__bytes(self):
-        """Serialize a SIP request to bytes."""
-        request = Request(
-            method="INVITE",
-            uri="sip:bob@biloxi.com",
-            headers={"Via": "SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds"},
-        )
-        assert bytes(request) == (
-            b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
-            b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
-            b"\r\n"
-        )
+class TestSIPMessage:
 
-    def test_request__bytes__with_body(self):
-        """Serialize a SIP request with a body to bytes."""
-        request = Request(
-            method="INVITE",
-            uri="sip:bob@biloxi.com",
-            headers={"Content-Length": "4"},
-            body=b"test",
-        )
-        assert bytes(request) == (
-            b"INVITE sip:bob@biloxi.com SIP/2.0\r\nContent-Length: 4\r\n\r\ntest"
-        )
+    def test_first_line__not_implemented(self):
+        """Return NotImplemented when calling _first_line on SIPMessage."""
+        message = SIPMessage()
+        assert message._first_line() == NotImplemented
 
-
-class TestResponse:
-    def test_response__bytes(self):
-        """Serialize a SIP response to bytes."""
-        response = Response(
-            status_code=200,
-            reason="OK",
-            headers={"Via": "SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds"},
-        )
-        assert bytes(response) == (
-            b"SIP/2.0 200 OK\r\n"
-            b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
-            b"\r\n"
-        )
-
-    def test_response__bytes__with_body(self):
-        """Serialize a SIP response with a body to bytes."""
-        response = Response(
-            status_code=200,
-            reason="OK",
-            headers={"Content-Length": "4"},
-            body=b"test",
-        )
-        assert bytes(response) == (b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest")
-
-
-class TestParse:
     def test_parse__request(self):
         """Parse a SIP request from bytes."""
         data = (
@@ -121,3 +76,56 @@ class TestParse:
             headers={"From": "sip:bob@biloxi.com"},
         )
         assert SIPMessage.parse(bytes(response)) == response
+
+
+
+class TestRequest:
+    def test_request__bytes(self):
+        """Serialize a SIP request to bytes."""
+        request = Request(
+            method="INVITE",
+            uri="sip:bob@biloxi.com",
+            headers={"Via": "SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds"},
+        )
+        assert bytes(request) == (
+            b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
+            b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
+            b"\r\n"
+        )
+
+    def test_request__bytes__with_body(self):
+        """Serialize a SIP request with a body to bytes."""
+        request = Request(
+            method="INVITE",
+            uri="sip:bob@biloxi.com",
+            headers={"Content-Length": "4"},
+            body=b"test",
+        )
+        assert bytes(request) == (
+            b"INVITE sip:bob@biloxi.com SIP/2.0\r\nContent-Length: 4\r\n\r\ntest"
+        )
+
+
+class TestResponse:
+    def test_response__bytes(self):
+        """Serialize a SIP response to bytes."""
+        response = Response(
+            status_code=200,
+            reason="OK",
+            headers={"Via": "SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds"},
+        )
+        assert bytes(response) == (
+            b"SIP/2.0 200 OK\r\n"
+            b"Via: SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bK776asdhds\r\n"
+            b"\r\n"
+        )
+
+    def test_response__bytes__with_body(self):
+        """Serialize a SIP response with a body to bytes."""
+        response = Response(
+            status_code=200,
+            reason="OK",
+            headers={"Content-Length": "4"},
+            body=b"test",
+        )
+        assert bytes(response) == (b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest")

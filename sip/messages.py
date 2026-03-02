@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass(kw_only=True, frozen=True)
 class SIPMessage:
     """A SIP message (RFC 3261 §7)."""
 
@@ -39,10 +39,10 @@ class SIPMessage:
         return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + self.body
 
     def _first_line(self) -> str:
-        raise NotImplementedError
+        return NotImplemented
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True, frozen=True)
 class Request(SIPMessage):
     """A SIP request message (RFC 3261 §7.1)."""
 
@@ -53,7 +53,7 @@ class Request(SIPMessage):
         return f"{self.method} {self.uri} {self.version}"
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True, frozen=True)
 class Response(SIPMessage):
     """A SIP response message (RFC 3261 §7.2)."""
 
