@@ -1,8 +1,9 @@
 """Tests for the SIP Pygments lexer."""
 
 import pytest
-from pygments.token import Name, Number, Operator, Text
-from sip.lexers import SIPLexer
+
+token = pytest.importorskip("pygments.token")
+from sip.lexers import SIPLexer  # noqa: E402
 
 
 class TestSIPLexer:
@@ -39,9 +40,9 @@ class TestSIPLexer:
         data = f"{method} sip:bob@biloxi.com SIP/2.0\r\n\r\n"
         tokens = list(lexer.get_tokens(data))
         token_types = [t for t, _ in tokens]
-        assert Name.Function in token_types
-        assert Name.Namespace in token_types
-        assert Number in token_types
+        assert token.Name.Function in token_types
+        assert token.Name.Namespace in token_types
+        assert token.Number in token_types
 
     def test_sip_lexer__response(self):
         """Tokenize a SIP response first line."""
@@ -49,8 +50,8 @@ class TestSIPLexer:
         data = "SIP/2.0 200 OK\r\n\r\n"
         tokens = list(lexer.get_tokens(data))
         token_types = [t for t, _ in tokens]
-        assert Number in token_types
-        assert Operator in token_types
+        assert token.Number in token_types
+        assert token.Operator in token_types
 
     def test_sip_lexer__headers(self):
         """Tokenize SIP headers."""
@@ -66,11 +67,11 @@ class TestSIPLexer:
         data = "INVITE sip:bob@biloxi.com SIP/2.0\r\nContent-Length: 4\r\n\r\ntest"
         tokens = list(lexer.get_tokens(data))
         token_types = [t for t, _ in tokens]
-        assert Name.Function in token_types
+        assert token.Name.Function in token_types
 
     def test_sip_lexer__text_token(self):
         """Include Text tokens in tokenized output."""
         lexer = SIPLexer()
         data = "INVITE sip:bob@biloxi.com SIP/2.0\r\n\r\n"
         tokens = list(lexer.get_tokens(data))
-        assert any(t == Text for t, _ in tokens)
+        assert any(t == token.Text for t, _ in tokens)
