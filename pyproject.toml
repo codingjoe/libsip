@@ -49,9 +49,6 @@ test = [
 Project-URL = "https://github.com/codingjoe/sip"
 Changelog = "https://github.com/codingjoe/sip/releases"
 
-[tool.flit.module]
-name = "sip"
-
 [tool.setuptools_scm]
 write_to = "sip/_version.py"
 
