@@ -34,7 +34,7 @@ class STUNProtocol:
     """Mixin providing STUN Binding Request/Response handling (RFC 5389).
 
     Mix into an ``asyncio.DatagramProtocol`` subclass that sets
-    ``self._transport`` in ``connection_made``. Call ``_handle_stun`` for
+    ``self._transport`` in ``connection_made``. Call ``handle_stun`` for
     datagrams whose first byte is 0–3 (RFC 7983 multiplexing).
     """
 
@@ -42,7 +42,7 @@ class STUNProtocol:
         super().__init__(*args, **kwargs)
         self._stun_transactions: dict[bytes, asyncio.Future] = {}
 
-    async def _stun_discover(
+    async def stun_discover(
         self, host: str, port: int, timeout_secs: float = 3.0
     ) -> tuple[str, int]:
         """Send a STUN Binding Request and return the discovered public address."""
@@ -64,7 +64,7 @@ class STUNProtocol:
         finally:
             self._stun_transactions.pop(transaction_id, None)
 
-    def _handle_stun(self, data: bytes, addr: tuple[str, int]) -> None:
+    def handle_stun(self, data: bytes, addr: tuple[str, int]) -> None:
         """Parse a STUN Binding Success Response and resolve the pending future."""
         if len(data) < 20:
             return

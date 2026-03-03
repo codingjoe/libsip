@@ -697,7 +697,7 @@ class TestRegisterProtocol:
         assert b"Contact: <sip:alice@203.0.113.1:12345>" in data
 
     def test_handle_stun__parses_xor_mapped_address(self):
-        """_handle_stun resolves the future with the XOR-MAPPED-ADDRESS."""
+        """handle_stun resolves the future with the XOR-MAPPED-ADDRESS."""
 
         async def run():
             p = make_register_protocol()
@@ -720,14 +720,14 @@ class TestRegisterProtocol:
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             p._stun_transactions[transaction_id] = future
-            p._handle_stun(response, ("stun.l.google.com", 19302))
+            p.handle_stun(response, ("stun.l.google.com", 19302))
             result = future.result()
             assert result == ("203.0.113.5", 54321)
 
         asyncio.run(run())
 
     def test_handle_stun__falls_back_to_mapped_address(self):
-        """_handle_stun falls back to MAPPED-ADDRESS when XOR-MAPPED-ADDRESS is absent."""
+        """handle_stun falls back to MAPPED-ADDRESS when XOR-MAPPED-ADDRESS is absent."""
 
         async def run():
             p = make_register_protocol()
@@ -748,7 +748,7 @@ class TestRegisterProtocol:
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             p._stun_transactions[transaction_id] = future
-            p._handle_stun(response, ("stun.example.com", 3478))
+            p.handle_stun(response, ("stun.example.com", 3478))
             assert future.result() == ("198.51.100.7", 60001)
 
         asyncio.run(run())
@@ -759,7 +759,7 @@ class TestRegisterProtocol:
         p.connection_made(make_mock_transport())
         # STUN message starts with byte 0x01 (< 4)
         stun_data = b"\x01\x01" + b"\x00" * 18
-        with patch.object(p, "_handle_stun") as mock_handle:
+        with patch.object(p, "handle_stun") as mock_handle:
             p.datagram_received(stun_data, ("stun.l.google.com", 19302))
             mock_handle.assert_called_once_with(stun_data, ("stun.l.google.com", 19302))
 
@@ -773,12 +773,12 @@ class TestRegisterProtocol:
             mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
 
     def test_handle_stun__truncated_returns_early(self):
-        """_handle_stun silently ignores packets shorter than 20 bytes."""
+        """handle_stun silently ignores packets shorter than 20 bytes."""
         p = make_register_protocol()
         transport = make_mock_transport()
         p.connection_made(transport)
         transport.sendto.reset_mock()  # clear the REGISTER sendto call
-        p._handle_stun(b"\x00" * 19, ("stun.l.google.com", 19302))
+        p.handle_stun(b"\x00" * 19, ("stun.l.google.com", 19302))
         transport.sendto.assert_not_called()
 
     def test_invite_received_after_register(self):

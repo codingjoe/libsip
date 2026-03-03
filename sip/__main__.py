@@ -53,6 +53,24 @@ logger = logging.getLogger(__name__)
 main = sip
 
 
+def _parse_server(server: str) -> tuple[tuple[str, int], str]:
+    """Parse 'HOST[:PORT]' → ((host, port), host)."""
+    if ":" in server:
+        host, port_str = server.rsplit(":", 1)
+        return (host, int(port_str)), host
+    return (server, 5060), server
+
+
+def _parse_stun_server(stun_server: str) -> tuple[str, int] | None:
+    """Parse a STUN server string into a (host, port) tuple, or None if disabled."""
+    if stun_server.lower() == "none":
+        return None
+    if ":" in stun_server:
+        stun_host, stun_port_str = stun_server.rsplit(":", 1)
+        return (stun_host, int(stun_port_str))
+    return (stun_server, 3478)
+
+
 @sip.command()
 @click.option(
     "--model",
@@ -93,23 +111,10 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
     from .calls import IncomingCall, RegisterProtocol  # noqa: PLC0415
     from .whisper import WhisperCall  # noqa: PLC0415
 
-    if ":" in server:
-        host, port_str = server.rsplit(":", 1)
-        port = int(port_str)
-    else:
-        host, port = server, 5060
-    server_addr = (host, port)
-
+    server_addr, host = _parse_server(server)
     if aor is None:
         aor = f"sip:{username}@{host}"
-
-    if stun_server.lower() == "none":
-        stun = None
-    elif ":" in stun_server:
-        stun_host, stun_port_str = stun_server.rsplit(":", 1)
-        stun = (stun_host, int(stun_port_str))
-    else:
-        stun = (stun_server, 3478)
+    stun = _parse_stun_server(stun_server)
 
     class TranscribingCall(WhisperCall):
         def transcription_received(self, text: str) -> None:

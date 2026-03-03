@@ -244,7 +244,7 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
     async def _connect(self) -> None:
         """Discover the public address via STUN, then send REGISTER."""
         try:
-            self.public_address = await self._stun_discover(*self.stun_server_address)
+            self.public_address = await self.stun_discover(*self.stun_server_address)
             logger.info(
                 "STUN: public address is %s:%s",
                 self.public_address[0],
@@ -259,7 +259,7 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Multiplex STUN and SIP messages on the same UDP socket (RFC 7983)."""
         if data and data[0] < 4:  # STUN: first byte is 0–3
-            self._handle_stun(data, addr)
+            self.handle_stun(data, addr)
         else:
             super().datagram_received(data, addr)
 
@@ -326,7 +326,7 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
             nonce = params.get("nonce", "")
             opaque = params.get("opaque")
             qop_options = params.get("qop", "")
-            qop = DigestQoP.AUTH.value if DigestQoP.AUTH in qop_options.split(",") else None
+            qop = DigestQoP.AUTH.value if DigestQoP.AUTH.value in qop_options.split(",") else None
             nc = "00000001"
             cnonce = secrets.token_hex(8) if qop else None
             digest = self.digest_response(

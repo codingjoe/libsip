@@ -78,7 +78,7 @@ class TestSTUNProtocol:
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             protocol._stun_transactions[transaction_id] = future
-            protocol._handle_stun(
+            protocol.handle_stun(
                 make_success_response(
                     transaction_id,
                     make_xor_mapped_address_attribute("203.0.113.5", 54321),
@@ -98,7 +98,7 @@ class TestSTUNProtocol:
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             protocol._stun_transactions[transaction_id] = future
-            protocol._handle_stun(
+            protocol.handle_stun(
                 make_success_response(
                     transaction_id,
                     make_mapped_address_attribute("198.51.100.7", 60001),
@@ -118,7 +118,7 @@ class TestSTUNProtocol:
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             protocol._stun_transactions[transaction_id] = future
-            protocol._handle_stun(
+            protocol.handle_stun(
                 make_success_response(
                     transaction_id,
                     make_xor_mapped_address_attribute("203.0.113.1", 12345),
@@ -133,7 +133,7 @@ class TestSTUNProtocol:
     def test_handle_stun__truncated_packet__returns_early(self):
         """Silently ignore packets shorter than the minimum 20-byte STUN header."""
         protocol = ConcreteSTUN()
-        protocol._handle_stun(b"\x00" * 19, ("stun.example.com", 3478))
+        protocol.handle_stun(b"\x00" * 19, ("stun.example.com", 3478))
         # No exception raised, no future resolved
 
     def test_handle_stun__wrong_magic_cookie__returns_early(self):
@@ -153,7 +153,7 @@ class TestSTUNProtocol:
                 0xDEADBEEF,  # wrong magic cookie
                 transaction_id,
             )
-            protocol._handle_stun(data, ("stun.example.com", 3478))
+            protocol.handle_stun(data, ("stun.example.com", 3478))
             assert not future.done()
 
         asyncio.run(run())
@@ -174,7 +174,7 @@ class TestSTUNProtocol:
                 MAGIC_COOKIE,
                 transaction_id,
             )
-            protocol._handle_stun(data, ("stun.example.com", 3478))
+            protocol.handle_stun(data, ("stun.example.com", 3478))
             assert not future.done()
 
         asyncio.run(run())
@@ -182,7 +182,7 @@ class TestSTUNProtocol:
     def test_handle_stun__unknown_transaction__returns_early(self):
         """Ignore responses whose transaction ID has no pending future."""
         protocol = ConcreteSTUN()
-        protocol._handle_stun(
+        protocol.handle_stun(
             make_success_response(
                 b"\xff" * 12,
                 make_xor_mapped_address_attribute("1.2.3.4", 1234),
@@ -201,7 +201,7 @@ class TestSTUNProtocol:
             future = loop.create_future()
             protocol._stun_transactions[transaction_id] = future
             # Response with no attributes
-            protocol._handle_stun(
+            protocol.handle_stun(
                 make_success_response(transaction_id),
                 ("stun.example.com", 3478),
             )
@@ -227,7 +227,7 @@ class TestSTUNProtocol:
                     future.set_result(("1.2.3.4", 4321))
 
             protocol._transport.sendto.side_effect = capture_sendto
-            result = await protocol._stun_discover("stun.example.com", 3478)
+            result = await protocol.stun_discover("stun.example.com", 3478)
             protocol._transport.sendto.assert_called_once()
             _, called_address = protocol._transport.sendto.call_args[0]
             assert called_address == ("stun.example.com", 3478)
@@ -241,7 +241,7 @@ class TestSTUNProtocol:
         async def run():
             protocol = ConcreteSTUN()
             with pytest.raises((TimeoutError, asyncio.TimeoutError)):
-                await protocol._stun_discover("stun.example.com", 3478, timeout_secs=0.01)
+                await protocol.stun_discover("stun.example.com", 3478, timeout_secs=0.01)
             assert len(protocol._stun_transactions) == 0
 
         asyncio.run(run())

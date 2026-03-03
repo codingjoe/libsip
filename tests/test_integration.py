@@ -3,7 +3,6 @@
 import asyncio
 
 import pytest
-
 from sip.calls import RegisterProtocol
 
 
@@ -25,7 +24,7 @@ def test_stun_discover__public_stun_server():
             local_addr=("0.0.0.0", 0),  # noqa: S104 – ephemeral port for outbound STUN discovery
         )
         try:
-            return await protocol._stun_discover("stun.l.google.com", 19302)
+            return await protocol.stun_discover("stun.l.google.com", 19302)
         finally:
             transport.close()
 

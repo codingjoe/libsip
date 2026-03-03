@@ -7,6 +7,7 @@ import logging
 import os
 import struct
 
+import ffmpeg
 import numpy as np
 
 import whisper
@@ -147,10 +148,8 @@ class WhisperCall(IncomingCall):
     def _decode_opus(self, ogg_data: bytes) -> np.ndarray:
         """Decode Ogg Opus data to a float32 PCM array at 16 kHz via ffmpeg.
 
-        Requires the ``ffmpeg`` system binary to be installed and on ``$PATH``.
+        Requires the ``ffmpeg-python`` package and the system ``ffmpeg`` binary.
         """
-        import ffmpeg  # noqa: PLC0415
-
         try:
             out, _ = (
                 ffmpeg.input("pipe:0", format="ogg")  # _build_ogg_opus always wraps in Ogg
