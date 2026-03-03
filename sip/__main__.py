@@ -80,7 +80,14 @@ main = sip
 @click.option(
     "--local-port", default=5060, show_default=True, help="Local UDP port to bind."
 )
-def transcribe(model, server, aor, username, password, local_port):
+@click.option(
+    "--stun-server",
+    default="stun.l.google.com:19302",
+    envvar="STUN_SERVER",
+    show_default=True,
+    help="STUN server for NAT traversal (HOST:PORT or 'none' to disable).",
+)
+def transcribe(model, server, aor, username, password, local_port, stun_server):
     """Register with a SIP carrier and transcribe incoming calls via Whisper."""
     from .calls import IncomingCall, RegisterProtocol  # noqa: PLC0415
     from .whisper import WhisperCall  # noqa: PLC0415
@@ -91,6 +98,14 @@ def transcribe(model, server, aor, username, password, local_port):
     else:
         host, port = server, 5060
     server_addr = (host, port)
+
+    if stun_server.lower() == "none":
+        stun = None
+    elif ":" in stun_server:
+        stun_host, stun_port_str = stun_server.rsplit(":", 1)
+        stun = (stun_host, int(stun_port_str))
+    else:
+        stun = (stun_server, 3478)
 
     class TranscribingCall(WhisperCall):
         def transcription_received(self, text: str) -> None:
@@ -112,7 +127,7 @@ def transcribe(model, server, aor, username, password, local_port):
     async def run():
         loop = asyncio.get_running_loop()
         await loop.create_datagram_endpoint(
-            lambda: TranscribingProtocol(server_addr, aor, username, password),
+            lambda: TranscribingProtocol(server_addr, aor, username, password, stun_server=stun),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )
         click.echo(f"Listening on port {local_port}…", err=True)

@@ -2,6 +2,8 @@
 
 import asyncio
 import hashlib
+import socket
+import struct
 from unittest.mock import MagicMock
 
 import pytest
@@ -481,7 +483,7 @@ class TestRegisterProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b"From: sip:alice@example.com" in data
         assert b"To: sip:alice@example.com" in data
-        assert b"Contact: <sip:alice@example.com>" in data
+        assert b"Contact: <sip:alice@127.0.0.1:5060>" in data
         assert b"Expires: 3600" in data
 
     def test_register__increments_cseq(self):
@@ -665,6 +667,97 @@ class TestRegisterProtocol:
         branch1 = re.search(rb"branch=(z9hG4bK[0-9a-f]{32})", data1).group(1)
         branch2 = re.search(rb"branch=(z9hG4bK[0-9a-f]{32})", data2).group(1)
         assert branch1 != branch2
+
+    def test_register__contact_uses_local_addr_when_no_stun(self):
+        """Contact header uses local socket address when STUN is not configured."""
+        p = make_register_protocol()
+        transport = make_mock_transport("10.0.0.5", 5060)
+        p.connection_made(transport)
+        data, _ = transport.sendto.call_args[0]
+        assert b"Contact: <sip:alice@10.0.0.5:5060>" in data
+
+    def test_register__contact_uses_public_addr_when_stun_discovered(self):
+        """Contact header uses the STUN-discovered public address."""
+        p = make_register_protocol()
+        transport = make_mock_transport("10.0.0.5", 5060)
+        p.connection_made(transport)
+        p._public_addr = ("203.0.113.1", 12345)
+        transport.reset_mock()
+        p.register()
+        data, _ = transport.sendto.call_args[0]
+        assert b"Contact: <sip:alice@203.0.113.1:12345>" in data
+
+    def test_handle_stun__parses_xor_mapped_address(self):
+        """_handle_stun resolves the future with the XOR-MAPPED-ADDRESS."""
+
+        async def run():
+            p = make_register_protocol()
+            p.connection_made(make_mock_transport())
+            p._stun_transactions = {}
+            # Build a fake STUN Binding Success Response with XOR-MAPPED-ADDRESS
+            magic_cookie = 0x2112A442
+            transaction_id = b"\x01" * 12
+            # Public addr: 203.0.113.5:54321
+            public_ip = (203 << 24) | (0 << 16) | (113 << 8) | 5
+            xor_ip = public_ip ^ magic_cookie
+            xor_port = 54321 ^ (magic_cookie >> 16)
+            attr_val = struct.pack(">BBH I", 0x00, 0x01, xor_port, xor_ip)
+            attr = struct.pack(">HH", 0x0020, len(attr_val)) + attr_val
+            msg_len = len(attr)
+            response = struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id) + attr
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            p._stun_transactions[transaction_id] = future
+            p._handle_stun(response, ("stun.l.google.com", 19302))
+            result = future.result()
+            assert result == ("203.0.113.5", 54321)
+
+        asyncio.run(run())
+
+    def test_handle_stun__falls_back_to_mapped_address(self):
+        """_handle_stun falls back to MAPPED-ADDRESS when XOR-MAPPED-ADDRESS is absent."""
+
+        async def run():
+            p = make_register_protocol()
+            p.connection_made(make_mock_transport())
+            p._stun_transactions = {}
+            magic_cookie = 0x2112A442
+            transaction_id = b"\x02" * 12
+            # MAPPED-ADDRESS: 198.51.100.7:60001 (not XOR'd)
+            attr_val = struct.pack(">BBH4s", 0x00, 0x01, 60001, socket.inet_aton("198.51.100.7"))
+            attr = struct.pack(">HH", 0x0001, len(attr_val)) + attr_val
+            msg_len = len(attr)
+            response = struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id) + attr
+            loop = asyncio.get_running_loop()
+            future = loop.create_future()
+            p._stun_transactions[transaction_id] = future
+            p._handle_stun(response, ("stun.example.com", 3478))
+            assert future.result() == ("198.51.100.7", 60001)
+
+        asyncio.run(run())
+
+    def test_datagram_received__stun_routes_to_handle_stun(self):
+        """datagram_received routes STUN messages (first byte 0–3) to _handle_stun."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        p = make_register_protocol()
+        p.connection_made(make_mock_transport())
+        # STUN message starts with byte 0x01 (< 4)
+        stun_data = b"\x01\x01" + b"\x00" * 18
+        with patch.object(p, "_handle_stun") as mock_handle:
+            p.datagram_received(stun_data, ("stun.l.google.com", 19302))
+            mock_handle.assert_called_once_with(stun_data, ("stun.l.google.com", 19302))
+
+    def test_datagram_received__sip_routes_to_super(self):
+        """datagram_received routes SIP messages (first byte >= 4) to the SIP parser."""
+        from unittest.mock import patch  # noqa: PLC0415
+
+        p = make_register_protocol()
+        p.connection_made(make_mock_transport())
+        sip_data = b"SIP/2.0 200 OK\r\nCSeq: 1 REGISTER\r\n\r\n"
+        with patch.object(type(p).__mro__[1], "datagram_received") as mock_super:
+            p.datagram_received(sip_data, ("192.0.2.2", 5060))
+            mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
 
     def test_invite_received_after_register(self):
         """INVITE dispatching still works after registration (inherits IncomingCallProtocol)."""

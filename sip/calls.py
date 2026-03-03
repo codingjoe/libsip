@@ -7,6 +7,8 @@ import hashlib
 import logging
 import os
 import re
+import socket
+import struct
 import uuid
 from collections.abc import Callable
 
@@ -179,6 +181,7 @@ class RegisterProtocol(IncomingCallProtocol):
         aor: str,
         username: str,
         password: str,
+        stun_server: tuple[str, int] | None = None,
     ) -> None:
         self._server_addr = server_addr
         self._aor = aor
@@ -186,6 +189,9 @@ class RegisterProtocol(IncomingCallProtocol):
         self._password = password
         self._call_id = str(uuid.uuid4())
         self._cseq = 0
+        self._stun_server = stun_server
+        self._public_addr: tuple[str, int] | None = None
+        self._stun_transactions: dict[bytes, asyncio.Future] = {}
 
     @property
     def _registrar_uri(self) -> str:
@@ -195,9 +201,78 @@ class RegisterProtocol(IncomingCallProtocol):
         return f"{scheme}:{hostport}"
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport and send the initial REGISTER request."""
+        """Store the transport; discover public address via STUN then send REGISTER."""
         super().connection_made(transport)
+        if self._stun_server:
+            asyncio.ensure_future(self._connect())
+        else:
+            self.register()
+
+    async def _connect(self) -> None:
+        """Discover the public address via STUN, then send REGISTER."""
+        try:
+            self._public_addr = await self._stun_discover(*self._stun_server)
+            logger.info(
+                "STUN: public address is %s:%s", self._public_addr[0], self._public_addr[1]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("STUN discovery failed (%s), continuing with local address", exc)
         self.register()
+
+    async def _stun_discover(self, host: str, port: int, timeout: float = 3.0) -> tuple[str, int]:
+        """Send a STUN Binding Request on the SIP socket and return the public address."""
+        magic_cookie = 0x2112A442
+        transaction_id = os.urandom(12)
+        # STUN Binding Request: type=0x0001, length=0
+        request = struct.pack(">HHI12s", 0x0001, 0, magic_cookie, transaction_id)
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[tuple[str, int]] = loop.create_future()
+        self._stun_transactions[transaction_id] = future
+        logger.debug("Sending STUN Binding Request to %s:%s", host, port)
+        self._transport.sendto(request, (host, port))
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._stun_transactions.pop(transaction_id, None)
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Multiplex STUN and SIP messages on the same UDP socket (RFC 7983)."""
+        if data and data[0] < 4:  # STUN: first byte is 0–3
+            self._handle_stun(data, addr)
+        else:
+            super().datagram_received(data, addr)
+
+    def _handle_stun(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Parse a STUN Binding Success Response and resolve the pending STUN future."""
+        if len(data) < 20:
+            return
+        msg_type, _msg_len, magic_cookie = struct.unpack(">HHI", data[:8])
+        transaction_id = data[8:20]
+        if magic_cookie != 0x2112A442 or msg_type != 0x0101:  # Binding Success Response
+            return
+        future = self._stun_transactions.get(transaction_id)
+        if future is None or future.done():
+            return
+        # Parse attributes to find XOR-MAPPED-ADDRESS (0x0020) or MAPPED-ADDRESS (0x0001)
+        offset = 20
+        xor_mapped: tuple[str, int] | None = None
+        mapped: tuple[str, int] | None = None
+        while offset + 4 <= len(data):
+            attr_type, attr_len = struct.unpack(">HH", data[offset : offset + 4])
+            attr_val = data[offset + 4 : offset + 4 + attr_len]
+            if attr_type == 0x0020 and len(attr_val) >= 8 and attr_val[1] == 0x01:  # XOR-MAPPED IPv4
+                port = struct.unpack(">H", attr_val[2:4])[0] ^ (magic_cookie >> 16)
+                ip_int = struct.unpack(">I", attr_val[4:8])[0] ^ magic_cookie
+                xor_mapped = (socket.inet_ntoa(struct.pack(">I", ip_int)), port)
+            elif attr_type == 0x0001 and len(attr_val) >= 8 and attr_val[1] == 0x01:  # MAPPED-ADDRESS IPv4
+                port = struct.unpack(">H", attr_val[2:4])[0]
+                mapped = (socket.inet_ntoa(attr_val[4:8]), port)
+            offset += 4 + ((attr_len + 3) & ~3)  # attributes are 4-byte aligned
+        result = xor_mapped or mapped
+        if result:
+            future.set_result(result)
+        else:
+            future.set_exception(RuntimeError("No address attribute in STUN response"))
 
     def register(
         self,
@@ -215,13 +290,18 @@ class RegisterProtocol(IncomingCallProtocol):
         local_address = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
         branch = f"z9hG4bK{uuid.uuid4().hex}"
         logger.debug("REGISTER Via branch: %s", branch)
+        # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
+        _aor_rest = self._aor.partition(":")[2]
+        _user = _aor_rest.partition("@")[0] if "@" in _aor_rest else _aor_rest
+        # Use the public (STUN-discovered) address in Contact for inbound routing
+        contact_addr = self._public_addr or local_address
         headers = {
             "Via": f"SIP/2.0/UDP {local_address[0]}:{local_address[1]};rport;branch={branch}",
             "From": self._aor,
             "To": self._aor,
             "Call-ID": self._call_id,
             "CSeq": f"{self._cseq} REGISTER",
-            "Contact": f"<{self._aor}>",
+            "Contact": f"<sip:{_user}@{contact_addr[0]}:{contact_addr[1]}>",
             "Expires": "3600",
             "Max-Forwards": "70",
         }
