@@ -464,12 +464,12 @@ class TestRegisterProtocol:
     def test_registrar_uri__strips_user_from_aor(self):
         """Derive registrar URI from AOR by stripping the user part."""
         p = make_register_protocol(aor="sip:alice@example.com")
-        assert p._registrar_uri == "sip:example.com"
+        assert p.registrar_uri == "sip:example.com"
 
     def test_registrar_uri__preserves_port(self):
         """Preserve a non-default port in the derived registrar URI."""
         p = make_register_protocol(aor="sip:alice@example.com:5080")
-        assert p._registrar_uri == "sip:example.com:5080"
+        assert p.registrar_uri == "sip:example.com:5080"
 
     def test_connection_made__sends_register(self):
         """Send a REGISTER request immediately after connection is made."""
@@ -499,9 +499,9 @@ class TestRegisterProtocol:
         """CSeq increments with each REGISTER sent."""
         p = make_register_protocol()
         p.connection_made(make_mock_transport())
-        assert p._cseq == 1
+        assert p.cseq == 1
         p.register()
-        assert p._cseq == 2
+        assert p.cseq == 2
 
     def test_register__with_authorization(self):
         """Authorization header is included when credentials are provided."""
@@ -690,7 +690,7 @@ class TestRegisterProtocol:
         p = make_register_protocol()
         transport = make_mock_transport("10.0.0.5", 5060)
         p.connection_made(transport)
-        p._public_addr = ("203.0.113.1", 12345)
+        p.public_address = ("203.0.113.1", 12345)
         transport.reset_mock()
         p.register()
         data, _ = transport.sendto.call_args[0]

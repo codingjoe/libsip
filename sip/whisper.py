@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import struct
-import subprocess
 
 import numpy as np
 
@@ -75,7 +74,7 @@ def _build_ogg_opus(packets: list[bytes]) -> bytes:
         b"OpusHead",
         1,  # version
         1,  # channel count (mono)
-        3840,  # pre-skip samples (80 ms at 48 kHz)
+        3840,  # pre-skip: 80 ms at 48 kHz (RFC 7587)
         sample_rate,
         0,  # output gain
         0,  # channel mapping family (mono/stereo)
@@ -150,34 +149,29 @@ class WhisperCall(IncomingCall):
 
         Requires the ``ffmpeg`` system binary to be installed and on ``$PATH``.
         """
-        command = [  # noqa: S607
-            "ffmpeg",
-            "-loglevel",
-            "error",
-            "-i",
-            "pipe:0",
-            "-f",
-            "f32le",
-            "-ar",
-            str(whisper.audio.SAMPLE_RATE),
-            "-ac",
-            "1",
-            "pipe:1",
-        ]
+        import ffmpeg  # noqa: PLC0415
+
         try:
-            process = subprocess.run(  # noqa: S603
-                command, input=ogg_data, capture_output=True, timeout=self.decode_timeout_secs
+            out, _ = (
+                ffmpeg.input("pipe:0", format="ogg")  # _build_ogg_opus always wraps in Ogg
+                .output(
+                    "pipe:1",
+                    format="f32le",
+                    ar=str(whisper.audio.SAMPLE_RATE),
+                    ac="1",
+                )
+                .run(input=ogg_data, capture_stdout=True, capture_stderr=True)
             )
+        except ffmpeg.Error as exc:
+            raise RuntimeError(
+                f"ffmpeg decoding failed: {exc.stderr.decode(errors='replace')}"
+            ) from exc
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "ffmpeg is not installed or not on $PATH. "
                 "Install it (e.g. `apt install ffmpeg` or `brew install ffmpeg`)."
             ) from exc
-        if process.returncode != 0:
-            raise RuntimeError(
-                f"ffmpeg decoding failed: {process.stderr.decode(errors='replace')}"
-            )
-        return np.frombuffer(process.stdout, dtype=np.float32)
+        return np.frombuffer(out, dtype=np.float32)
 
     def _run_transcription(self, audio: np.ndarray) -> str:
         """Transcribe a float32 PCM array using the Whisper model."""

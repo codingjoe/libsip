@@ -38,7 +38,7 @@ cli = ["click", "pygments", "openai-whisper", "numpy"]
 pygments = ["Pygments"]
 # whisper also requires the system ffmpeg binary (not a Python package).
 # Install via: apt install ffmpeg / brew install ffmpeg.
-whisper = ["openai-whisper", "numpy"]
+whisper = ["openai-whisper", "numpy", "ffmpeg-python"]
 
 [project.scripts]
 sip = "sip.__main__:main"
@@ -67,8 +67,11 @@ write_to = "sip/_version.py"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov --tb=short -rxs"
+addopts = "--cov --tb=short -rxs -m 'not integration'"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests as integration tests requiring network access (deselect with '-m \"not integration\"')",
+]
 
 [tool.coverage.run]
 source = ["sip"]

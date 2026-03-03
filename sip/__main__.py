@@ -71,9 +71,10 @@ main = sip
 @click.option(
     "--aor",
     envvar="SIP_AOR",
-    required=True,
+    required=False,
+    default=None,
     metavar="SIP_AOR",
-    help="SIP Address of Record.",
+    help="SIP Address of Record (defaults to sip:{username}@{server_host}).",
 )
 @click.option("--username", envvar="SIP_USERNAME", required=True, help="SIP username.")
 @click.option("--password", envvar="SIP_PASSWORD", required=True, help="SIP password.")
@@ -98,6 +99,9 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
     else:
         host, port = server, 5060
     server_addr = (host, port)
+
+    if aor is None:
+        aor = f"sip:{username}@{host}"
 
     if stun_server.lower() == "none":
         stun = None
@@ -128,7 +132,7 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
         loop = asyncio.get_running_loop()
         await loop.create_datagram_endpoint(
             lambda: TranscribingProtocol(
-                server_addr, aor, username, password, stun_server=stun
+                server_addr, aor, username, password, stun_server_address=stun
             ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )

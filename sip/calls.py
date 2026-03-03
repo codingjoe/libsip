@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import hashlib
 import logging
-import os
 import re
+import secrets
 import uuid
 from collections.abc import Callable
 
@@ -20,37 +21,36 @@ __all__ = ["IncomingCall", "IncomingCallProtocol", "RegisterProtocol", "RTPProto
 logger = logging.getLogger(__name__)
 
 
-def _parse_auth_challenge(header: str) -> dict[str, str]:
-    """Parse Digest challenge parameters from a WWW-Authenticate/Proxy-Authenticate header."""
-    _, _, params_str = header.partition(" ")
-    params = {}
-    for part in re.split(r",\s*(?=[a-zA-Z])", params_str):
-        key, _, value = part.partition("=")
-        if key.strip():
-            params[key.strip()] = value.strip().strip('"')
-    return params
+class SIPStatus(str, enum.Enum):
+    """Common SIP response status codes and reason phrases (RFC 3261)."""
+
+    OK = "200 OK"
+    BUSY_HERE = "486 Busy Here"
+
+    @property
+    def status_code(self) -> int:
+        """Return the numeric status code."""
+        return int(self.value.split(" ", 1)[0])
+
+    @property
+    def reason(self) -> str:
+        """Return the reason phrase."""
+        return self.value.split(" ", 1)[1]
 
 
-def _digest_response(
-    *,
-    username: str,
-    password: str,
-    realm: str,
-    nonce: str,
-    method: str,
-    uri: str,
-    qop: str | None = None,
-    nc: str = "00000001",
-    cnonce: str | None = None,
-) -> str:
-    """Compute an RFC 2617 / RFC 3261 §22 MD5 digest response."""
-    ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()  # noqa: S324
-    ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()  # noqa: S324
-    if qop in ("auth", "auth-int"):
-        return hashlib.md5(  # noqa: S324
-            f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}".encode()
-        ).hexdigest()
-    return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()  # noqa: S324
+class SIPStatusCode(enum.IntEnum):
+    """Common SIP response status codes (RFC 3261)."""
+
+    OK = 200
+    UNAUTHORIZED = 401
+    PROXY_AUTHENTICATION_REQUIRED = 407
+
+
+class DigestQoP(str, enum.Enum):
+    """Quality of protection values for HTTP Digest Authentication (RFC 2617)."""
+
+    AUTH = "auth"
+    AUTH_INT = "auth-int"
 
 
 class IncomingCall(RTPProtocol):
@@ -92,8 +92,8 @@ class IncomingCall(RTPProtocol):
         ).encode()
         self._send(
             Response(
-                status_code=200,
-                reason="OK",
+                status_code=SIPStatus.OK.status_code,
+                reason=SIPStatus.OK.reason,
                 headers={
                     **{
                         key: value
@@ -107,7 +107,11 @@ class IncomingCall(RTPProtocol):
             self._addr,
         )
 
-    def reject(self, status_code: int = 486, reason: str = "Busy Here") -> None:
+    def reject(
+        self,
+        status_code: int = SIPStatus.BUSY_HERE.status_code,
+        reason: str = SIPStatus.BUSY_HERE.reason,
+    ) -> None:
         """Reject the call."""
         logger.info(
             "Rejecting call from %s with %s %s", self.caller, status_code, reason
@@ -168,35 +172,71 @@ class IncomingCallProtocol(SessionInitiationProtocol):
 class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
     """SIP UAC: registers with a carrier via digest auth and handles inbound calls."""
 
+    #: RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
+    VIA_BRANCH_PREFIX = "z9hG4bK"
+
     def __init__(
         self,
-        server_addr: tuple[str, int],
+        server_address: tuple[str, int],
         aor: str,
         username: str,
         password: str,
-        stun_server: tuple[str, int] | None = None,
+        stun_server_address: tuple[str, int] | None = None,
     ) -> None:
         super().__init__()
-        self._server_addr = server_addr
-        self._aor = aor
-        self._username = username
-        self._password = password
-        self._call_id = str(uuid.uuid4())
-        self._cseq = 0
-        self._stun_server = stun_server
-        self._public_addr: tuple[str, int] | None = None
+        self.server_address = server_address
+        self.aor = aor
+        self.username = username
+        self.password = password
+        self.call_id = str(uuid.uuid4())
+        self.cseq = 0
+        self.stun_server_address = stun_server_address
+        self.public_address: tuple[str, int] | None = None
 
     @property
-    def _registrar_uri(self) -> str:
+    def registrar_uri(self) -> str:
         """Registrar Request-URI derived from the AOR (e.g. sip:example.com)."""
-        scheme, _, rest = self._aor.partition(":")
+        scheme, _, rest = self.aor.partition(":")
         _, _, hostport = rest.partition("@")
         return f"{scheme}:{hostport}"
+
+    @staticmethod
+    def parse_auth_challenge(header: str) -> dict[str, str]:
+        """Parse Digest challenge parameters from a WWW-Authenticate/Proxy-Authenticate header."""
+        _, _, params_str = header.partition(" ")
+        params = {}
+        for part in re.split(r",\s*(?=[a-zA-Z])", params_str):
+            key, _, value = part.partition("=")
+            if key.strip():
+                params[key.strip()] = value.strip().strip('"')
+        return params
+
+    @staticmethod
+    def digest_response(
+        *,
+        username: str,
+        password: str,
+        realm: str,
+        nonce: str,
+        method: str,
+        uri: str,
+        qop: str | None = None,
+        nc: str = "00000001",
+        cnonce: str | None = None,
+    ) -> str:
+        """Compute an RFC 2617 / RFC 3261 §22 MD5 digest response."""
+        ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()  # noqa: S324
+        ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()  # noqa: S324
+        if qop in (DigestQoP.AUTH, DigestQoP.AUTH_INT):
+            return hashlib.md5(  # noqa: S324
+                f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}".encode()
+            ).hexdigest()
+        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()  # noqa: S324
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport; discover public address via STUN then send REGISTER."""
         super().connection_made(transport)
-        if self._stun_server:
+        if self.stun_server_address:
             asyncio.ensure_future(self._connect())
         else:
             self.register()
@@ -204,11 +244,11 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
     async def _connect(self) -> None:
         """Discover the public address via STUN, then send REGISTER."""
         try:
-            self._public_addr = await self._stun_discover(*self._stun_server)
+            self.public_address = await self._stun_discover(*self.stun_server_address)
             logger.info(
                 "STUN: public address is %s:%s",
-                self._public_addr[0],
-                self._public_addr[1],
+                self.public_address[0],
+                self.public_address[1],
             )
         except (TimeoutError, OSError, RuntimeError) as exc:
             logger.warning(
@@ -229,29 +269,29 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
         proxy_authorization: str | None = None,
     ) -> None:
         """Send a REGISTER request to the carrier, optionally with credentials."""
-        self._cseq += 1
+        self.cseq += 1
         logger.debug(
             "Sending REGISTER to %s:%s (CSeq %s)",
-            self._server_addr[0],
-            self._server_addr[1],
-            self._cseq,
+            self.server_address[0],
+            self.server_address[1],
+            self.cseq,
         )
         local_address = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
-        branch = f"z9hG4bK{uuid.uuid4().hex}"
+        branch = f"{self.VIA_BRANCH_PREFIX}{secrets.token_hex(16)}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
-        aor_rest = self._aor.partition(":")[2]
+        aor_rest = self.aor.partition(":")[2]
         user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         # Use the public (STUN-discovered) address in Contact for inbound routing
-        contact_addr = self._public_addr or local_address
+        contact_address = self.public_address or local_address
         headers = {
             "Via": f"SIP/2.0/UDP {local_address[0]}:{local_address[1]};rport;branch={branch}",
-            "From": self._aor,
-            "To": self._aor,
-            "Call-ID": self._call_id,
-            "CSeq": f"{self._cseq} REGISTER",
-            "Contact": f"<sip:{user}@{contact_addr[0]}:{contact_addr[1]}>",
-            "Expires": "3600",
+            "From": self.aor,
+            "To": self.aor,
+            "Call-ID": self.call_id,
+            "CSeq": f"{self.cseq} REGISTER",
+            "Contact": f"<sip:{user}@{contact_address[0]}:{contact_address[1]}>",
+            "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
         }
         if authorization is not None:
@@ -259,47 +299,50 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
         if proxy_authorization is not None:
             headers["Proxy-Authorization"] = proxy_authorization
         self.send(
-            Request(method="REGISTER", uri=self._registrar_uri, headers=headers),
-            self._server_addr,
+            Request(method="REGISTER", uri=self.registrar_uri, headers=headers),
+            self.server_address,
         )
 
     def response_received(self, response: Response, addr: tuple[str, int]) -> None:
         """Handle REGISTER responses including digest auth challenges (RFC 3261 §22)."""
-        if response.status_code == 200 and "REGISTER" in response.headers.get(
+        if response.status_code == SIPStatusCode.OK and "REGISTER" in response.headers.get(
             "CSeq", ""
         ):
             logger.info("Registration successful")
             self.registered()
             return
-        if response.status_code in (401, 407):
+        if response.status_code in (
+            SIPStatusCode.UNAUTHORIZED,
+            SIPStatusCode.PROXY_AUTHENTICATION_REQUIRED,
+        ):
             logger.debug(
                 "Auth challenge received (%s), retrying with credentials",
                 response.status_code,
             )
-            is_proxy = response.status_code == 407
+            is_proxy = response.status_code == SIPStatusCode.PROXY_AUTHENTICATION_REQUIRED
             challenge_key = "Proxy-Authenticate" if is_proxy else "WWW-Authenticate"
-            params = _parse_auth_challenge(response.headers.get(challenge_key, ""))
+            params = self.parse_auth_challenge(response.headers.get(challenge_key, ""))
             realm = params.get("realm", "")
             nonce = params.get("nonce", "")
             opaque = params.get("opaque")
             qop_options = params.get("qop", "")
-            qop = "auth" if "auth" in qop_options.split(",") else None
+            qop = DigestQoP.AUTH.value if DigestQoP.AUTH in qop_options.split(",") else None
             nc = "00000001"
-            cnonce = os.urandom(8).hex() if qop else None
-            digest = _digest_response(
-                username=self._username,
-                password=self._password,
+            cnonce = secrets.token_hex(8) if qop else None
+            digest = self.digest_response(
+                username=self.username,
+                password=self.password,
                 realm=realm,
                 nonce=nonce,
                 method="REGISTER",
-                uri=self._registrar_uri,
+                uri=self.registrar_uri,
                 qop=qop,
                 nc=nc,
                 cnonce=cnonce,
             )
             auth_value = (
-                f'Digest username="{self._username}", realm="{realm}", '
-                f'nonce="{nonce}", uri="{self._registrar_uri}", '
+                f'Digest username="{self.username}", realm="{realm}", '
+                f'nonce="{nonce}", uri="{self.registrar_uri}", '
                 f'response="{digest}", algorithm="MD5"'
             )
             if qop:
@@ -319,3 +362,10 @@ class RegisterProtocol(STUNProtocol, IncomingCallProtocol):
     def registered(self) -> None:
         """Handle a confirmed carrier registration. Override to react."""
         return NotImplemented
+
+
+# Backward-compatibility aliases so existing code and tests can still import these
+# directly from the module. Prefer RegisterProtocol.parse_auth_challenge and
+# RegisterProtocol.digest_response in new code.
+_parse_auth_challenge = RegisterProtocol.parse_auth_challenge
+_digest_response = RegisterProtocol.digest_response
