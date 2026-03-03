@@ -252,7 +252,11 @@ class RegisterProtocol(IncomingCallProtocol):
         """Parse a STUN Binding Success Response and resolve the pending STUN future."""
         if len(data) < 20:
             return
-        msg_type, _msg_len, magic_cookie = struct.unpack(">HHI", data[:8])
+        try:
+            msg_type, _msg_len, magic_cookie = struct.unpack(">HHI", data[:8])
+        except struct.error:
+            logger.debug("Ignoring malformed STUN packet from %s", addr, exc_info=True)
+            return
         transaction_id = data[8:20]
         if magic_cookie != 0x2112A442 or msg_type != 0x0101:  # Binding Success Response
             return

@@ -86,3 +86,11 @@ class TestSessionInitiationProtocol:
         """Log an exception on connection lost without re-raising."""
         protocol = SessionInitiationProtocol()
         protocol.connection_lost(Exception("Connection reset"))  # should not raise
+
+    def test_datagram_received__malformed_does_not_raise(self):
+        """Malformed datagrams (keepalive CRLF, binary, etc.) are silently dropped."""
+        protocol = ConcreteProtocol()
+        for junk in (b"\r\n", b"", b"\x00\x01\x02", b"GARBAGE"):
+            protocol.datagram_received(junk, ("192.0.2.1", 5060))  # must not raise
+        assert protocol.requests == []
+        assert protocol.responses == []

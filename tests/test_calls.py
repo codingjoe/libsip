@@ -763,6 +763,16 @@ class TestRegisterProtocol:
             p.datagram_received(sip_data, ("192.0.2.2", 5060))
             mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
 
+    def test_handle_stun__malformed_does_not_raise(self):
+        """_handle_stun silently drops malformed (truncated) STUN packets."""
+        p = make_register_protocol()
+        p.connection_made(make_mock_transport())
+        # 19 bytes — just below the 20-byte minimum, returns early without parsing
+        p._handle_stun(b"\x00" * 19, ("stun.l.google.com", 19302))
+        # 20+ bytes with a valid-looking header but no matching transaction → dropped silently
+        truncated = b"\x01\x01" + b"\x00" * 18
+        p._handle_stun(truncated, ("stun.l.google.com", 19302))  # must not raise
+
     def test_invite_received_after_register(self):
         """INVITE dispatching still works after registration (inherits IncomingCallProtocol)."""
         calls = []
