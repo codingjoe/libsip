@@ -215,7 +215,7 @@ class RegisterProtocol(IncomingCallProtocol):
             logger.info(
                 "STUN: public address is %s:%s", self._public_addr[0], self._public_addr[1]
             )
-        except Exception as exc:  # noqa: BLE001
+        except (TimeoutError, OSError, RuntimeError) as exc:
             logger.warning("STUN discovery failed (%s), continuing with local address", exc)
         self.register()
 
@@ -291,8 +291,8 @@ class RegisterProtocol(IncomingCallProtocol):
         branch = f"z9hG4bK{uuid.uuid4().hex}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
-        _aor_rest = self._aor.partition(":")[2]
-        _user = _aor_rest.partition("@")[0] if "@" in _aor_rest else _aor_rest
+        aor_rest = self._aor.partition(":")[2]
+        user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         # Use the public (STUN-discovered) address in Contact for inbound routing
         contact_addr = self._public_addr or local_address
         headers = {
@@ -301,7 +301,7 @@ class RegisterProtocol(IncomingCallProtocol):
             "To": self._aor,
             "Call-ID": self._call_id,
             "CSeq": f"{self._cseq} REGISTER",
-            "Contact": f"<sip:{_user}@{contact_addr[0]}:{contact_addr[1]}>",
+            "Contact": f"<sip:{user}@{contact_addr[0]}:{contact_addr[1]}>",
             "Expires": "3600",
             "Max-Forwards": "70",
         }
