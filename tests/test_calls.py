@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import socket
 import struct
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sip.calls import (
@@ -738,8 +738,6 @@ class TestRegisterProtocol:
 
     def test_datagram_received__stun_routes_to_handle_stun(self):
         """datagram_received routes STUN messages (first byte 0–3) to _handle_stun."""
-        from unittest.mock import patch  # noqa: PLC0415
-
         p = make_register_protocol()
         p.connection_made(make_mock_transport())
         # STUN message starts with byte 0x01 (< 4)
@@ -750,12 +748,10 @@ class TestRegisterProtocol:
 
     def test_datagram_received__sip_routes_to_super(self):
         """datagram_received routes SIP messages (first byte >= 4) to the SIP parser."""
-        from unittest.mock import patch  # noqa: PLC0415
-
         p = make_register_protocol()
         p.connection_made(make_mock_transport())
         sip_data = b"SIP/2.0 200 OK\r\nCSeq: 1 REGISTER\r\n\r\n"
-        with patch.object(type(p).__mro__[1], "datagram_received") as mock_super:
+        with patch.object(IncomingCallProtocol, "datagram_received") as mock_super:
             p.datagram_received(sip_data, ("192.0.2.2", 5060))
             mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
 
