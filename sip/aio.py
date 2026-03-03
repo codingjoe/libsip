@@ -18,14 +18,11 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Dispatch a received datagram to the appropriate handler."""
-        try:
-            match Message.parse(data):
-                case Request() as request:
-                    self.request_received(request, addr)
-                case Response() as response:
-                    self.response_received(response, addr)
-        except ValueError:
-            logger.debug("Ignoring unparseable datagram from %s", addr, exc_info=True)
+        match Message.parse(data):
+            case Request() as request:
+                self.request_received(request, addr)
+            case Response() as response:
+                self.response_received(response, addr)
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Handle a received SIP request. Override in subclasses to process requests."""

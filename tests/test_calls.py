@@ -371,6 +371,15 @@ class TestIncomingCallProtocol:
         call = protocol.create_call(make_invite(), ("192.0.2.1", 5060))
         assert isinstance(call, CustomCall)
 
+    def test_datagram_received__keepalive__sends_pong(self):
+        """Double-CRLF keepalive (RFC 5626 §4.4.1) is answered with a single-CRLF pong."""
+        protocol = IncomingCallProtocol()
+        transport = MagicMock()
+        protocol.connection_made(transport)
+        addr = ("192.0.2.1", 5060)
+        protocol.datagram_received(b"\r\n\r\n", addr)
+        transport.sendto.assert_called_once_with(b"\r\n", addr)
+
 
 def make_register_protocol(
     server_addr=("192.0.2.2", 5060),
@@ -763,15 +772,14 @@ class TestRegisterProtocol:
             p.datagram_received(sip_data, ("192.0.2.2", 5060))
             mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
 
-    def test_handle_stun__malformed_does_not_raise(self):
-        """_handle_stun silently drops malformed (truncated) STUN packets."""
+    def test_handle_stun__truncated_returns_early(self):
+        """_handle_stun silently ignores packets shorter than 20 bytes."""
         p = make_register_protocol()
-        p.connection_made(make_mock_transport())
-        # 19 bytes — just below the 20-byte minimum, returns early without parsing
+        transport = make_mock_transport()
+        p.connection_made(transport)
+        transport.sendto.reset_mock()  # clear the REGISTER sendto call
         p._handle_stun(b"\x00" * 19, ("stun.l.google.com", 19302))
-        # 20+ bytes with a valid-looking header but no matching transaction → dropped silently
-        truncated = b"\x01\x01" + b"\x00" * 18
-        p._handle_stun(truncated, ("stun.l.google.com", 19302))  # must not raise
+        transport.sendto.assert_not_called()
 
     def test_invite_received_after_register(self):
         """INVITE dispatching still works after registration (inherits IncomingCallProtocol)."""

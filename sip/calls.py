@@ -149,6 +149,14 @@ class IncomingCallProtocol(SessionInitiationProtocol):
         logger.debug("SIP transport connected")
         self._transport = transport
 
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Handle RFC 5626 keepalive pings, then dispatch SIP messages."""
+        if data == b"\r\n\r\n":  # RFC 5626 §4.4.1 double-CRLF keepalive ping
+            logger.debug("RFC 5626 keepalive from %s, sending pong", addr)
+            self._transport.sendto(b"\r\n", addr)
+            return
+        super().datagram_received(data, addr)
+
     def send(self, message: Message, addr: tuple[str, int]) -> None:
         """Serialize and send a SIP message to the given address."""
         logger.debug("Sending %r to %r", message, addr)
@@ -252,11 +260,7 @@ class RegisterProtocol(IncomingCallProtocol):
         """Parse a STUN Binding Success Response and resolve the pending STUN future."""
         if len(data) < 20:
             return
-        try:
-            msg_type, _msg_len, magic_cookie = struct.unpack(">HHI", data[:8])
-        except struct.error:
-            logger.debug("Ignoring malformed STUN packet from %s", addr, exc_info=True)
-            return
+        msg_type, _msg_len, magic_cookie = struct.unpack(">HHI", data[:8])
         transaction_id = data[8:20]
         if magic_cookie != 0x2112A442 or msg_type != 0x0101:  # Binding Success Response
             return
