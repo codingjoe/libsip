@@ -149,7 +149,7 @@ class IncomingCallProtocol(SessionInitiationProtocol):
 
     def send(self, message: Message, addr: tuple[str, int]) -> None:
         """Serialize and send a SIP message to the given address."""
-        logger.debug("Sending %s to %s:%s", type(message).__name__, addr[0], addr[1])
+        logger.debug("Sending %r to %r", message, addr)
         self._transport.sendto(bytes(message), addr)
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
