@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
-from sip.calls import IncomingCall
-from sip.messages import Request
-from sip.whisper import WhisperCall
 
-import whisper
+np = pytest.importorskip("numpy")
+
+
+from sip.calls import IncomingCall  # noqa: E402
+from sip.messages import Request  # noqa: E402
+from sip.whisper import WhisperCall  # noqa: E402
+
+import whisper  # noqa: E402
 
 
 def make_invite() -> Request:
