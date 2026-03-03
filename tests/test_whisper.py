@@ -131,7 +131,9 @@ class TestWhisperCall:
         model_mock = MagicMock()
         model_mock.transcribe.return_value = {"text": ""}
         call = make_whisper_call(model_mock)
-        with patch("builtins.open", side_effect=AssertionError("open() must not be called")):
+        with patch(
+            "builtins.open", side_effect=AssertionError("open() must not be called")
+        ):
             call._run_transcription(np.zeros(16000, dtype=np.float32))
 
     def test_transcription_received__returns_not_implemented(self):

@@ -321,7 +321,9 @@ class TestIncomingCallProtocol:
     def test_invite_received__returns_not_implemented(self):
         """Return NotImplemented for unhandled incoming calls."""
         protocol = IncomingCallProtocol()
-        assert protocol.invite_received(MagicMock(), ("192.0.2.1", 5060)) is NotImplemented
+        assert (
+            protocol.invite_received(MagicMock(), ("192.0.2.1", 5060)) is NotImplemented
+        )
 
     def test_create_call__returns_incoming_call(self):
         """Return an IncomingCall bound to the protocol's send method."""
@@ -600,7 +602,9 @@ class TestRegisterProtocol:
         p = make_register_protocol()
         p.connection_made(MagicMock())
         result = p.response_received(
-            Response(status_code=500, reason="Server Error", headers={"CSeq": "1 REGISTER"}),
+            Response(
+                status_code=500, reason="Server Error", headers={"CSeq": "1 REGISTER"}
+            ),
             ("192.0.2.2", 5060),
         )
         assert result is NotImplemented

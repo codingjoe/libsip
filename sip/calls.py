@@ -56,7 +56,7 @@ class RTPProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Strip the fixed-size RTP header and forward the audio payload."""
         if len(data) > self.rtp_header_size:
-            self.audio_received(data[self.rtp_header_size:])
+            self.audio_received(data[self.rtp_header_size :])
 
     def audio_received(self, data: bytes) -> None:
         """Handle a decoded RTP audio payload. Override in subclasses."""
@@ -212,7 +212,9 @@ class RegisterProtocol(IncomingCallProtocol):
 
     def response_received(self, response: Response, addr: tuple[str, int]) -> None:
         """Handle REGISTER responses including digest auth challenges (RFC 3261 §22)."""
-        if response.status_code == 200 and "REGISTER" in response.headers.get("CSeq", ""):
+        if response.status_code == 200 and "REGISTER" in response.headers.get(
+            "CSeq", ""
+        ):
             self.registered()
             return
         if response.status_code in (401, 407):
