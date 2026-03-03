@@ -704,7 +704,10 @@ class TestRegisterProtocol:
             attr_val = struct.pack(">BBH I", 0x00, 0x01, xor_port, xor_ip)
             attr = struct.pack(">HH", 0x0020, len(attr_val)) + attr_val
             msg_len = len(attr)
-            response = struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id) + attr
+            response = (
+                struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id)
+                + attr
+            )
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             p._stun_transactions[transaction_id] = future
@@ -724,10 +727,15 @@ class TestRegisterProtocol:
             magic_cookie = 0x2112A442
             transaction_id = b"\x02" * 12
             # MAPPED-ADDRESS: 198.51.100.7:60001 (not XOR'd)
-            attr_val = struct.pack(">BBH4s", 0x00, 0x01, 60001, socket.inet_aton("198.51.100.7"))
+            attr_val = struct.pack(
+                ">BBH4s", 0x00, 0x01, 60001, socket.inet_aton("198.51.100.7")
+            )
             attr = struct.pack(">HH", 0x0001, len(attr_val)) + attr_val
             msg_len = len(attr)
-            response = struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id) + attr
+            response = (
+                struct.pack(">HHI12s", 0x0101, msg_len, magic_cookie, transaction_id)
+                + attr
+            )
             loop = asyncio.get_running_loop()
             future = loop.create_future()
             p._stun_transactions[transaction_id] = future

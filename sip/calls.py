@@ -213,13 +213,19 @@ class RegisterProtocol(IncomingCallProtocol):
         try:
             self._public_addr = await self._stun_discover(*self._stun_server)
             logger.info(
-                "STUN: public address is %s:%s", self._public_addr[0], self._public_addr[1]
+                "STUN: public address is %s:%s",
+                self._public_addr[0],
+                self._public_addr[1],
             )
         except (TimeoutError, OSError, RuntimeError) as exc:
-            logger.warning("STUN discovery failed (%s), continuing with local address", exc)
+            logger.warning(
+                "STUN discovery failed (%s), continuing with local address", exc
+            )
         self.register()
 
-    async def _stun_discover(self, host: str, port: int, timeout: float = 3.0) -> tuple[str, int]:
+    async def _stun_discover(
+        self, host: str, port: int, timeout: float = 3.0
+    ) -> tuple[str, int]:
         """Send a STUN Binding Request on the SIP socket and return the public address."""
         magic_cookie = 0x2112A442
         transaction_id = os.urandom(12)
@@ -260,11 +266,15 @@ class RegisterProtocol(IncomingCallProtocol):
         while offset + 4 <= len(data):
             attr_type, attr_len = struct.unpack(">HH", data[offset : offset + 4])
             attr_val = data[offset + 4 : offset + 4 + attr_len]
-            if attr_type == 0x0020 and len(attr_val) >= 8 and attr_val[1] == 0x01:  # XOR-MAPPED IPv4
+            if (
+                attr_type == 0x0020 and len(attr_val) >= 8 and attr_val[1] == 0x01
+            ):  # XOR-MAPPED IPv4
                 port = struct.unpack(">H", attr_val[2:4])[0] ^ (magic_cookie >> 16)
                 ip_int = struct.unpack(">I", attr_val[4:8])[0] ^ magic_cookie
                 xor_mapped = (socket.inet_ntoa(struct.pack(">I", ip_int)), port)
-            elif attr_type == 0x0001 and len(attr_val) >= 8 and attr_val[1] == 0x01:  # MAPPED-ADDRESS IPv4
+            elif (
+                attr_type == 0x0001 and len(attr_val) >= 8 and attr_val[1] == 0x01
+            ):  # MAPPED-ADDRESS IPv4
                 port = struct.unpack(">H", attr_val[2:4])[0]
                 mapped = (socket.inet_ntoa(attr_val[4:8]), port)
             offset += 4 + ((attr_len + 3) & ~3)  # attributes are 4-byte aligned

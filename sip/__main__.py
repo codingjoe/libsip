@@ -127,7 +127,9 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
     async def run():
         loop = asyncio.get_running_loop()
         await loop.create_datagram_endpoint(
-            lambda: TranscribingProtocol(server_addr, aor, username, password, stun_server=stun),
+            lambda: TranscribingProtocol(
+                server_addr, aor, username, password, stun_server=stun
+            ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )
         click.echo(f"Listening on port {local_port}…", err=True)
