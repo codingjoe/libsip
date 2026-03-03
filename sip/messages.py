@@ -39,7 +39,10 @@ class Message:
                 body=body,
                 version=version,
             )
-        method, uri, version = parts
+        try:
+            method, uri, version = parts
+        except ValueError:
+            raise ValueError(f"Invalid SIP message first line: {data!r}")
         return Request(
             method=method, uri=uri, headers=headers, body=body, version=version
         )
