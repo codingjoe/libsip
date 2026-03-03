@@ -673,7 +673,11 @@ class TestRegisterProtocol:
         p.connection_made(MagicMock())
         with caplog.at_level(logging.WARNING, logger="sip.calls"):
             p.response_received(
-                Response(status_code=500, reason="Server Error", headers={"CSeq": "1 REGISTER"}),
+                Response(
+                    status_code=500,
+                    reason="Server Error",
+                    headers={"CSeq": "1 REGISTER"},
+                ),
                 ("192.0.2.2", 5060),
             )
         assert any("500" in r.message for r in caplog.records)

@@ -78,7 +78,9 @@ class IncomingCall(RTPProtocol):
         self._request = request
         self._addr = addr
         self._send = send
-        logger.debug("Incoming call from %s via %s", request.headers.get("From", "unknown"), addr)
+        logger.debug(
+            "Incoming call from %s via %s", request.headers.get("From", "unknown"), addr
+        )
 
     @property
     def caller(self) -> str:
@@ -120,7 +122,9 @@ class IncomingCall(RTPProtocol):
 
     def reject(self, status_code: int = 486, reason: str = "Busy Here") -> None:
         """Reject the call."""
-        logger.info("Rejecting call from %s with %s %s", self.caller, status_code, reason)
+        logger.info(
+            "Rejecting call from %s with %s %s", self.caller, status_code, reason
+        )
         self._send(
             Response(
                 status_code=status_code,
@@ -202,7 +206,12 @@ class RegisterProtocol(IncomingCallProtocol):
     ) -> None:
         """Send a REGISTER request to the carrier, optionally with credentials."""
         self._cseq += 1
-        logger.debug("Sending REGISTER to %s:%s (CSeq %s)", self._server_addr[0], self._server_addr[1], self._cseq)
+        logger.debug(
+            "Sending REGISTER to %s:%s (CSeq %s)",
+            self._server_addr[0],
+            self._server_addr[1],
+            self._cseq,
+        )
         headers = {
             "From": self._aor,
             "To": self._aor,
@@ -230,7 +239,10 @@ class RegisterProtocol(IncomingCallProtocol):
             self.registered()
             return
         if response.status_code in (401, 407):
-            logger.debug("Auth challenge received (%s), retrying with credentials", response.status_code)
+            logger.debug(
+                "Auth challenge received (%s), retrying with credentials",
+                response.status_code,
+            )
             is_proxy = response.status_code == 407
             challenge_key = "Proxy-Authenticate" if is_proxy else "WWW-Authenticate"
             params = _parse_auth_challenge(response.headers.get(challenge_key, ""))
@@ -266,7 +278,9 @@ class RegisterProtocol(IncomingCallProtocol):
             else:
                 self.register(authorization=auth_value)
             return
-        logger.warning("Unexpected REGISTER response: %s %s", response.status_code, response.reason)
+        logger.warning(
+            "Unexpected REGISTER response: %s %s", response.status_code, response.reason
+        )
         return NotImplemented
 
     def registered(self) -> None:

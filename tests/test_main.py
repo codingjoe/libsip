@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from click.testing import CliRunner
+import pytest
+
+CliRunner = pytest.importorskip("click.testing.CliRunner")
 
 
 def make_runner():
@@ -17,7 +19,9 @@ class TestTranscribeCLI:
         from sip.__main__ import sip
 
         runner = make_runner()
-        result = runner.invoke(sip, ["transcribe", "--aor=sip:u@h", "--username=u", "--password=p"])
+        result = runner.invoke(
+            sip, ["transcribe", "--aor=sip:u@h", "--username=u", "--password=p"]
+        )
         assert result.exit_code != 0
         assert "server" in result.output.lower() or "SIP_SERVER" in result.output
 
@@ -26,7 +30,10 @@ class TestTranscribeCLI:
         from sip.__main__ import sip
 
         runner = make_runner()
-        result = runner.invoke(sip, ["transcribe", "--server=sip.example.com", "--username=u", "--password=p"])
+        result = runner.invoke(
+            sip,
+            ["transcribe", "--server=sip.example.com", "--username=u", "--password=p"],
+        )
         assert result.exit_code != 0
         assert "aor" in result.output.lower() or "SIP_AOR" in result.output
 

@@ -62,7 +62,11 @@ class WhisperCall(IncomingCall):
         chunk_samples = whisper.audio.SAMPLE_RATE * self.chunk_duration
         chunk = self._pcm_buffer[:chunk_samples]
         self._pcm_buffer = self._pcm_buffer[chunk_samples:]
-        logger.info("Transcribing %d samples (%.1f s)", len(chunk), len(chunk) / whisper.audio.SAMPLE_RATE)
+        logger.info(
+            "Transcribing %d samples (%.1f s)",
+            len(chunk),
+            len(chunk) / whisper.audio.SAMPLE_RATE,
+        )
         loop = asyncio.get_running_loop()
         text = await loop.run_in_executor(None, self._run_transcription, chunk)
         self.transcription_received(text.strip())

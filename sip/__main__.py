@@ -40,7 +40,7 @@ class ConsoleMessageProcessor:
 @click.group()
 @click.option("-v", "--verbose", count=True, help="Increase verbosity.")
 def sip(verbose):
-    """SSDP command line interface."""
+    """SIP command line interface."""
     logging.basicConfig(
         level=max(10, 10 * (2 - verbose)),
         format="%(levelname)s: [%(asctime)s] %(message)s",
@@ -54,12 +54,32 @@ main = sip
 
 
 @sip.command()
-@click.option("--model", default="base", envvar="WHISPER_MODEL", show_default=True, help="Whisper model size.")
-@click.option("--server", envvar="SIP_SERVER", required=True, metavar="HOST[:PORT]", help="SIP server address.")
-@click.option("--aor", envvar="SIP_AOR", required=True, metavar="SIP_AOR", help="SIP Address of Record.")
+@click.option(
+    "--model",
+    default="base",
+    envvar="WHISPER_MODEL",
+    show_default=True,
+    help="Whisper model size.",
+)
+@click.option(
+    "--server",
+    envvar="SIP_SERVER",
+    required=True,
+    metavar="HOST[:PORT]",
+    help="SIP server address.",
+)
+@click.option(
+    "--aor",
+    envvar="SIP_AOR",
+    required=True,
+    metavar="SIP_AOR",
+    help="SIP Address of Record.",
+)
 @click.option("--username", envvar="SIP_USERNAME", required=True, help="SIP username.")
 @click.option("--password", envvar="SIP_PASSWORD", required=True, help="SIP password.")
-@click.option("--local-port", default=5060, show_default=True, help="Local UDP port to bind.")
+@click.option(
+    "--local-port", default=5060, show_default=True, help="Local UDP port to bind."
+)
 def transcribe(model, server, aor, username, password, local_port):
     """Register with a SIP carrier and transcribe incoming calls via Whisper."""
     from .calls import IncomingCall, RegisterProtocol  # noqa: PLC0415
