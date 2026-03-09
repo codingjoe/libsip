@@ -184,6 +184,7 @@ class WhisperCall(IncomingCall):
                     input=ogg_data, timeout=self.decode_timeout_secs
                 )
             except subprocess.TimeoutExpired:
+                proc.kill()
                 proc.communicate()
                 raise RuntimeError(
                     f"ffmpeg decoding timed out after {self.decode_timeout_secs}s"

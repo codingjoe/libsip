@@ -36,6 +36,7 @@ class IncomingCall:
     """
 
     def __init__(self, caller: str = "") -> None:
+        #: The SIP address of the caller (from the From header of the INVITE).
         self.caller = caller
 
     def audio_received(self, data: bytes) -> None:
@@ -102,7 +103,13 @@ class IncomingCallProtocol(SessionInitiationProtocol):
     def invite_received(
         self, call: IncomingCall, request: Request, addr: tuple[str, int]
     ) -> None:
-        """Handle an incoming call. Override in subclasses to answer or reject."""
+        """Handle an incoming call. Override in subclasses to answer or reject.
+
+        Args:
+            call: The call handler instance created for this INVITE.
+            request: The SIP INVITE request.
+            addr: The remote address of the caller.
+        """
 
     async def answer(
         self, call: IncomingCall, request: Request, addr: tuple[str, int]
