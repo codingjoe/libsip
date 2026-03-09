@@ -3,13 +3,13 @@ requires = ["flit_core>=3.2", "flit_scm", "wheel"]
 build-backend = "flit_scm:buildapi"
 
 [project]
-name = "voip"
+name = "VoIP"
 authors = [
   { name = "Johannes Maron", email = "johannes@maron.family" },
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-keywords = ["voip", "sip", "rtp", "webrtc", "stun", "asyncio", ]
+keywords = ["VoIP", "SIP", "RTP", "WebRTC", "STUN", "asyncio"]
 dynamic = ["version", "description"]
 classifiers = [
   # https://pypi.org/classifiers/
@@ -63,8 +63,8 @@ test = [
 ]
 
 [project.urls]
-Project-URL = "https://github.com/codingjoe/voip"
-Changelog = "https://github.com/codingjoe/voip/releases"
+Project-URL = "https://github.com/codingjoe/VoIP"
+Changelog = "https://github.com/codingjoe/VoIP/releases"
 
 [tool.setuptools_scm]
 write_to = "voip/_version.py"
