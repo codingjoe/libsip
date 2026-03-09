@@ -41,7 +41,7 @@ classifiers = [
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-cli = ["click", "pygments", "openai-whisper", "numpy"]
+cli = ["click", "pygments", "openai-whisper", "numpy", "python-ffmpeg"]
 pygments = ["Pygments"]
 # whisper also requires the system ffmpeg binary (not a Python package).
 # Install via: apt install ffmpeg / brew install ffmpeg.
@@ -52,6 +52,9 @@ voip = "voip.__main__:main"
 
 [project.entry-points."pygments.lexers"]
 sip = "voip.sip.lexers:SIPLexer"
+
+[tool.flit.module]
+name = "voip"
 
 [dependency-groups]
 dev = [
@@ -71,7 +74,7 @@ write_to = "voip/_version.py"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--cov --tb=short -rxs -m 'not integration'"
+addopts = "--cov --strict-markers --cov-report=xml --cov-report=term"
 testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests requiring network access (deselect with '-m \"not integration\"')",
