@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 
-__all__ = ["Request", "Response"]
+__all__ = ["Request", "Response", "Message"]
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -39,20 +39,25 @@ class Message:
                 body=body,
                 version=version,
             )
-        method, uri, version = parts
+        try:
+            method, uri, version = parts
+        except ValueError:
+            raise ValueError(f"Invalid SIP message first line: {data!r}")
         return Request(
             method=method, uri=uri, headers=headers, body=body, version=version
         )
 
     def __bytes__(self) -> bytes:
         """Serialize to bytes."""
+        headers = dict(self.headers)
+        if self.body:
+            headers.setdefault("Content-Length", str(len(self.body)))
         header_lines = "".join(
-            f"{name}: {value}\r\n" for name, value in self.headers.items()
+            f"{name}: {value}\r\n" for name, value in headers.items()
         )
         return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + self.body
 
-    def _first_line(self) -> str:
-        return NotImplemented
+    def _first_line(self) -> str: ...
 
 
 @dataclasses.dataclass(kw_only=True)

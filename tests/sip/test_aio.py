@@ -3,8 +3,8 @@
 import errno
 
 import pytest
-from sip.aio import SessionInitiationProtocol
-from sip.messages import Request, Response
+from voip.sip.messages import Request, Response
+from voip.sip.protocol import SessionInitiationProtocol
 
 
 class ConcreteProtocol(SessionInitiationProtocol):
@@ -49,20 +49,6 @@ class TestSessionInitiationProtocol:
         assert isinstance(response, Response)
         assert response.status_code == 200
         assert called_addr == addr
-
-    def test_request_received__returns_not_implemented(self):
-        """Return NotImplemented for unhandled SIP requests."""
-        protocol = SessionInitiationProtocol()
-        request = Request(method="OPTIONS", uri="sip:bob@biloxi.com")
-        result = protocol.request_received(request, ("192.0.2.1", 5060))
-        assert result is NotImplemented
-
-    def test_response_received__returns_not_implemented(self):
-        """Return NotImplemented for unhandled SIP responses."""
-        protocol = SessionInitiationProtocol()
-        response = Response(status_code=200, reason="OK")
-        result = protocol.response_received(response, ("192.0.2.1", 5060))
-        assert result is NotImplemented
 
     def test_error_received__blocking_io(self):
         """Log blocking IO errors without re-raising."""

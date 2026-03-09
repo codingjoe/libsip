@@ -1,14 +1,10 @@
 """Tests for SIP message parsing and serialization."""
 
-from sip.messages import Message, Request, Response
+import pytest
+from voip.sip.messages import Message, Request, Response
 
 
 class TestSIPMessage:
-    def test_first_line__not_implemented(self):
-        """Return NotImplemented when calling _first_line on SIPMessage."""
-        message = Message()
-        assert message._first_line() == NotImplemented
-
     def test_parse__request(self):
         """Parse a SIP request from bytes."""
         data = (
@@ -75,6 +71,27 @@ class TestSIPMessage:
         )
         assert Message.parse(bytes(response)) == response
 
+    def test_parse__skips_empty_header_lines(self):
+        """Skip empty lines in the header section without raising."""
+        # Extra \r\n before \r\n\r\n so the header_section has a trailing \r\n
+        # which produces an empty string when split on \r\n.
+        data = b"REGISTER sip:example.com SIP/2.0\r\nVia: SIP/2.0/UDP pc33\r\n\r\n\r\n"
+        result = Message.parse(data)
+        assert isinstance(result, Request)
+        assert result.headers.get("Via") == "SIP/2.0/UDP pc33"
+
+    def test_parse__skips_header_line_without_colon(self):
+        """Skip header lines that contain no colon separator."""
+        data = b"REGISTER sip:example.com SIP/2.0\r\nInvalidHeaderLine\r\n\r\n"
+        result = Message.parse(data)
+        assert isinstance(result, Request)
+        assert "InvalidHeaderLine" not in result.headers
+
+    def test_parse__raises_value_error_on_invalid_first_line(self):
+        """Raise ValueError when the first line cannot be parsed as a request."""
+        with pytest.raises(ValueError, match="Invalid SIP message"):
+            Message.parse(b"TOOSHORT\r\n\r\n")
+
 
 class TestRequest:
     def test_request__bytes(self):
@@ -118,7 +135,7 @@ class TestResponse:
         )
 
     def test_response__bytes__with_body(self):
-        """Serialize a SIP response with a body to bytes."""
+        """Serialize a SIP response with a body to bytes (explicit Content-Length kept)."""
         response = Response(
             status_code=200,
             reason="OK",
@@ -126,3 +143,11 @@ class TestResponse:
             body=b"test",
         )
         assert bytes(response) == (b"SIP/2.0 200 OK\r\nContent-Length: 4\r\n\r\ntest")
+
+    def test_response__bytes__with_body__auto_content_length(self):
+        """Auto-calculate Content-Length when body is present and header is not set."""
+        response = Response(status_code=200, reason="OK", body=b"test")
+        serialized = bytes(response)
+        assert b"Content-Length: 4" in serialized
+        parsed = Message.parse(serialized)
+        assert parsed.body == b"test"

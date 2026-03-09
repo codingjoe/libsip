@@ -16,8 +16,6 @@ __all__ = ["SIP", "SessionInitiationProtocol"]
 class SessionInitiationProtocol(asyncio.DatagramProtocol):
     """An asyncio protocol handler for the Session Initiation Protocol (RFC 3261)."""
 
-    __slots__ = ()
-
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Dispatch a received datagram to the appropriate handler."""
         match Message.parse(data):
@@ -28,11 +26,9 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Handle a received SIP request. Override in subclasses to process requests."""
-        return NotImplemented
 
     def response_received(self, response: Response, addr: tuple[str, int]) -> None:
         """Handle a received SIP response. Override in subclasses to process responses."""
-        return NotImplemented
 
     def error_received(self, exc: OSError) -> None:
         """Handle a transport-level error."""

@@ -3,7 +3,7 @@
 import pytest
 
 token = pytest.importorskip("pygments.token")
-from sip.lexers import SIPLexer  # noqa: E402
+from voip.sip.lexers import SIPLexer  # noqa: E402
 
 
 class TestSIPLexer:
