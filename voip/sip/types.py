@@ -2,6 +2,17 @@ from __future__ import annotations
 
 import enum
 
+asdf = enum.IntEnum(
+    value="SIPStatus",
+    names={
+        "Ringing": 180,
+        "OK": 200,
+        "Busy Here": 486,
+        "Unauthorized": 401,
+        "Proxy Authentication Required": 407,
+    },
+)
+
 
 class SIPStatus(enum.StrEnum):
     """Common SIP response status codes and reason phrases (RFC 3261)."""
