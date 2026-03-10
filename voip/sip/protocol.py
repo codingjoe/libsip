@@ -69,6 +69,8 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
         self._request_addrs: dict[str, tuple[str, int]] = {}
         #: Call-IDs for which a 200 OK has already been sent.
         self._answered_calls: set[str] = set()
+        #: To tags keyed by Call-ID (RFC 3261 §8.2.6.2).
+        self._to_tags: dict[str, str] = {}
         self.server_address = server_address
         self.aor = aor
         self.username = username
@@ -138,6 +140,7 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
                 # that arrive while STUN/RTP setup is in progress are suppressed.
                 self._answered_calls.add(call_id)
                 self._request_addrs[call_id] = addr
+                self._to_tags[call_id] = secrets.token_hex(8)
                 self.call_received(request)
             case "ACK":
                 self._answered_calls.discard(call_id)
@@ -148,14 +151,18 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
                     Response(
                         status_code=SIPStatus.OK.status_code,
                         reason=SIPStatus.OK.reason,
-                        headers={
-                            key: value
-                            for key, value in request.headers.items()
-                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                        },
+                        headers=self._with_to_tag(
+                            {
+                                key: value
+                                for key, value in request.headers.items()
+                                if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                            },
+                            call_id,
+                        ),
                     ),
                     addr,
                 )
+                self._to_tags.pop(call_id, None)
                 self.bye_received(request)
             case _:
                 raise NotImplementedError(
@@ -317,16 +324,47 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
         sdp_ip = (rtp_public_addr or self.public_address or local_addr)[0]
         sdp_port = (rtp_public_addr or local_addr)[1]
         logger.debug("RTP listening on %s:%s", local_addr[0], local_addr[1])
+        remote_audio = next(
+            (
+                m
+                for m in (request.body.media if request.body else [])
+                if m.media == "audio"
+            ),
+            None,
+        )
+        PREFERRED_CODECS = {"8": "PCMA/8000", "0": "PCMU/8000"}
+        selected_fmt: str | None = None
+        selected_rtpmap: str | None = None
+        if remote_audio:
+            for fmt in remote_audio.fmt:
+                if fmt in PREFERRED_CODECS:
+                    selected_fmt = fmt
+                    selected_rtpmap = f"{fmt} {PREFERRED_CODECS[fmt]}"
+                    break
+            if selected_fmt is None:
+                rtpmap_attrs = {
+                    a.value.split(" ", 1)[0]: a.value
+                    for a in remote_audio.attributes
+                    if a.name == "rtpmap" and a.value
+                }
+                selected_fmt = remote_audio.fmt[0]
+                selected_rtpmap = rtpmap_attrs.get(selected_fmt)
+        attributes = []
+        if selected_rtpmap:
+            attributes.append(Attribute(name="rtpmap", value=selected_rtpmap))
         self.send(
             Response(
                 status_code=SIPStatus.OK.status_code,
                 reason=SIPStatus.OK.reason,
                 headers={
-                    **{
-                        key: value
-                        for key, value in request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
+                    **self._with_to_tag(
+                        {
+                            key: value
+                            for key, value in request.headers.items()
+                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                        },
+                        call_id,
+                    ),
                     "Content-Type": "application/sdp",
                 },
                 body=SessionDescription(
@@ -338,10 +376,8 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
                             media="audio",
                             port=sdp_port,
                             proto="RTP/AVP",
-                            fmt=["111"],
-                            attributes=[
-                                Attribute(name="rtpmap", value="111 opus/48000/1")
-                            ],
+                            fmt=[selected_fmt] if selected_fmt else ["0"],
+                            attributes=attributes,
                         )
                     ],
                 ),
@@ -349,6 +385,15 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
             addr,
         )
         self._answered_calls.add(call_id)
+        self._to_tags.pop(call_id, None)
+
+    def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
+        """Return headers with the To tag appended (RFC 3261 §8.2.6.2)."""
+        tag = self._to_tags.get(call_id, "")
+        return {
+            **headers,
+            "To": headers.get("To", "") + (f";tag={tag}" if tag else ""),
+        }
 
     def ringing(self, request: Request) -> None:
         """Send a 180 Ringing provisional response to the caller.
@@ -372,11 +417,14 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
             Response(
                 status_code=SIPStatus.RINGING.status_code,
                 reason=SIPStatus.RINGING.reason,
-                headers={
-                    key: value
-                    for key, value in request.headers.items()
-                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                },
+                headers=self._with_to_tag(
+                    {
+                        key: value
+                        for key, value in request.headers.items()
+                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                    },
+                    call_id,
+                ),
             ),
             address,
         )
@@ -409,14 +457,18 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
             Response(
                 status_code=status_code,
                 reason=reason,
-                headers={
-                    key: value
-                    for key, value in request.headers.items()
-                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                },
+                headers=self._with_to_tag(
+                    {
+                        key: value
+                        for key, value in request.headers.items()
+                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                    },
+                    call_id,
+                ),
             ),
             addr,
         )
+        self._to_tags.pop(call_id, None)
 
     @property
     def registrar_uri(self) -> str:
