@@ -716,7 +716,7 @@ class TestRegisterSIP:
 
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        with caplog.at_level(logging.INFO, logger="voip.sip.session"):
+        with caplog.at_level(logging.INFO, logger="voip.sip.protocol"):
             p.response_received(
                 Response(status_code=200, reason="OK", headers={"CSeq": "1 REGISTER"}),
                 ("192.0.2.2", 5060),
@@ -729,7 +729,7 @@ class TestRegisterSIP:
 
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        with caplog.at_level(logging.WARNING, logger="voip.sip.session"):
+        with caplog.at_level(logging.WARNING, logger="voip.sip.protocol"):
             with pytest.raises(NotImplementedError):
                 p.response_received(
                     Response(

@@ -7,7 +7,7 @@ import dataclasses
 import enum
 import logging
 
-__all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
+__all__ = ["RTP", "RTPPacket", "RTPPayloadType"]
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class RTPPacket:
         )
 
 
-class RTP:
+class RTP(asyncio.DatagramProtocol):
     """Base class for RTP audio call handlers (RFC 3550).
 
     Subclass this and override :meth:`audio_received` to process incoming audio::
@@ -61,32 +61,26 @@ class RTP:
         class MyCall(RTP):
             def audio_received(self, data: bytes) -> None:
                 ...  # process Opus audio payload
+
+    Instances are used directly as asyncio datagram protocols, so they handle
+    their own RTP header stripping before calling :meth:`audio_received`.
     """
+
+    #: Fixed RTP header size in bytes (RFC 3550 §5.1).
+    rtp_header_size: int = 12
 
     def __init__(self, caller: str = "") -> None:
         #: The SIP address of the caller (from the From header of the INVITE).
         self.caller = caller
 
-    def audio_received(self, data: bytes) -> None:
-        """Handle a decoded RTP audio payload. Override in subclasses."""
-
-
-class RealtimeTransportProtocol(asyncio.DatagramProtocol):
-    """
-    Real-time Transport Protocol (RTP) asyncio protocol for receiving audio streams.
-
-    This is an internal asyncio protocol that strips the RTP header and forwards
-    the audio payload. End-users should subclass :class:`RTP` instead.
-
-    See also: https://datatracker.ietf.org/doc/html/rfc3550#section-5
-    """
-
-    rtp_header_size = 12
-
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Strip the fixed RTP header and forward the audio payload."""
         if len(data) > self.rtp_header_size:
-            self.audio_received(data[self.rtp_header_size :])
+            self.audio_received(data[self.rtp_header_size:])
 
     def audio_received(self, data: bytes) -> None:
         """Handle a decoded RTP audio payload. Override in subclasses."""
+
+
+#: Backward-compatible alias.
+RealtimeTransportProtocol = RTP
