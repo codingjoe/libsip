@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from voip.rtp import RTP
-from voip.sip import SIP, RegisterSIP
+from voip.sip import SIP, SessionInitiationProtocol
 from voip.sip.messages import Message, Request, Response
 
 
@@ -355,7 +355,7 @@ class TestSIP:
         asyncio.run(run())
 
 
-class TestRegisterSIP:
+class TestSessionInitiationProtocol:
     def test_registrar_uri__strips_user_from_aor(self):
         """Derive registrar URI from AOR by stripping the user part."""
         p = make_register_session(aor="sip:alice@example.com")
@@ -380,7 +380,7 @@ class TestRegisterSIP:
         """Send REGISTER after STUN discovery when a STUN server is configured."""
 
         async def run():
-            p = RegisterSIP(
+            p = SessionInitiationProtocol(
                 ("192.0.2.2", 5060),
                 "sip:alice@example.com",
                 "alice",
@@ -403,7 +403,7 @@ class TestRegisterSIP:
         """Send REGISTER even when STUN discovery raises an error."""
 
         async def run():
-            p = RegisterSIP(
+            p = SessionInitiationProtocol(
                 ("192.0.2.2", 5060),
                 "sip:alice@example.com",
                 "alice",
@@ -464,7 +464,7 @@ class TestRegisterSIP:
         """Receiving 200 OK for REGISTER triggers registered()."""
         calls = []
 
-        class ConcreteSession(RegisterSIP):
+        class ConcreteSession(SessionInitiationProtocol):
             def registered(self):
                 calls.append(True)
 
@@ -673,14 +673,20 @@ class TestRegisterSIP:
             p.datagram_received(stun_data, ("stun.l.google.com", 19302))
             mock_handle.assert_called_once_with(stun_data, ("stun.l.google.com", 19302))
 
-    def test_datagram_received__sip_routes_to_super(self):
-        """datagram_received routes SIP messages (first byte >= 4) to the SIP parser."""
-        p = make_register_session()
+    def test_datagram_received__sip_response__calls_response_received(self):
+        """datagram_received routes SIP messages (first byte >= 4) to response_received."""
+        received = []
+
+        class ConcreteSession(SessionInitiationProtocol):
+            def response_received(self, response, addr):
+                received.append(response)
+
+        p = ConcreteSession(("192.0.2.2", 5060), "sip:alice@example.com", "a", "b")
         p.connection_made(make_mock_transport())
         sip_data = b"SIP/2.0 200 OK\r\nCSeq: 1 REGISTER\r\n\r\n"
-        with patch.object(SIP, "datagram_received") as mock_super:
-            p.datagram_received(sip_data, ("192.0.2.2", 5060))
-            mock_super.assert_called_once_with(sip_data, ("192.0.2.2", 5060))
+        p.datagram_received(sip_data, ("192.0.2.2", 5060))
+        assert len(received) == 1
+        assert received[0].status_code == 200
 
     def test_handle_stun__truncated_returns_early(self):
         """handle_stun silently ignores packets shorter than 20 bytes."""
@@ -695,7 +701,7 @@ class TestRegisterSIP:
         """INVITE dispatching still works after registration (call_received is called)."""
         received = []
 
-        class ConcreteSession(RegisterSIP):
+        class ConcreteSession(SessionInitiationProtocol):
             def call_received(self, request):
                 received.append(request)
 
@@ -763,9 +769,9 @@ def make_register_session(
     aor="sip:alice@example.com",
     username="alice",
     password="secret",  # noqa: S107
-) -> RegisterSIP:
-    """Return a RegisterSIP without triggering connection_made."""
-    return RegisterSIP(server_addr, aor, username, password)
+) -> SessionInitiationProtocol:
+    """Return a SessionInitiationProtocol session without triggering connection_made."""
+    return SessionInitiationProtocol(server_addr, aor, username, password)
 
 
 def make_mock_transport(host: str = "127.0.0.1", port: int = 5060):

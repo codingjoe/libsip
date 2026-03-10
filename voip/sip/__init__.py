@@ -1,5 +1,5 @@
 """Session Initiation Protocol (SIP) implementation of RFC 3261."""
 
-from .protocol import SIP, RegisterSIP, SessionInitiationProtocol
+from .protocol import SIP, SessionInitiationProtocol
 
-__all__ = ["RegisterSIP", "SIP", "SessionInitiationProtocol"]
+__all__ = ["SIP", "SessionInitiationProtocol"]

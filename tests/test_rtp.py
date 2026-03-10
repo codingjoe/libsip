@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import struct
 
 import pytest
-from voip.rtp import RTP, RTPPacket, RTPPayloadType
+from voip.rtp import RTP, RealtimeTransportProtocol, RTPPacket, RTPPayloadType
 
 
 def make_rtp_packet(
@@ -78,22 +79,24 @@ class TestRTPPacket:
         assert packet.payload_type == 111
 
 
-class TestRTP:
+class TestRealtimeTransportProtocol:
     def test_rtp_header_size__class_attribute(self):
         """rtp_header_size is a class attribute set to the standard 12-byte header."""
-        assert RTP.rtp_header_size == 12
+        assert RealtimeTransportProtocol.rtp_header_size == 12
 
     def test_rtp__is_datagram_protocol(self):
-        """RTP is an asyncio.DatagramProtocol subclass."""
-        import asyncio
+        """RealtimeTransportProtocol is an asyncio.DatagramProtocol subclass."""
+        assert issubclass(RealtimeTransportProtocol, asyncio.DatagramProtocol)
 
-        assert issubclass(RTP, asyncio.DatagramProtocol)
+    def test_rtp__alias(self):
+        """RTP is an alias for RealtimeTransportProtocol."""
+        assert RTP is RealtimeTransportProtocol
 
     def test_datagram_received__forwards_audio_payload(self):
         """Strip the RTP header and forward the audio payload to audio_received."""
         received: list[bytes] = []
 
-        class ConcreteRTP(RTP):
+        class ConcreteRTP(RealtimeTransportProtocol):
             def audio_received(self, data: bytes) -> None:
                 received.append(data)
 
@@ -106,7 +109,7 @@ class TestRTP:
         """Skip packets shorter than the 12-byte RTP header."""
         received: list[bytes] = []
 
-        class ConcreteRTP(RTP):
+        class ConcreteRTP(RealtimeTransportProtocol):
             def audio_received(self, data: bytes) -> None:
                 received.append(data)
 
@@ -117,7 +120,7 @@ class TestRTP:
         """Skip packets that contain only the 12-byte header with no audio payload."""
         received: list[bytes] = []
 
-        class ConcreteRTP(RTP):
+        class ConcreteRTP(RealtimeTransportProtocol):
             def audio_received(self, data: bytes) -> None:
                 received.append(data)
 

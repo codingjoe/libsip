@@ -12,7 +12,7 @@ import ffmpeg
 import numpy as np
 
 import whisper
-from voip.rtp import RTP
+from voip.rtp import RealtimeTransportProtocol
 
 __all__ = ["WhisperCall"]
 
@@ -98,13 +98,13 @@ def _build_ogg_opus(packets: list[bytes]) -> bytes:
     return b"".join(pages)
 
 
-class WhisperCall(RTP):
+class WhisperCall(RealtimeTransportProtocol):
     """RTP call handler that decodes Opus audio and transcribes it with OpenAI Whisper.
 
     This is a pure RTP-level handler with no SIP knowledge. Use it as the
     *call_class* when answering calls in a SIP session::
 
-        class MySession(RegisterSIP):
+        class MySession(SessionInitiationProtocol):
             def call_received(self, request: Request) -> None:
                 self.answer(request=request, call_class=WhisperCall)
     """

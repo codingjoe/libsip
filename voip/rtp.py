@@ -7,7 +7,7 @@ import dataclasses
 import enum
 import logging
 
-__all__ = ["RTP", "RTPPacket", "RTPPayloadType"]
+__all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +53,12 @@ class RTPPacket:
         )
 
 
-class RTP(asyncio.DatagramProtocol):
+class RealtimeTransportProtocol(asyncio.DatagramProtocol):
     """Base class for RTP audio call handlers (RFC 3550).
 
     Subclass this and override :meth:`audio_received` to process incoming audio::
 
-        class MyCall(RTP):
+        class MyCall(RealtimeTransportProtocol):
             def audio_received(self, data: bytes) -> None:
                 ...  # process Opus audio payload
 
@@ -82,5 +82,5 @@ class RTP(asyncio.DatagramProtocol):
         """Handle a decoded RTP audio payload. Override in subclasses."""
 
 
-#: Backward-compatible alias.
-RealtimeTransportProtocol = RTP
+#: Short alias for :class:`RealtimeTransportProtocol`.
+RTP = RealtimeTransportProtocol

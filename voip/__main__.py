@@ -113,7 +113,7 @@ def _parse_stun_server(stun_server: str) -> tuple[str, int] | None:
 )
 def transcribe(model, server, aor, username, password, local_port, stun_server):
     """Register with a SIP carrier and transcribe incoming calls via Whisper."""
-    from voip.sip import RegisterSIP
+    from voip.sip import SIP
 
     from .whisper import WhisperCall  # noqa: PLC0415
 
@@ -130,7 +130,7 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
             logger.info("Transcription: %s", text)
             click.echo(text)
 
-    class TranscribeSession(RegisterSIP):
+    class TranscribeSession(SIP):
         def registered(self) -> None:
             logger.info("Registered with %s — waiting for calls", server)
             click.echo(f"Registered with {server} — waiting for calls", err=True)
