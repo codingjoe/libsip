@@ -6,6 +6,7 @@ import enum
 class SIPStatus(enum.StrEnum):
     """Common SIP response status codes and reason phrases (RFC 3261)."""
 
+    RINGING = "180 Ringing"
     OK = "200 OK"
     BUSY_HERE = "486 Busy Here"
 

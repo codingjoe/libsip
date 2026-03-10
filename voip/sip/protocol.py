@@ -15,6 +15,8 @@ import secrets
 import uuid
 from typing import TYPE_CHECKING
 
+from voip.sdp.messages import SessionDescription
+from voip.sdp.types import Attribute, ConnectionData, MediaDescription
 from voip.stun import STUNProtocol
 from voip.types import DigestQoP
 
@@ -315,12 +317,6 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
         sdp_ip = (rtp_public_addr or self.public_address or local_addr)[0]
         sdp_port = (rtp_public_addr or local_addr)[1]
         logger.debug("RTP listening on %s:%s", local_addr[0], local_addr[1])
-        sdp = (
-            f"v=0\r\n"
-            f"c=IN IP4 {sdp_ip}\r\n"
-            f"m=audio {sdp_port} RTP/AVP 111\r\n"
-            f"a=rtpmap:111 opus/48000/1\r\n"
-        ).encode()
         self.send(
             Response(
                 status_code=SIPStatus.OK.status_code,
@@ -333,11 +329,57 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
                     },
                     "Content-Type": "application/sdp",
                 },
-                body=sdp,
+                body=SessionDescription(
+                    connection=ConnectionData(
+                        nettype="IN", addrtype="IP4", connection_address=sdp_ip
+                    ),
+                    media=[
+                        MediaDescription(
+                            media="audio",
+                            port=sdp_port,
+                            proto="RTP/AVP",
+                            fmt=["111"],
+                            attributes=[
+                                Attribute(name="rtpmap", value="111 opus/48000/1")
+                            ],
+                        )
+                    ],
+                ),
             ),
             addr,
         )
         self._answered_calls.add(call_id)
+
+    def ringing(self, request: Request) -> None:
+        """Send a 180 Ringing provisional response to the caller.
+
+        Call this from :meth:`call_received` before answering to indicate
+        that the call is being processed (e.g. while a user is alerted).
+
+        Args:
+            request: The SIP INVITE request (from :meth:`call_received`).
+        """
+        call_id = request.headers.get("Call-ID", "")
+        address = self._request_addrs.get(call_id)
+        if address is None:
+            logger.error("No address found for INVITE with Call-ID %r", call_id)
+            return
+        logger.info(
+            "Sending Ringing to %s",
+            request.headers.get("From", "unknown"),
+        )
+        self.send(
+            Response(
+                status_code=SIPStatus.RINGING.status_code,
+                reason=SIPStatus.RINGING.reason,
+                headers={
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+            ),
+            address,
+        )
 
     def reject(
         self,
