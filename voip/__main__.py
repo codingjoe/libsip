@@ -145,6 +145,7 @@ def transcribe(model, server, aor, username, password, local_port, stun_server):
                 f"Incoming call from {request.headers.get('From', '')}",
                 err=True,
             )
+            self.ringing(request=request)
             self.answer(request=request, call_class=TranscribingCall)
 
     async def run():
