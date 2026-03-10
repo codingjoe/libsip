@@ -129,7 +129,12 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
                 )
 
     def response_received(self, response: Response, addr: tuple[str, int]) -> None:
-        """Handle REGISTER responses including digest auth challenges (RFC 3261 §22)."""
+        """Handle REGISTER responses including digest auth challenges (RFC 3261 §22).
+
+        Only processes responses when registration parameters are configured.
+        """
+        if self.server_address is None:
+            return  # no registration active; ignore unsolicited responses
         if (
             response.status_code == SIPStatusCode.OK
             and "REGISTER" in response.headers.get("CSeq", "")
@@ -141,6 +146,11 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
             SIPStatusCode.UNAUTHORIZED,
             SIPStatusCode.PROXY_AUTHENTICATION_REQUIRED,
         ):
+            if not self.username or not self.password:
+                logger.error(
+                    "Auth challenge received but username/password are not configured"
+                )
+                return
             logger.debug(
                 "Auth challenge received (%s), retrying with credentials",
                 response.status_code,
@@ -295,7 +305,9 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
     @property
     def registrar_uri(self) -> str:
         """Registrar Request-URI derived from the AOR (e.g. sip:example.com)."""
-        scheme, _, rest = (self.aor or "").partition(":")
+        if not self.aor:
+            raise ValueError("AOR is not configured; cannot derive registrar URI")
+        scheme, _, rest = self.aor.partition(":")
         _, _, hostport = rest.partition("@")
         return f"{scheme}:{hostport}"
 
@@ -316,7 +328,7 @@ class SessionInitiationProtocol(STUNProtocol, asyncio.DatagramProtocol):
         branch = f"{self.VIA_BRANCH_PREFIX}{secrets.token_hex(16)}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
-        aor_rest = (self.aor or "").partition(":")[2]
+        aor_rest = self.aor.partition(":")[2] if self.aor else ""
         user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         # Use the public (STUN-discovered) address in Contact for inbound routing
         contact_address = self.public_address or local_address
