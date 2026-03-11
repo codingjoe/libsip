@@ -1,6 +1,6 @@
 """Tests for the SIP session and RTP call handler."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from voip.rtp import RTP, RTPPacket
@@ -29,8 +29,16 @@ class TestRTP:
 class TestSIP:
     @pytest.fixture(autouse=True)
     def _stun_patch(self):
-        """Patch stun_discover so _answer tests don't make real network calls."""
-        with patch("voip.sip.protocol.stun_discover", return_value=("127.0.0.1", 0)):
+        """Patch RTP.stun_discover so _answer tests don't make real network calls.
+
+        Raises TimeoutError so that _answer falls back to the locally-bound
+        RTP address, giving audio-receive tests the correct port.
+        """
+        with patch.object(
+            RTP,
+            "stun_discover",
+            new=AsyncMock(side_effect=TimeoutError("STUN unavailable in tests")),
+        ):
             yield
 
     def test_connection_made__stores_transport(self):
@@ -101,15 +109,17 @@ class TestSIP:
         assert b"RTP/AVP 0" in bytes(response.body)
 
     async def test_answer__sdp_uses_stun_public_address_for_rtp(self):
-        """_answer advertises the STUN-discovered public IP in the SDP when STUN is configured."""
+        """_answer advertises the STUN-discovered public IP and port in the SDP."""
         protocol = SIP(stun_server_address=("stun.example.com", 3478))
         send = MagicMock()
         protocol.send = send
         protocol._transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
-        with patch(
-            "voip.sip.protocol.stun_discover", return_value=("203.0.113.5", 54321)
+        with patch.object(
+            RTP,
+            "stun_discover",
+            new=AsyncMock(return_value=("203.0.113.5", 54321)),
         ):
             await protocol._answer(request, RTP)
         response, _ = send.call_args[0]
@@ -123,10 +133,8 @@ class TestSIP:
         protocol._transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
-        with patch(
-            "voip.sip.protocol.stun_discover", side_effect=TimeoutError("timeout")
-        ):
-            await protocol._answer(request, RTP)
+        # Autouse _stun_patch already raises TimeoutError; the fallback is tested here.
+        await protocol._answer(request, RTP)
         response, _ = send.call_args[0]
         assert b"m=audio" in bytes(response.body)
         assert b"RTP/AVP 0" in bytes(response.body)
@@ -390,7 +398,11 @@ class TestSessionInitiationProtocol:
 
         p = make_register_session()
         transport = make_mock_transport()
-        with patch("voip.sip.protocol.stun_discover", return_value=("1.2.3.4", 0)):
+        with patch.object(
+            SessionInitiationProtocol,
+            "stun_discover",
+            new=AsyncMock(return_value=("1.2.3.4", 0)),
+        ):
             p.connection_made(transport)
             await asyncio.sleep(0.05)
         transport.sendto.assert_called()
@@ -410,8 +422,10 @@ class TestSessionInitiationProtocol:
             stun_server_address=("stun.example.com", 3478),
         )
         transport = make_mock_transport()
-        with patch(
-            "voip.sip.protocol.stun_discover", return_value=("203.0.113.1", 54321)
+        with patch.object(
+            SessionInitiationProtocol,
+            "stun_discover",
+            new=AsyncMock(return_value=("203.0.113.1", 54321)),
         ) as mock_discover:
             p.connection_made(transport)
             await asyncio.sleep(0.05)
@@ -431,8 +445,10 @@ class TestSessionInitiationProtocol:
             stun_server_address=("stun.example.com", 3478),
         )
         transport = make_mock_transport()
-        with patch(
-            "voip.sip.protocol.stun_discover", side_effect=TimeoutError("timeout")
+        with patch.object(
+            SessionInitiationProtocol,
+            "stun_discover",
+            new=AsyncMock(side_effect=TimeoutError("timeout")),
         ):
             p.connection_made(transport)
             await asyncio.sleep(0.05)

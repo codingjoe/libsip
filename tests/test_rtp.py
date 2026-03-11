@@ -234,6 +234,62 @@ class TestRealtimeTransportProtocol:
         assert len(received) == 1
         assert len(received[0]) == 50
 
+    def test_datagram_received__stun_packet__not_forwarded_to_audio_received(self):
+        """A STUN packet (first byte < 4) must not reach audio_received."""
+        received: list[list[bytes]] = []
+
+        class ConcreteRTP(RealtimeTransportProtocol):
+            def audio_received(self, packets: list[bytes]) -> None:
+                received.append(packets)
+
+        stun_bytes = b"\x01\x01" + b"\x00" * 18  # first byte = 1 (STUN range [0,3])
+        ConcreteRTP().datagram_received(stun_bytes, ("127.0.0.1", 5004))
+        assert received == []
+
+    async def test_stun_discover__uses_actual_socket(self):
+        """stun_discover() sends a STUN Binding Request through the RTP socket."""
+        from voip.stun import MAGIC_COOKIE, STUNMessageType
+
+        received_requests: list[bytes] = []
+        server_transport: asyncio.DatagramTransport | None = None
+
+        class _StubSTUNServer(asyncio.DatagramProtocol):
+            def connection_made(self, transport):
+                nonlocal server_transport
+                server_transport = transport
+
+            def datagram_received(self, data, addr):
+                received_requests.append(data)
+                tid = data[8:20]
+                # Build XOR-MAPPED-ADDRESS for 203.0.113.5:54321 (TEST-NET-3, RFC 5737)
+                ip_int = (203 << 24) | (0 << 16) | (113 << 8) | 5
+                xor_ip = ip_int ^ MAGIC_COOKIE
+                xor_port = 54321 ^ (MAGIC_COOKIE >> 16)
+                attr = struct.pack(">HH", 0x0020, 8) + struct.pack(">BBH I", 0, 1, xor_port, xor_ip)
+                response = (
+                    struct.pack(">HHI12s", STUNMessageType.BINDING_SUCCESS_RESPONSE, len(attr), MAGIC_COOKIE, tid)
+                    + attr
+                )
+                server_transport.sendto(response, addr)
+
+        loop = asyncio.get_running_loop()
+        server_t, _ = await loop.create_datagram_endpoint(
+            _StubSTUNServer, local_addr=("127.0.0.1", 0)
+        )
+        server_addr = server_t.get_extra_info("sockname")
+
+        proto = RealtimeTransportProtocol()
+        rtp_t, _ = await loop.create_datagram_endpoint(
+            lambda: proto, local_addr=("127.0.0.1", 0)
+        )
+        try:
+            result = await proto.stun_discover(server_addr[0], server_addr[1])
+            assert result == ("203.0.113.5", 54321)
+            assert len(received_requests) == 1
+        finally:
+            rtp_t.close()
+            server_t.close()
+
 
 class TestNegotiateCodec:
     def _make_media(

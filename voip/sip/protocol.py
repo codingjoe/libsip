@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import secrets
+import struct
 import uuid
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,7 @@ from voip.sdp.types import (
     RTPPayloadFormat,
     Timing,
 )
-from voip.stun import stun_discover
+from voip.stun import MAGIC_COOKIE, STUNMessageType, _parse_stun_response
 from voip.types import DigestQoP
 
 from .messages import Message, Request, Response
@@ -117,6 +118,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         self.cseq = 0
         self.stun_server_address = stun_server_address
         self.public_address: tuple[str, int] | None = None
+        self._stun_pending: dict[bytes, asyncio.Future[tuple[str, int]]] = {}
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport; if registration params are set, send REGISTER after STUN."""
@@ -125,10 +127,48 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         if self.server_address is not None:
             asyncio.ensure_future(self._stun_then_register())
 
-    async def _stun_then_register(self) -> None:
-        """Discover the public address via STUN, then send REGISTER."""
+    async def stun_discover(
+        self, host: str, port: int = 3478, timeout_secs: float = 3.0
+    ) -> tuple[str, int]:
+        """Discover the public IP:port for this SIP socket via STUN (RFC 5389).
+
+        Sends the STUN Binding Request through the actual SIP transport socket so
+        the server observes the same NAT mapping used by SIP signalling traffic.
+
+        Args:
+            host: STUN server hostname or IP address.
+            port: STUN server UDP port (default 3478).
+            timeout_secs: Seconds to wait for a STUN response.
+
+        Returns:
+            A ``(public_ip, public_port)`` tuple as seen by the STUN server.
+
+        Raises:
+            asyncio.TimeoutError: If the server does not respond in time.
+            RuntimeError: If the STUN response contains no address attribute.
+        """
+        loop = asyncio.get_running_loop()
+        transaction_id = uuid.uuid4().bytes[:12]
+        future: asyncio.Future[tuple[str, int]] = loop.create_future()
+        self._stun_pending[transaction_id] = future
+        request = struct.pack(
+            ">HHI12s",
+            STUNMessageType.BINDING_REQUEST,
+            0,
+            MAGIC_COOKIE,
+            transaction_id,
+        )
+        logger.debug("Sending STUN Binding Request to %s:%s via SIP socket", host, port)
+        self._transport.sendto(request, (host, port))
         try:
-            self.public_address = await stun_discover(*self.stun_server_address)
+            return await asyncio.wait_for(future, timeout_secs)
+        finally:
+            self._stun_pending.pop(transaction_id, None)
+
+    async def _stun_then_register(self) -> None:
+        """Discover the public address via STUN on the SIP socket, then send REGISTER."""
+        try:
+            self.public_address = await self.stun_discover(*self.stun_server_address)
             logger.debug(
                 "STUN: public address is %s:%s",
                 self.public_address[0],
@@ -141,10 +181,18 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         self.register()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Handle RFC 5626 keepalive pings, then dispatch SIP messages."""
+        """Handle RFC 5626 keepalive pings, STUN responses, then dispatch SIP messages."""
         if data == b"\r\n\r\n":  # RFC 5626 §4.4.1 double-CRLF keepalive ping
             logger.debug("RFC 5626 keepalive from %s, sending pong", addr)
             self._transport.sendto(b"\r\n", addr)
+            return
+        # RFC 7983: first byte in [0, 3] indicates a STUN packet.
+        if data and data[0] < 4:
+            if len(data) >= 20:
+                tid = data[8:20]
+                fut = self._stun_pending.get(tid)
+                if fut is not None:
+                    _parse_stun_response(data, tid, fut)
             return
         match Message.parse(data):
             case Request() as request:
@@ -444,17 +492,16 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             local_addr=("0.0.0.0", 0),  # noqa: S104
         )
         local_addr = rtp_transport.get_extra_info("sockname")
-        # Always discover the public RTP IP via STUN so that the SDP advertises a
-        # reachable address even when the server is behind NAT (RFC 5389).
-        # The RTP port comes from the locally bound socket and is not NAT-translated
-        # because we bind the RTP socket on a fixed ephemeral port.
+        # Discover the public RTP address by running STUN on the actual RTP
+        # socket (RFC 7983 multiplexing).  This ensures the NAT mapping seen by
+        # the STUN server corresponds to the socket carrying real-time audio,
+        # which is critical for symmetric-NAT traversal (RFC 5389).
         sdp_ip = local_addr[0]
         sdp_port = local_addr[1]
         try:
-            public_ip, _ = await stun_discover(*self.stun_server_address)
-            sdp_ip = public_ip
-            logger.debug("RTP STUN: public IP is %s, port %s", sdp_ip, sdp_port)
-        except (TimeoutError, OSError, RuntimeError) as exc:
+            sdp_ip, sdp_port = await rtp_protocol.stun_discover(*self.stun_server_address)
+            logger.debug("RTP STUN: public address is %s:%s", sdp_ip, sdp_port)
+        except (TimeoutError, OSError, RuntimeError, AttributeError) as exc:
             logger.warning("RTP STUN discovery failed (%s), using local address", exc)
             if self.public_address:
                 sdp_ip = self.public_address[0]

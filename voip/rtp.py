@@ -11,10 +11,13 @@ import dataclasses
 import enum
 import json
 import logging
+import struct
+import uuid
 from typing import ClassVar
 
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
 from voip.sip.types import CallerID
+from voip.stun import MAGIC_COOKIE, STUNMessageType, _parse_stun_response
 
 __all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
@@ -135,6 +138,11 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
             if self.chunk_duration
             else 1
         )
+        self._stun_pending: dict[bytes, asyncio.Future[tuple[str, int]]] = {}
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:  # type: ignore[override]
+        """Store the transport so that :meth:`stun_discover` can use the real socket."""
+        self._transport = transport
 
     @classmethod
     def negotiate_codec(cls, remote_media: MediaDescription) -> MediaDescription:
@@ -182,7 +190,15 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         )
 
     def datagram_received(self, data: bytes, address: tuple[str, int]) -> None:
-        """Parse incoming RTP packets, buffer them, and emit :meth:`audio_received`."""
+        """Multiplex STUN responses (RFC 7983) and RTP audio packets."""
+        # RFC 7983: first byte in [0, 3] indicates a STUN packet.
+        if data and data[0] < 4:
+            if len(data) >= 20:
+                tid = data[8:20]
+                fut = self._stun_pending.get(tid)
+                if fut is not None:
+                    _parse_stun_response(data, tid, fut)
+            return
         try:
             packet = RTPPacket.parse(data)
         except ValueError:
@@ -194,6 +210,47 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
             packets = self._audio_buffer[: self._packet_threshold]
             self._audio_buffer = self._audio_buffer[self._packet_threshold :]
             self.audio_received(packets)
+
+    async def stun_discover(
+        self, host: str, port: int = 3478, timeout_secs: float = 3.0
+    ) -> tuple[str, int]:
+        """Discover the public IP:port for this RTP socket via STUN (RFC 5389).
+
+        Unlike the module-level :func:`~voip.stun.stun_discover`, this method
+        sends the STUN Binding Request through the actual RTP transport socket so
+        the server observes the same NAT mapping used by real-time audio traffic.
+        STUN responses are demultiplexed from incoming RTP traffic using the
+        first-byte heuristic defined in RFC 7983.
+
+        Args:
+            host: STUN server hostname or IP address.
+            port: STUN server UDP port (default 3478).
+            timeout_secs: Seconds to wait for a STUN response.
+
+        Returns:
+            A ``(public_ip, public_port)`` tuple as seen by the STUN server.
+
+        Raises:
+            asyncio.TimeoutError: If the server does not respond in time.
+            RuntimeError: If the STUN response contains no address attribute.
+        """
+        loop = asyncio.get_running_loop()
+        transaction_id = uuid.uuid4().bytes[:12]
+        future: asyncio.Future[tuple[str, int]] = loop.create_future()
+        self._stun_pending[transaction_id] = future
+        request = struct.pack(
+            ">HHI12s",
+            STUNMessageType.BINDING_REQUEST,
+            0,
+            MAGIC_COOKIE,
+            transaction_id,
+        )
+        logger.debug("Sending STUN Binding Request to %s:%s via RTP socket", host, port)
+        self._transport.sendto(request, (host, port))
+        try:
+            return await asyncio.wait_for(future, timeout_secs)
+        finally:
+            self._stun_pending.pop(transaction_id, None)
 
     def audio_received(self, packets: list[bytes]) -> None:
         """Handle a buffered audio frame. Override in subclasses.

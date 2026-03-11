@@ -475,6 +475,7 @@ class TestAnswer:
             def __init__(self, caller="", media=None):
                 self.caller = caller
                 self.media = media
+                self._stun_pending = {}
                 if media is not None and media.fmt:
                     self.payload_type = media.fmt[0].payload_type
                     self.sample_rate = media.fmt[0].sample_rate
@@ -482,17 +483,14 @@ class TestAnswer:
                     self.payload_type = 0
                     self.sample_rate = 8000
 
+            async def stun_discover(self, host, port=3478, timeout_secs=3.0):
+                return ("127.0.0.1", 0)
+
         async def _answer_coro():
-            with (
-                unittest.mock.patch.object(
-                    asyncio.get_event_loop(),
-                    "create_datagram_endpoint",
-                    return_value=(fake_rtp_transport, FakeRTPProtocol(caller="")),
-                ),
-                unittest.mock.patch(
-                    "voip.sip.protocol.stun_discover",
-                    return_value=("127.0.0.1", 0),
-                ),
+            with unittest.mock.patch.object(
+                asyncio.get_event_loop(),
+                "create_datagram_endpoint",
+                return_value=(fake_rtp_transport, FakeRTPProtocol(caller="")),
             ):
                 await protocol._answer(invite, FakeRTPProtocol)
 
