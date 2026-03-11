@@ -395,7 +395,7 @@ class TestAnswer:
                 self.media = media
                 if media is not None and media.fmt:
                     self.payload_type = media.fmt[0].payload_type
-                    self.sample_rate = media.sample_rate
+                    self.sample_rate = media.fmt[0].sample_rate
                 else:
                     self.payload_type = 0
                     self.sample_rate = 8000

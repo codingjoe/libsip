@@ -148,20 +148,20 @@ class TestRealtimeTransportProtocol:
             port=49170,
             proto="RTP/AVP",
             fmt=[
-                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
             ],
         )
         protocol = RealtimeTransportProtocol(media=media)
         assert protocol.media is media
 
     def test_init__derives_sample_rate_from_media(self):
-        """sample_rate is derived from the RtpPayloadFormat clock_rate."""
+        """sample_rate is derived from the RTPPayloadFormat sample_rate."""
         media = MediaDescription(
             media="audio",
             port=49170,
             proto="RTP/AVP",
             fmt=[
-                RTPPayloadFormat(payload_type=9, encoding_name="G722", clock_rate=8000)
+                RTPPayloadFormat(payload_type=9, encoding_name="G722", sample_rate=8000)
             ],
         )
         protocol = RealtimeTransportProtocol(media=media)
@@ -211,14 +211,14 @@ class TestNegotiateCodec:
         )
         result = RealtimeTransportProtocol.negotiate_codec(media)
         assert result.fmt[0].payload_type == 111
-        assert result.sample_rate == 48000
+        assert result.fmt[0].sample_rate == 48000
 
     def test_negotiate_codec__falls_back_to_pcma(self):
         """Select PCMA when Opus and G.722 are not offered."""
         media = self._make_media(["0", "8"])
         result = RealtimeTransportProtocol.negotiate_codec(media)
         assert result.fmt[0].payload_type == 8
-        assert result.sample_rate == 8000
+        assert result.fmt[0].sample_rate == 8000
 
     def test_negotiate_codec__falls_back_to_pcmu(self):
         """Select PCMU when only PCMU is offered."""
@@ -253,14 +253,14 @@ class TestNegotiateCodec:
         f = result.get_format(111)
         assert f is not None
         assert f.encoding_name.lower() == "opus"
-        assert f.clock_rate == 48000
+        assert f.sample_rate == 48000
 
     def test_negotiate_codec__subclass_can_override_preferences(self):
         """A subclass with a different PREFERRED_CODECS list uses its own preferences."""
 
         class PCMAOnlyCall(RealtimeTransportProtocol):
             PREFERRED_CODECS = [
-                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
             ]
 
         media = self._make_media(["0", "8", "111"])

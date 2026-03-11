@@ -89,17 +89,17 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         RTPPayloadFormat(
             payload_type=RTPPayloadType.OPUS,
             encoding_name="opus",
-            clock_rate=48000,
+            sample_rate=48000,
             channels=2,
         ),
         RTPPayloadFormat(
-            payload_type=RTPPayloadType.G722, encoding_name="G722", clock_rate=8000
+            payload_type=RTPPayloadType.G722, encoding_name="G722", sample_rate=8000
         ),
         RTPPayloadFormat(
-            payload_type=RTPPayloadType.PCMA, encoding_name="PCMA", clock_rate=8000
+            payload_type=RTPPayloadType.PCMA, encoding_name="PCMA", sample_rate=8000
         ),
         RTPPayloadFormat(
-            payload_type=RTPPayloadType.PCMU, encoding_name="PCMU", clock_rate=8000
+            payload_type=RTPPayloadType.PCMU, encoding_name="PCMU", sample_rate=8000
         ),
     ]
 
@@ -111,7 +111,7 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         self.media = media
         if media is not None and media.fmt:
             self.payload_type: int = media.fmt[0].payload_type
-            self.sample_rate: int = media.sample_rate
+            self.sample_rate: int = media.fmt[0].sample_rate
         else:
             self.payload_type: int = 0
             self.sample_rate: int = 8000
