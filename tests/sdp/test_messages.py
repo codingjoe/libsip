@@ -597,6 +597,61 @@ class TestMediaDescription:
             "a=fmtp:111 minptime=10;useinbandfec=1"
         )
 
+    def test_parse__with_rtpmap(self):
+        """Parse a multi-line block; a=rtpmap populates encoding_name, sample_rate."""
+        media = MediaDescription.parse(
+            "audio 49170 RTP/AVP 111\r\na=rtpmap:111 opus/48000/2"
+        )
+        assert media.fmt[0].encoding_name == "opus"
+        assert media.fmt[0].sample_rate == 48000
+        assert media.fmt[0].channels == 2
+
+    def test_parse__with_fmtp(self):
+        """Parse a multi-line block; a=fmtp populates fmtp on the matching format."""
+        media = MediaDescription.parse(
+            "audio 49170 RTP/AVP 111\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n"
+            "a=fmtp:111 minptime=10;useinbandfec=1"
+        )
+        assert media.fmt[0].fmtp == "minptime=10;useinbandfec=1"
+
+    def test_parse__roundtrip(self):
+        """str() output round-trips through parse() (with m= prefix)."""
+        original = MediaDescription(
+            media="audio",
+            port=49170,
+            proto="RTP/AVP",
+            fmt=[
+                RTPPayloadFormat(
+                    payload_type=111,
+                    encoding_name="opus",
+                    sample_rate=48000,
+                    channels=2,
+                    fmtp="minptime=10;useinbandfec=1",
+                )
+            ],
+        )
+        assert MediaDescription.parse(str(original)) == original
+
+    def test_parse__generic_attribute_preserved(self):
+        """Non-rtpmap/fmtp a= lines are added to the attributes list."""
+        media = MediaDescription.parse("audio 49170 RTP/AVP 0\r\na=sendrecv")
+        assert media.attributes == [Attribute(name="sendrecv", value=None)]
+
+    def test_parse__multiple_formats(self):
+        """a=rtpmap lines are matched to the correct payload type."""
+        media = MediaDescription.parse(
+            "audio 49170 RTP/AVP 0 111\r\n"
+            "a=rtpmap:111 opus/48000/2\r\n"
+            "a=fmtp:111 minptime=10"
+        )
+        pcmu = media.get_format(0)
+        opus = media.get_format(111)
+        assert pcmu is not None and pcmu.encoding_name is None
+        assert opus is not None and opus.encoding_name == "opus"
+        assert opus.channels == 2
+        assert opus.fmtp == "minptime=10"
+
 
 class TestRTPPayloadFormat:
     def test_parse__opus(self):

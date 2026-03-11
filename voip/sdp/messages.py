@@ -13,7 +13,6 @@ from .types import (
     IntField,
     MediaDescription,
     Origin,
-    RTPPayloadFormat,
     StrField,
     Timing,
 )
@@ -114,25 +113,7 @@ class SessionDescription:
         ``a=fmtp``), ``False`` otherwise so the caller can fall through to the
         generic attribute list.
         """
-        if attr.name == "rtpmap" and attr.value is not None:
-            rtpfmt = RTPPayloadFormat.parse(attr.value)
-            for i, f in enumerate(media.fmt):
-                if f.payload_type == rtpfmt.payload_type:
-                    media.fmt[i] = rtpfmt
-                    break
-            return True
-        if attr.name == "fmtp" and attr.value is not None:
-            pt_str, _, params = attr.value.partition(" ")
-            try:
-                pt = int(pt_str)
-            except ValueError:
-                return False
-            for f in media.fmt:
-                if f.payload_type == pt:
-                    f.fmtp = params
-                    break
-            return True
-        return False
+        return media.apply_attribute(attr)
 
     @staticmethod
     def _apply_to_media(
