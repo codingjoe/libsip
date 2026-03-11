@@ -36,12 +36,13 @@ voip --server sip.example.com --username alice --password secret
 
 ### Python API
 
-Register with a SIP carrier and transcribe every call with Whisper:
+Subclass `WhisperCall` and override `transcription_received` to handle results.
+Pass it as `call_class` when answering an incoming call:
 
 ```python
 import asyncio
 from voip.audio import WhisperCall
-from voip.sip import RegisterSIP
+from voip.sip.protocol import SIP
 
 
 class MyCall(WhisperCall):
@@ -49,22 +50,14 @@ class MyCall(WhisperCall):
         print(f"[{self.caller}] {text}")
 
 
-class MySession(RegisterSIP):
+class MySession(SIP):
     def call_received(self, request) -> None:
         self.answer(request=request, call_class=MyCall)
 
 
 async def main():
     loop = asyncio.get_running_loop()
-    await loop.create_datagram_endpoint(
-        lambda: MySession(
-            server_address=("sip.example.com", 5060),
-            aor="sip:alice@example.com",
-            username="alice",
-            password="secret",
-        ),
-        local_addr=("0.0.0.0", 5060),
-    )
+    await loop.create_datagram_endpoint(MySession, local_addr=("0.0.0.0", 5060))
     await asyncio.sleep(3600)
 
 
