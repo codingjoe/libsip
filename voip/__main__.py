@@ -140,7 +140,6 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
             super().__init__(caller=caller, model=model, media=media)
 
         def transcription_received(self, text: str) -> None:
-            logger.info("Transcription: %s", text)
             click.echo(text)
 
     # Mix in ConsoleMessageProcessor only at maximum verbosity (-vvv) so that
@@ -148,15 +147,7 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
     bases = (ConsoleMessageProcessor, SIP) if verbose >= 3 else (SIP,)
 
     class TranscribeSession(*bases):
-        def registered(self) -> None:
-            logger.info("Registered with %s — waiting for calls", host)
-            click.echo(f"Registered with {host} — waiting for calls", err=True)
-
         def call_received(self, request) -> None:
-            click.echo(
-                f"Incoming call from {request.headers.get('From', '')}",
-                err=True,
-            )
             self.ringing(request=request)
             self.answer(request=request, call_class=TranscribingCall)
 
@@ -172,7 +163,6 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
             ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )
-        click.echo(f"Listening on port {local_port}…", err=True)
         await asyncio.Future()
 
     try:

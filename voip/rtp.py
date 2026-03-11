@@ -16,6 +16,8 @@ from voip.sdp.types import MediaDescription, RTPPayloadFormat
 
 __all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
+from voip.sip.protocol import _mask_caller
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,15 +92,9 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
             sample_rate=48000,
             channels=2,
         ),
-        RTPPayloadFormat(
-            payload_type=RTPPayloadType.G722, encoding_name="G722", sample_rate=8000
-        ),
-        RTPPayloadFormat(
-            payload_type=RTPPayloadType.PCMA, encoding_name="PCMA", sample_rate=8000
-        ),
-        RTPPayloadFormat(
-            payload_type=RTPPayloadType.PCMU, encoding_name="PCMU", sample_rate=8000
-        ),
+        RTPPayloadFormat(payload_type=RTPPayloadType.G722),
+        RTPPayloadFormat(payload_type=RTPPayloadType.PCMA),
+        RTPPayloadFormat(payload_type=RTPPayloadType.PCMU),
     ]
 
     def __init__(self, caller: str = "", media: MediaDescription | None = None) -> None:
@@ -110,7 +106,7 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
             self.payload_type: int = fmt.payload_type
             self.sample_rate: int = fmt.sample_rate or 8000
             logger.info(
-                "Codec: %s/%d%s (PT %d)",
+                f"Call from caller {_mask_caller(self.caller)} using %s/%d%s (PT %d)",
                 fmt.encoding_name or "unknown",
                 fmt.sample_rate or 0,
                 f"/{fmt.channels}" if fmt.channels != 1 else "",

@@ -501,7 +501,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
         logger.info(
-            "Ringing %s",
+            "Ringing call from %s",
             _mask_caller(request.headers.get("From", "unknown")),
         )
         self.send(
