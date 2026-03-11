@@ -7,7 +7,7 @@ import struct
 
 import pytest
 from voip.rtp import RTP, RealtimeTransportProtocol, RTPPacket, RTPPayloadType
-from voip.sdp.types import Attribute, MediaDescription, RtpMap
+from voip.sdp.types import MediaDescription, RtpPayloadFormat
 
 
 def make_rtp_packet(
@@ -144,17 +144,25 @@ class TestRealtimeTransportProtocol:
     def test_init__stores_media(self):
         """Media parameter is stored on the protocol instance."""
         media = MediaDescription(
-            media="audio", port=49170, proto="RTP/AVP", fmt=["8"],
-            attributes=[Attribute(name="rtpmap", value="8 PCMA/8000")]
+            media="audio",
+            port=49170,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+            ],
         )
         protocol = RealtimeTransportProtocol(media=media)
         assert protocol.media is media
 
     def test_init__derives_sample_rate_from_media(self):
-        """sample_rate is derived from the rtpmap attribute of the MediaDescription."""
+        """sample_rate is derived from the RtpPayloadFormat clock_rate."""
         media = MediaDescription(
-            media="audio", port=49170, proto="RTP/AVP", fmt=["9"],
-            attributes=[Attribute(name="rtpmap", value="9 G722/8000")]
+            media="audio",
+            port=49170,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(payload_type=9, encoding_name="G722", clock_rate=8000)
+            ],
         )
         protocol = RealtimeTransportProtocol(media=media)
         assert protocol.sample_rate == 8000
@@ -167,7 +175,10 @@ class TestRealtimeTransportProtocol:
     def test_init__derives_payload_type_from_media(self):
         """payload_type is derived from the first fmt entry of the MediaDescription."""
         media = MediaDescription(
-            media="audio", port=49170, proto="RTP/AVP", fmt=["8"], attributes=[]
+            media="audio",
+            port=49170,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=8)],
         )
         protocol = RealtimeTransportProtocol(media=media)
         assert protocol.payload_type == 8
@@ -178,12 +189,19 @@ class TestRealtimeTransportProtocol:
 
 
 class TestNegotiateCodec:
-    def _make_media(self, fmts: list[str], rtpmaps: list[str] | None = None) -> MediaDescription:
+    def _make_media(
+        self, fmts: list[str], rtpmaps: list[str] | None = None
+    ) -> MediaDescription:
         """Build a MediaDescription with given format list and optional rtpmap attributes."""
-        attributes = []
-        for rtpmap in (rtpmaps or []):
-            attributes.append(Attribute(name="rtpmap", value=rtpmap))
-        return MediaDescription(media="audio", port=49170, proto="RTP/AVP", fmt=fmts, attributes=attributes)
+        rtpmap_by_pt: dict[int, RtpPayloadFormat] = {}
+        for rtpmap in rtpmaps or []:
+            f = RtpPayloadFormat.parse(rtpmap)
+            rtpmap_by_pt[f.payload_type] = f
+        formats = [
+            rtpmap_by_pt.get(int(pt)) or RtpPayloadFormat(payload_type=int(pt))
+            for pt in fmts
+        ]
+        return MediaDescription(media="audio", port=49170, proto="RTP/AVP", fmt=formats)
 
     def test_negotiate_codec__prefers_opus(self):
         """Select Opus when offered alongside lower-priority codecs."""
@@ -192,21 +210,21 @@ class TestNegotiateCodec:
             ["111 opus/48000/2", "8 PCMA/8000"],
         )
         result = RealtimeTransportProtocol.negotiate_codec(media)
-        assert result.fmt == ["111"]
+        assert result.fmt[0].payload_type == 111
         assert result.sample_rate == 48000
 
     def test_negotiate_codec__falls_back_to_pcma(self):
         """Select PCMA when Opus and G.722 are not offered."""
         media = self._make_media(["0", "8"])
         result = RealtimeTransportProtocol.negotiate_codec(media)
-        assert result.fmt == ["8"]
+        assert result.fmt[0].payload_type == 8
         assert result.sample_rate == 8000
 
     def test_negotiate_codec__falls_back_to_pcmu(self):
         """Select PCMU when only PCMU is offered."""
         media = self._make_media(["0"])
         result = RealtimeTransportProtocol.negotiate_codec(media)
-        assert result.fmt == ["0"]
+        assert result.fmt[0].payload_type == 0
 
     def test_negotiate_codec__empty_fmt__raises(self):
         """Raise NotImplementedError when the remote side offers no audio formats."""
@@ -216,9 +234,7 @@ class TestNegotiateCodec:
 
     def test_negotiate_codec__unknown_codec__raises(self):
         """Raise NotImplementedError when no offered codec matches PREFERRED_CODECS."""
-        media = self._make_media(
-            ["126"], ["126 telephone-event/8000"]
-        )
+        media = self._make_media(["126"], ["126 telephone-event/8000"])
         with pytest.raises(NotImplementedError):
             RealtimeTransportProtocol.negotiate_codec(media)
 
@@ -231,19 +247,22 @@ class TestNegotiateCodec:
         assert result.proto == "RTP/AVP"
 
     def test_negotiate_codec__includes_rtpmap_attribute(self):
-        """The returned MediaDescription includes an a=rtpmap attribute."""
+        """The returned MediaDescription has codec info in its fmt entries."""
         media = self._make_media(["111"], ["111 opus/48000/2"])
         result = RealtimeTransportProtocol.negotiate_codec(media)
-        rtpmap = result.get_rtpmap("111")
-        assert rtpmap is not None
-        assert rtpmap.encoding_name.lower() == "opus"
-        assert rtpmap.clock_rate == 48000
+        f = result.get_format(111)
+        assert f is not None
+        assert f.encoding_name.lower() == "opus"
+        assert f.clock_rate == 48000
 
     def test_negotiate_codec__subclass_can_override_preferences(self):
         """A subclass with a different PREFERRED_CODECS list uses its own preferences."""
+
         class PCMAOnlyCall(RealtimeTransportProtocol):
-            PREFERRED_CODECS = [RtpMap(payload_type=8, encoding_name="PCMA", clock_rate=8000)]
+            PREFERRED_CODECS = [
+                RtpPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+            ]
 
         media = self._make_media(["0", "8", "111"])
         result = PCMAOnlyCall.negotiate_codec(media)
-        assert result.fmt == ["8"]
+        assert result.fmt[0].payload_type == 8

@@ -12,7 +12,7 @@ import enum
 import logging
 from typing import ClassVar
 
-from voip.sdp.types import Attribute, MediaDescription, RtpMap
+from voip.sdp.types import MediaDescription, RtpPayloadFormat
 
 __all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
@@ -85,23 +85,32 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
 
     #: Codec preference list ordered from highest to lowest priority.
     #: Opus > G.722 > PCMA (G.711 A-law) > PCMU (G.711 µ-law).
-    PREFERRED_CODECS: ClassVar[list[RtpMap]] = [
-        RtpMap(payload_type=RTPPayloadType.OPUS, encoding_name="opus", clock_rate=48000, channels=2),
-        RtpMap(payload_type=RTPPayloadType.G722, encoding_name="G722", clock_rate=8000),
-        RtpMap(payload_type=RTPPayloadType.PCMA, encoding_name="PCMA", clock_rate=8000),
-        RtpMap(payload_type=RTPPayloadType.PCMU, encoding_name="PCMU", clock_rate=8000),
+    PREFERRED_CODECS: ClassVar[list[RtpPayloadFormat]] = [
+        RtpPayloadFormat(
+            payload_type=RTPPayloadType.OPUS,
+            encoding_name="opus",
+            clock_rate=48000,
+            channels=2,
+        ),
+        RtpPayloadFormat(
+            payload_type=RTPPayloadType.G722, encoding_name="G722", clock_rate=8000
+        ),
+        RtpPayloadFormat(
+            payload_type=RTPPayloadType.PCMA, encoding_name="PCMA", clock_rate=8000
+        ),
+        RtpPayloadFormat(
+            payload_type=RTPPayloadType.PCMU, encoding_name="PCMU", clock_rate=8000
+        ),
     ]
 
-    def __init__(
-        self, caller: str = "", media: MediaDescription | None = None
-    ) -> None:
+    def __init__(self, caller: str = "", media: MediaDescription | None = None) -> None:
         super().__init__()
         #: The SIP address of the caller (from the From header of the INVITE).
         self.caller = caller
         #: The negotiated :class:`~voip.sdp.types.MediaDescription` for this call.
         self.media = media
         if media is not None and media.fmt:
-            self.payload_type: int = int(media.fmt[0])
+            self.payload_type: int = media.fmt[0].payload_type
             self.sample_rate: int = media.sample_rate
         else:
             self.payload_type: int = 0
@@ -134,25 +143,25 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         if not remote_media.fmt:
             raise NotImplementedError("Remote SDP offer contains no audio formats")
 
-        remote_fmts = set(remote_media.fmt)
+        remote_fmts = {f.payload_type for f in remote_media.fmt}
         for preferred in cls.PREFERRED_CODECS:
-            fmt = str(preferred.payload_type)
             # Match by payload type number.
-            if fmt in remote_fmts:
-                rtpmap = remote_media.get_rtpmap(fmt) or preferred
+            if preferred.payload_type in remote_fmts:
+                remote_fmt = remote_media.get_format(preferred.payload_type)
+                codec = (
+                    remote_fmt if remote_fmt and remote_fmt.encoding_name else preferred
+                )
                 return MediaDescription(
                     media="audio",
                     port=0,
                     proto="RTP/AVP",
-                    fmt=[fmt],
-                    attributes=[Attribute(name="rtpmap", value=str(rtpmap))],
+                    fmt=[codec],
                 )
             # Match by encoding name for dynamic payload types.
             for remote_fmt in remote_media.fmt:
-                remote_rtpmap = remote_media.get_rtpmap(remote_fmt)
                 if (
-                    remote_rtpmap is not None
-                    and remote_rtpmap.encoding_name.lower()
+                    remote_fmt.encoding_name is not None
+                    and remote_fmt.encoding_name.lower()
                     == preferred.encoding_name.lower()
                 ):
                     return MediaDescription(
@@ -160,11 +169,11 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
                         port=0,
                         proto="RTP/AVP",
                         fmt=[remote_fmt],
-                        attributes=[Attribute(name="rtpmap", value=str(remote_rtpmap))],
                     )
 
         raise NotImplementedError(
-            f"No supported codec found in remote offer {list(remote_media.fmt)!r}. "
+            f"No supported codec found in remote offer "
+            f"{[f.payload_type for f in remote_media.fmt]!r}. "
             f"Supported: {[c.encoding_name for c in cls.PREFERRED_CODECS]!r}"
         )
 

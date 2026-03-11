@@ -13,6 +13,7 @@ from .types import (
     IntField,
     MediaDescription,
     Origin,
+    RtpPayloadFormat,
     StrField,
     Timing,
 )
@@ -88,6 +89,20 @@ class SessionDescription:
         if letter == "m":
             self.media.append(parsed)
             return parsed
+        # Route a=rtpmap into the matching RtpPayloadFormat in current_media.fmt.
+        if (
+            letter == "a"
+            and isinstance(parsed, Attribute)
+            and parsed.name == "rtpmap"
+            and parsed.value is not None
+            and current_media is not None
+        ):
+            rtpfmt = RtpPayloadFormat.parse(parsed.value)
+            for i, f in enumerate(current_media.fmt):
+                if f.payload_type == rtpfmt.payload_type:
+                    current_media.fmt[i] = rtpfmt
+                    break
+            return current_media
         if field.media_attr is not None and current_media is not None:
             return self._apply_to_media(
                 current_media, field.media_attr, parsed, field.is_list
