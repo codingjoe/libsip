@@ -8,7 +8,7 @@ from voip.sdp.types import (
     ConnectionData,
     MediaDescription,
     Origin,
-    RtpMap,
+    RtpPayloadFormat,
     Timing,
 )
 
@@ -101,7 +101,9 @@ class TestSessionDescriptionParse:
         assert audio.media == "audio"
         assert audio.port == 49170
         assert audio.proto == "RTP/AVP"
-        assert audio.fmt == ["0"]
+        assert audio.fmt == [
+            RtpPayloadFormat(payload_type=0, encoding_name="PCMU", clock_rate=8000)
+        ]
 
     def test_parse__media_video(self):
         """Parse the first video media section."""
@@ -111,10 +113,15 @@ class TestSessionDescriptionParse:
         assert video.port == 51372
 
     def test_parse__media_attribute(self):
-        """Parse the rtpmap attribute within a media section."""
+        """Parse the rtpmap attribute within a media section into RtpPayloadFormat."""
         sdp = SessionDescription.parse(TYPICAL_SDP)
         audio = sdp.media[0]
-        assert audio.attributes == [Attribute(name="rtpmap", value="0 PCMU/8000")]
+        assert audio.fmt == [
+            RtpPayloadFormat(payload_type=0, encoding_name="PCMU", clock_rate=8000)
+        ]
+        assert (
+            audio.attributes == []
+        )  # rtpmap is folded into fmt, not kept as raw attribute
 
     def test_parse__title(self):
         """Parse the session title field (i=) at session level."""
@@ -328,8 +335,11 @@ class TestSessionDescriptionStr:
                     media="audio",
                     port=49170,
                     proto="RTP/AVP",
-                    fmt=["0"],
-                    attributes=[Attribute(name="rtpmap", value="0 PCMU/8000")],
+                    fmt=[
+                        RtpPayloadFormat(
+                            payload_type=0, encoding_name="PCMU", clock_rate=8000
+                        )
+                    ],
                 )
             ]
         )
@@ -345,7 +355,7 @@ class TestSessionDescriptionStr:
                     media="audio",
                     port=49170,
                     proto="RTP/AVP",
-                    fmt=["0"],
+                    fmt=[RtpPayloadFormat(payload_type=0)],
                     connection=ConnectionData(
                         nettype="IN", addrtype="IP4", connection_address="192.168.1.1"
                     ),
@@ -362,7 +372,7 @@ class TestSessionDescriptionStr:
                     media="audio",
                     port=49170,
                     proto="RTP/AVP",
-                    fmt=["0"],
+                    fmt=[RtpPayloadFormat(payload_type=0)],
                     title="My Audio",
                 )
             ]
@@ -514,35 +524,36 @@ class TestMediaDescription:
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=["0", "8"],
+            fmt=[RtpPayloadFormat(payload_type=0), RtpPayloadFormat(payload_type=8)],
         )
 
     def test_str(self):
-        """Serialize a MediaDescription to string."""
+        """Serialize a MediaDescription to string (no a=rtpmap when codec info is absent)."""
         media = MediaDescription(
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=["0"],
+            fmt=[RtpPayloadFormat(payload_type=0)],
         )
         assert str(media) == "m=audio 49170 RTP/AVP 0"
 
-    def test_str__with_attributes(self):
-        """Serialize a MediaDescription with attributes."""
+    def test_str__with_rtpmap_in_fmt(self):
+        """Serialize a MediaDescription; a=rtpmap is derived from fmt entries with codec info."""
         media = MediaDescription(
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=["0"],
-            attributes=[Attribute(name="rtpmap", value="0 PCMU/8000")],
+            fmt=[
+                RtpPayloadFormat(payload_type=0, encoding_name="PCMU", clock_rate=8000)
+            ],
         )
         assert str(media) == "m=audio 49170 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000"
 
 
-class TestRtpMap:
+class TestRtpPayloadFormat:
     def test_parse__opus(self):
         """Parse a full Opus rtpmap attribute value."""
-        rm = RtpMap.parse("111 opus/48000/2")
+        rm = RtpPayloadFormat.parse("111 opus/48000/2")
         assert rm.payload_type == 111
         assert rm.encoding_name == "opus"
         assert rm.clock_rate == 48000
@@ -550,7 +561,7 @@ class TestRtpMap:
 
     def test_parse__pcma(self):
         """Parse a PCMA rtpmap attribute value (no channel count)."""
-        rm = RtpMap.parse("8 PCMA/8000")
+        rm = RtpPayloadFormat.parse("8 PCMA/8000")
         assert rm.payload_type == 8
         assert rm.encoding_name == "PCMA"
         assert rm.clock_rate == 8000
@@ -559,68 +570,123 @@ class TestRtpMap:
     def test_parse__invalid__raises(self):
         """Raise ValueError for a malformed rtpmap value."""
         with pytest.raises(ValueError):
-            RtpMap.parse("111 opus")
+            RtpPayloadFormat.parse("111 opus")
 
     def test_str__with_channels(self):
-        """Serialize an RtpMap with channel count > 1."""
-        rm = RtpMap(payload_type=111, encoding_name="opus", clock_rate=48000, channels=2)
+        """Serialize an RtpPayloadFormat with channel count > 1."""
+        rm = RtpPayloadFormat(
+            payload_type=111, encoding_name="opus", clock_rate=48000, channels=2
+        )
         assert str(rm) == "111 opus/48000/2"
 
     def test_str__without_channels(self):
-        """Serialize an RtpMap with a single channel (omit channel suffix)."""
-        rm = RtpMap(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+        """Serialize an RtpPayloadFormat with a single channel (omit channel suffix)."""
+        rm = RtpPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
         assert str(rm) == "8 PCMA/8000"
 
+    def test_str__missing_codec_info__raises(self):
+        """Raise ValueError when encoding_name or clock_rate is absent."""
+        with pytest.raises(ValueError):
+            str(RtpPayloadFormat(payload_type=0))
 
-class TestMediaDescriptionGetRtpmap:
-    def test_get_rtpmap__found(self):
-        """Return the parsed RtpMap for a known format."""
-        media = MediaDescription(
-            media="audio", port=0, proto="RTP/AVP", fmt=["111"],
-            attributes=[Attribute(name="rtpmap", value="111 opus/48000/2")],
-        )
-        rm = media.get_rtpmap("111")
-        assert rm is not None
-        assert rm.encoding_name == "opus"
 
-    def test_get_rtpmap__not_found(self):
-        """Return None when no rtpmap attribute matches the format."""
+class TestMediaDescriptionGetFormat:
+    def test_get_format__found(self):
+        """Return the RtpPayloadFormat for a known payload type."""
         media = MediaDescription(
-            media="audio", port=0, proto="RTP/AVP", fmt=["8"], attributes=[]
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(
+                    payload_type=111, encoding_name="opus", clock_rate=48000, channels=2
+                )
+            ],
         )
-        assert media.get_rtpmap("8") is None
+        f = media.get_format(111)
+        assert f is not None
+        assert f.encoding_name == "opus"
 
-    def test_get_rtpmap__wrong_pt__not_found(self):
-        """Return None when the rtpmap belongs to a different payload type."""
+    def test_get_format__found_by_str(self):
+        """Accept a string payload type in get_format."""
         media = MediaDescription(
-            media="audio", port=0, proto="RTP/AVP", fmt=["111"],
-            attributes=[Attribute(name="rtpmap", value="8 PCMA/8000")],
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(payload_type=8, encoding_name="PCMA", clock_rate=8000)
+            ],
         )
-        assert media.get_rtpmap("111") is None
+        assert media.get_format("8") is not None
+
+    def test_get_format__not_found(self):
+        """Return None when no format matches the given payload type."""
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=8)],
+        )
+        assert media.get_format(111) is None
+
+    def test_get_rtpmap__alias(self):
+        """get_rtpmap is a backwards-compatible alias for get_format."""
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(
+                    payload_type=111, encoding_name="opus", clock_rate=48000, channels=2
+                )
+            ],
+        )
+        assert media.get_rtpmap("111") is media.get_format(111)
 
 
 class TestMediaDescriptionSampleRate:
     def test_sample_rate__from_rtpmap(self):
-        """Return the clock rate from the a=rtpmap attribute."""
+        """Return the clock rate from the RtpPayloadFormat in fmt."""
         media = MediaDescription(
-            media="audio", port=0, proto="RTP/AVP", fmt=["111"],
-            attributes=[Attribute(name="rtpmap", value="111 opus/48000/2")],
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[
+                RtpPayloadFormat(
+                    payload_type=111, encoding_name="opus", clock_rate=48000, channels=2
+                )
+            ],
         )
         assert media.sample_rate == 48000
 
     def test_sample_rate__static_pcmu(self):
-        """Return 8000 Hz for PCMU (PT 0) without an rtpmap attribute."""
-        media = MediaDescription(media="audio", port=0, proto="RTP/AVP", fmt=["0"])
+        """Return 8000 Hz for PCMU (PT 0) via StaticPayloadType fallback."""
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=0)],
+        )
         assert media.sample_rate == 8000
 
     def test_sample_rate__static_pcma(self):
-        """Return 8000 Hz for PCMA (PT 8) without an rtpmap attribute."""
-        media = MediaDescription(media="audio", port=0, proto="RTP/AVP", fmt=["8"])
+        """Return 8000 Hz for PCMA (PT 8) via StaticPayloadType fallback."""
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=8)],
+        )
         assert media.sample_rate == 8000
 
     def test_sample_rate__static_g722(self):
-        """Return 8000 Hz for G.722 (PT 9) without an rtpmap attribute."""
-        media = MediaDescription(media="audio", port=0, proto="RTP/AVP", fmt=["9"])
+        """Return 8000 Hz for G.722 (PT 9) via StaticPayloadType fallback."""
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=9)],
+        )
         assert media.sample_rate == 8000
 
     def test_sample_rate__no_fmt__raises(self):
@@ -631,6 +697,11 @@ class TestMediaDescriptionSampleRate:
 
     def test_sample_rate__unknown_dynamic_pt__raises(self):
         """Raise ValueError for a dynamic PT with no rtpmap attribute."""
-        media = MediaDescription(media="audio", port=0, proto="RTP/AVP", fmt=["99"])
-        with pytest.raises(ValueError, match="No a=rtpmap"):
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[RtpPayloadFormat(payload_type=99)],
+        )
+        with pytest.raises(ValueError, match="No clock rate"):
             _ = media.sample_rate

@@ -373,9 +373,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             sdp_ip = public_ip
             logger.info("RTP STUN: public IP is %s, port %s", sdp_ip, sdp_port)
         except (TimeoutError, OSError, RuntimeError) as exc:
-            logger.warning(
-                "RTP STUN discovery failed (%s), using local address", exc
-            )
+            logger.warning("RTP STUN discovery failed (%s), using local address", exc)
             if self.public_address:
                 sdp_ip = self.public_address[0]
         logger.debug("RTP listening on %s:%s", local_addr[0], local_addr[1])
@@ -383,14 +381,8 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         sip_contact_addr = self.public_address or sip_local_addr
         record_route = request.headers.get("Record-Route")
         sess_id = str(secrets.randbelow(2**32) + 1)
-        rtpmap_attr = negotiated_media.get_rtpmap(negotiated_media.fmt[0])
         sdp_media_attributes = [
             Attribute(name="sendrecv"),
-            *(
-                [Attribute(name="rtpmap", value=str(rtpmap_attr))]
-                if rtpmap_attr is not None
-                else []
-            ),
         ]
         self.send(
             Response(

@@ -394,7 +394,7 @@ class TestAnswer:
                 self.caller = caller
                 self.media = media
                 if media is not None and media.fmt:
-                    self.payload_type = int(media.fmt[0])
+                    self.payload_type = media.fmt[0].payload_type
                     self.sample_rate = media.sample_rate
                 else:
                     self.payload_type = 0
@@ -437,12 +437,9 @@ class TestAnswer:
         assert response.status_code == 200
         assert response.body.origin is not None
         assert response.body.timings == [Timing(start_time=0, stop_time=0)]
-        assert response.body.media[0].fmt == ["8"]
+        assert response.body.media[0].fmt[0].payload_type == 8
         assert any(a.name == "sendrecv" for a in response.body.media[0].attributes)
-        assert any(
-            a.value and a.value.startswith("8 PCMA")
-            for a in response.body.media[0].attributes
-        )
+        assert response.body.media[0].fmt[0].encoding_name.startswith("PCMA")
 
     @pytest.mark.asyncio
     async def test_answer__selects_pcmu_when_only_option(self, fake_rtp_transport):
@@ -461,10 +458,7 @@ class TestAnswer:
         protocol.request_received(invite, addr)
         await self._run_answer(protocol, invite, fake_rtp_transport)
         response, _ = protocol._sent_responses[-1]
-        assert response.body.media[0].fmt == ["0"]
-
-    @pytest.mark.asyncio
-    async def test_answer__selects_opus_when_offered(self, fake_rtp_transport):
+        assert response.body.media[0].fmt[0].payload_type == 0  # PCMU when only option
         """Select Opus (111) when the remote SDP offers Opus alongside PCMA and PCMU."""
         protocol = FakeProtocol()
         addr = ("192.0.2.1", 5060)
@@ -481,11 +475,8 @@ class TestAnswer:
         protocol.request_received(invite, addr)
         await self._run_answer(protocol, invite, fake_rtp_transport)
         response, _ = protocol._sent_responses[-1]
-        assert response.body.media[0].fmt == ["111"]
-        assert any(
-            a.value and a.value.startswith("111 opus")
-            for a in response.body.media[0].attributes
-        )
+        assert response.body.media[0].fmt[0].payload_type == 111
+        assert response.body.media[0].fmt[0].encoding_name.lower().startswith("opus")
 
     @pytest.mark.asyncio
     async def test_answer__selects_g722_when_no_opus(self, fake_rtp_transport):
@@ -504,7 +495,7 @@ class TestAnswer:
         protocol.request_received(invite, addr)
         await self._run_answer(protocol, invite, fake_rtp_transport)
         response, _ = protocol._sent_responses[-1]
-        assert response.body.media[0].fmt == ["9"]
+        assert response.body.media[0].fmt[0].payload_type == 9  # G.722
 
     @pytest.mark.asyncio
     async def test_answer__selects_opus_by_name_match_with_different_pt(
@@ -526,18 +517,21 @@ class TestAnswer:
         protocol.request_received(invite, addr)
         await self._run_answer(protocol, invite, fake_rtp_transport)
         response, _ = protocol._sent_responses[-1]
-        assert response.body.media[0].fmt == ["100"]
+        assert (
+            response.body.media[0].fmt[0].payload_type == 100
+        )  # Opus at non-standard PT
 
     def test_preferred_codecs__class_attribute(self):
         """PREFERRED_CODECS is a class attribute on RTP with Opus first."""
-        from voip.sdp.types import RtpMap
+        from voip.sdp.types import RtpPayloadFormat
+
         codecs = RealtimeTransportProtocol.PREFERRED_CODECS
         assert isinstance(codecs, list)
-        assert all(isinstance(c, RtpMap) for c in codecs)
-        fmts = [str(c.payload_type) for c in codecs]
-        assert fmts[0] == "111"  # Opus is highest priority
-        assert "8" in fmts  # PCMA present
-        assert "0" in fmts  # PCMU present
+        assert all(isinstance(c, RtpPayloadFormat) for c in codecs)
+        pts = [c.payload_type for c in codecs]
+        assert pts[0] == 111  # Opus is highest priority
+        assert 8 in pts  # PCMA present
+        assert 0 in pts  # PCMU present
 
     @pytest.mark.asyncio
     async def test_answer__unsupported_codec__raises(self, fake_rtp_transport):
@@ -567,10 +561,7 @@ class TestAnswer:
         protocol.request_received(invite, addr)
         await self._run_answer(protocol, invite, fake_rtp_transport)
         response, _ = protocol._sent_responses[-1]
-        assert response.body.media[0].fmt == ["0"]
-
-    @pytest.mark.asyncio
-    async def test_answer__includes_to_tag(self, fake_rtp_transport):
+        assert response.body.media[0].fmt[0].payload_type == 0  # PCMU default
         """Include the locally generated To tag in the 200 OK response."""
         protocol = FakeProtocol()
         addr = ("192.0.2.1", 5060)
