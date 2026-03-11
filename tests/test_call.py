@@ -170,8 +170,8 @@ class TestSIP:
         received_audio = []
 
         class AudioCapture(RTP):
-            def audio_received(self, packet: RTPPacket) -> None:
-                received_audio.append(packet.payload)
+            def audio_received(self, packets: list[bytes]) -> None:
+                received_audio.extend(packets)
 
         protocol = SIP()
         send = MagicMock()
@@ -207,8 +207,8 @@ class TestSIP:
         received_audio = []
 
         class AudioCapture(RTP):
-            def audio_received(self, packet: RTPPacket) -> None:
-                received_audio.append(packet.payload)
+            def audio_received(self, packets: list[bytes]) -> None:
+                received_audio.extend(packets)
 
         protocol = SIP()
         send = MagicMock()
