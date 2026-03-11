@@ -6,7 +6,12 @@ import dataclasses
 
 from voip.sdp.messages import SessionDescription
 
+from .types import CallerID
+
 __all__ = ["Request", "Response", "Message"]
+
+#: Headers whose values are parsed as :class:`CallerID` objects.
+_CALLER_HEADERS = frozenset({"From", "To"})
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -28,7 +33,9 @@ class Message:
             name, sep, value = line.partition(":")
             if not sep:
                 continue
-            headers[name.strip()] = value.strip()
+            name = name.strip()
+            value = value.strip()
+            headers[name] = CallerID(value) if name in _CALLER_HEADERS else value
         parts = first_line.split(" ", 2)
         if first_line.startswith("SIP/"):
             version, status_code_str, reason = parts

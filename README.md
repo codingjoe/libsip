@@ -31,7 +31,7 @@ pip install voip[audio,cli,pygments]
 Answer calls and transcribe them live from the terminal:
 
 ```console
-voip --server sip.example.com --username alice --password secret
+voip sip --server sip.example.com --username alice --password secret transribe
 ```
 
 ### Python API

@@ -1,6 +1,62 @@
 from __future__ import annotations
 
 import enum
+import re
+
+__all__ = ["CallerID", "Status"]
+
+
+class CallerID(str):
+    """SIP From/To header value with structured access and privacy-safe repr.
+
+    Behaves as a plain ``str`` so it is wire-format compatible and can be
+    stored in header dicts unchanged.  ``repr()`` returns a short anonymized
+    form that shows only the last four characters of the user part and the
+    carrier domain — useful for log messages.
+
+    Examples::
+
+        >>> str(CallerID('"015114455910" <sip:015114455910@telefonica.de>;tag=abc'))
+        '"015114455910" <sip:015114455910@telefonica.de>;tag=abc'
+        >>> repr(CallerID('"015114455910" <sip:015114455910@telefonica.de>;tag=abc'))
+        '****5910@telefonica.de'
+        >>> repr(CallerID('sip:alice@example.com'))
+        '*lice@example.com'
+    """
+
+    @property
+    def display_name(self) -> str | None:
+        """Display name from the From/To header, if present."""
+        m = re.match(r'^"([^"]+)"\s*<|^([^<"]+?)\s*<', self)
+        if m:
+            return (m.group(1) or m.group(2) or "").strip() or None
+        return None
+
+    @property
+    def user(self) -> str | None:
+        """SIP user part (phone number or username)."""
+        m = re.search(r"sips?:([^@>;\s]+)@", self)
+        return m.group(1) if m else None
+
+    @property
+    def host(self) -> str | None:
+        """Carrier domain extracted from the SIP URI."""
+        m = re.search(r"sips?:[^@>;\s]+@([^>;)\s,]+)", self)
+        return m.group(1) if m else None
+
+    @property
+    def tag(self) -> str | None:
+        """Dialog tag parameter value, if present."""
+        m = re.search(r";tag=([^\s;]+)", self)
+        return m.group(1) if m else None
+
+    def __repr__(self) -> str:
+        """Anonymized label: last 4 chars of user + carrier domain."""
+        user = self.display_name or self.user or ""
+        host = self.host or ""
+        masked = ("*" * max(0, len(user) - 4)) + user[-4:] if user else "****"
+        return f"{masked}@{host}" if host else masked
+
 
 Status = enum.IntEnum(
     value="Status",

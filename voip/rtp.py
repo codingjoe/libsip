@@ -9,14 +9,14 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
+import json
 import logging
 from typing import ClassVar
 
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
+from voip.sip.types import CallerID
 
 __all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
-
-from voip.sip.protocol import _mask_caller
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +105,23 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
             fmt = media.fmt[0]
             self.payload_type: int = fmt.payload_type
             self.sample_rate: int = fmt.sample_rate or 8000
+            caller_id = CallerID(self.caller)
             logger.info(
-                f"Call from caller {_mask_caller(self.caller)} using %s/%d%s (PT %d)",
-                fmt.encoding_name or "unknown",
-                fmt.sample_rate or 0,
-                f"/{fmt.channels}" if fmt.channels != 1 else "",
-                fmt.payload_type,
+                json.dumps(
+                    {
+                        "event": "call_started",
+                        "caller": repr(caller_id),
+                        "codec": fmt.encoding_name or "unknown",
+                        "sample_rate": fmt.sample_rate or 0,
+                        "channels": fmt.channels,
+                        "payload_type": fmt.payload_type,
+                    }
+                ),
+                extra={
+                    "caller": repr(caller_id),
+                    "codec": fmt.encoding_name,
+                    "payload_type": fmt.payload_type,
+                },
             )
             frame_size = fmt.frame_size
         else:

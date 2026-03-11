@@ -3,6 +3,7 @@
 import pytest
 from voip.sdp.messages import SessionDescription
 from voip.sip.messages import Message, Request, Response
+from voip.sip.types import CallerID
 
 
 class TestSIPMessage:
@@ -91,6 +92,31 @@ class TestSIPMessage:
         result = Message.parse(data)
         assert isinstance(result, Request)
         assert "InvalidHeaderLine" not in result.headers
+
+    def test_parse__from_header__is_caller_id(self):
+        """From header is parsed as a CallerID instance."""
+        data = (
+            b"INVITE sip:bob@biloxi.com SIP/2.0\r\nFrom: sip:alice@atlanta.com\r\n\r\n"
+        )
+        result = Message.parse(data)
+        assert isinstance(result.headers["From"], CallerID)
+        assert result.headers["From"] == "sip:alice@atlanta.com"
+
+    def test_parse__to_header__is_caller_id(self):
+        """To header is parsed as a CallerID instance."""
+        data = b"INVITE sip:bob@biloxi.com SIP/2.0\r\nTo: sip:bob@biloxi.com\r\n\r\n"
+        result = Message.parse(data)
+        assert isinstance(result.headers["To"], CallerID)
+
+    def test_parse__from_header__roundtrip_preserves_raw_value(self):
+        """str(CallerID) equals the original header string, so serialization is unchanged."""
+        data = (
+            b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
+            b'From: "015114455910" <sip:015114455910@telefonica.de>;tag=abc\r\n'
+            b"\r\n"
+        )
+        result = Message.parse(data)
+        assert bytes(result) == data
 
     def test_parse__raises_value_error_on_invalid_first_line(self):
         """Raise ValueError when the first line cannot be parsed as a request."""

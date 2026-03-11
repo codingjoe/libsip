@@ -262,9 +262,9 @@ class TestSIP:
         protocol._transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
-        with caplog.at_level(logging.INFO, logger="voip.sip.protocol"):
+        with caplog.at_level(logging.INFO, logger="voip.sip"):
             await protocol._answer(request, RTP)
-        assert any("Answering" in r.message for r in caplog.records)
+        assert any("call_answered" in r.message for r in caplog.records)
 
     def test_reject__sends_busy_here_by_default(self):
         """Send a 486 Busy Here response when no status code is given."""
@@ -324,13 +324,13 @@ class TestSIP:
         """Log an info message when rejecting a call."""
         import logging
 
-        with caplog.at_level(logging.INFO, logger="voip.sip.protocol"):
+        with caplog.at_level(logging.INFO, logger="voip.sip"):
             protocol = SIP()
             protocol.send = MagicMock()
             request = make_invite()
             protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
             protocol.reject(request)
-        assert any("Rejecting" in r.message for r in caplog.records)
+        assert any("call_rejected" in r.message for r in caplog.records)
 
     def test_datagram_received__keepalive__sends_pong(self):
         """Double-CRLF keepalive (RFC 5626 §4.4.1) is answered with a single-CRLF pong."""
@@ -691,7 +691,7 @@ class TestSessionInitiationProtocol:
 
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        with caplog.at_level(logging.INFO, logger="voip.sip.protocol"):
+        with caplog.at_level(logging.INFO, logger="voip.sip"):
             p.response_received(
                 Response(status_code=200, reason="OK", headers={"CSeq": "1 REGISTER"}),
                 ("192.0.2.2", 5060),

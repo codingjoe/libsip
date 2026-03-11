@@ -50,19 +50,17 @@ def voip(ctx, verbose):
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     logging.basicConfig(
-        level=max(10, 10 * (3 - verbose)),
+        level=max(10, 10 * (4 - verbose)),
         format="%(levelname)s: [%(asctime)s] (%(name)s) %(message)s",
         handlers=[logging.StreamHandler()],
     )
-    logging.getLogger("voip").setLevel(max(10, 10 * (2 - verbose)))
+    logging.getLogger("voip").setLevel(max(10, 10 * (3 - verbose)))
 
 
 @voip.group()
 def sip():
     """Session Initiation Protocol (SIP)."""
 
-
-logger = logging.getLogger(__name__)
 
 main = voip
 

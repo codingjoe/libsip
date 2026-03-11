@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -28,12 +29,12 @@ from voip.stun import stun_discover
 from voip.types import DigestQoP
 
 from .messages import Message, Request, Response
-from .types import Status
+from .types import CallerID, Status
 
 if TYPE_CHECKING:
     from voip.rtp import RealtimeTransportProtocol
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("voip.sip")
 
 __all__ = ["SIP", "SessionInitiationProtocol"]
 
@@ -161,9 +162,17 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         call_id = request.headers.get("Call-ID", "")
         match request.method:
             case "INVITE":
+                caller = CallerID(request.headers.get("From", ""))
                 logger.info(
-                    "Incoming call from %s",
-                    _mask_caller(request.headers.get("From", "")),
+                    json.dumps(
+                        {
+                            "event": "incoming_call",
+                            "caller": repr(caller),
+                            "ip": addr[0],
+                            "call_id": call_id,
+                        }
+                    ),
+                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
                 )
                 if call_id in self._answered_calls:
                     logger.debug(
@@ -181,8 +190,17 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 self.ack_received(request)
             case "BYE":
                 self._answered_calls.discard(call_id)
+                caller = CallerID(request.headers.get("From", ""))
                 logger.info(
-                    "Call ended by %s", _mask_caller(request.headers.get("From", ""))
+                    json.dumps(
+                        {
+                            "event": "call_ended",
+                            "caller": repr(caller),
+                            "ip": addr[0],
+                            "call_id": call_id,
+                        }
+                    ),
+                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
                 )
                 self.send(
                     Response(
@@ -202,9 +220,17 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 self._to_tags.pop(call_id, None)
                 self.bye_received(request)
             case "CANCEL":
+                caller = CallerID(request.headers.get("From", ""))
                 logger.info(
-                    "Call cancelled by %s",
-                    _mask_caller(request.headers.get("From", "")),
+                    json.dumps(
+                        {
+                            "event": "call_cancelled",
+                            "caller": repr(caller),
+                            "ip": addr[0],
+                            "call_id": call_id,
+                        }
+                    ),
+                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
                 )
                 self.send(
                     Response(
@@ -376,8 +402,18 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         if addr is None:
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
-        caller = request.headers.get("From", "")
-        logger.info("Answering call from %s", _mask_caller(caller))
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "call_answered",
+                    "caller": repr(caller),
+                    "ip": addr[0],
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
+        )
         loop = asyncio.get_running_loop()
         remote_audio = next(
             (
@@ -500,9 +536,12 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         if address is None:
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
+        caller = CallerID(request.headers.get("From", ""))
         logger.info(
-            "Ringing call from %s",
-            _mask_caller(request.headers.get("From", "unknown")),
+            json.dumps(
+                {"event": "call_ringing", "caller": repr(caller), "call_id": call_id}
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
         )
         self.send(
             Response(
@@ -538,11 +577,24 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         if addr is None:
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
+        caller = CallerID(request.headers.get("From", ""))
         logger.info(
-            "Rejecting call from %s (%s %s)",
-            _mask_caller(request.headers.get("From", "unknown")),
-            status_code,
-            reason,
+            json.dumps(
+                {
+                    "event": "call_rejected",
+                    "caller": repr(caller),
+                    "ip": addr[0],
+                    "call_id": call_id,
+                    "status": status_code,
+                    "reason": reason,
+                }
+            ),
+            extra={
+                "caller": repr(caller),
+                "ip": addr[0],
+                "call_id": call_id,
+                "status": status_code,
+            },
         )
         self.send(
             Response(

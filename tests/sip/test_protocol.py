@@ -10,6 +10,7 @@ from voip.sdp.messages import SessionDescription
 from voip.sdp.types import Timing
 from voip.sip.messages import Request, Response
 from voip.sip.protocol import SessionInitiationProtocol, _mask_caller
+from voip.sip.types import CallerID
 
 INVITE_WITH_PCMA = (
     b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
@@ -146,7 +147,62 @@ class TestMaskCaller:
         assert _mask_caller("<sip:alice@example.com>") == "*lice"
 
 
-class TestSessionInitiationProtocol:
+class TestCallerID:
+    def test_str__returns_raw_header(self):
+        """str() returns the original SIP header value unchanged."""
+        raw = '"015114455910" <sip:015114455910@telefonica.de>;tag=abc'
+        assert str(CallerID(raw)) == raw
+
+    def test_repr__masks_display_name_and_includes_domain(self):
+        """repr() shows last 4 chars of display name and the carrier domain."""
+        caller = CallerID('"015114455910" <sip:015114455910@telefonica.de>;tag=abc')
+        assert repr(caller) == "********5910@telefonica.de"
+
+    def test_repr__bare_sip_uri(self):
+        """repr() masks the user part of a bare SIP URI and includes the domain."""
+        assert repr(CallerID("sip:alice@example.com")) == "*lice@example.com"
+
+    def test_repr__angle_bracket_uri(self):
+        """repr() handles <sip:user@host> without a display name."""
+        assert repr(CallerID("<sip:bob@biloxi.com>")) == "bob@biloxi.com"
+
+    def test_user__phone_number(self):
+        """User property extracts the SIP user part from a phone number URI."""
+        caller = CallerID('"015114455910" <sip:015114455910@telefonica.de>')
+        assert caller.user == "015114455910"
+
+    def test_user__bare_uri(self):
+        """User property extracts the username from a bare SIP URI."""
+        assert CallerID("sip:alice@example.com").user == "alice"
+
+    def test_host__returns_carrier_domain(self):
+        """Host property returns the domain part of the SIP URI."""
+        assert CallerID("sip:alice@carrier.example.com").host == "carrier.example.com"
+
+    def test_display_name__quoted(self):
+        """display_name returns the quoted display name."""
+        assert CallerID('"Alice" <sip:alice@example.com>').display_name == "Alice"
+
+    def test_display_name__absent(self):
+        """display_name is None when no display name is present."""
+        assert CallerID("sip:alice@example.com").display_name is None
+
+    def test_tag__present(self):
+        """Tag property extracts the tag parameter value."""
+        assert CallerID("sip:alice@example.com;tag=abc123").tag == "abc123"
+
+    def test_tag__absent(self):
+        """Tag is None when no tag parameter is present."""
+        assert CallerID("sip:alice@example.com").tag is None
+
+    def test_is_str_subclass(self):
+        """CallerID is a str, so it passes isinstance checks transparently."""
+        assert isinstance(CallerID("sip:alice@example.com"), str)
+
+    def test_equality_with_plain_string(self):
+        """CallerID compares equal to a plain str with the same value."""
+        assert CallerID("sip:alice@example.com") == "sip:alice@example.com"
+
     def test_datagram_received__request(self):
         """Dispatch a received SIP request datagram to request_received."""
         protocol = ConcreteProtocol()
