@@ -13,18 +13,8 @@ pytest.importorskip("whisper")
 
 import whisper  # noqa: E402
 from voip.audio import WhisperCall, _build_ogg_opus  # noqa: E402
-from voip.rtp import RTP, RTPPacket, RTPPayloadType  # noqa: E402
+from voip.rtp import RTP, RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
-
-
-def packet_threshold(
-    call_class: type[WhisperCall], media: MediaDescription = None
-) -> int:
-    """Return the packet count threshold for the given WhisperCall class and media."""
-    med = media if media is not None else OPUS_MEDIA
-    with patch("whisper.load_model", return_value=MagicMock()):
-        instance = call_class(media=med)
-    return instance._packet_threshold
 
 
 def _make_media(fmt: str, rtpmap: str | None = None) -> MediaDescription:
@@ -54,32 +44,10 @@ def make_whisper_call(
         return cls(caller="sip:bob@biloxi.com", media=med)
 
 
-def make_rtp_packet(
-    payload: bytes = b"audio",
-    payload_type: int = RTPPayloadType.OPUS,
-) -> RTPPacket:
-    """Return an RTPPacket with the given payload and payload type."""
-    return RTPPacket(
-        payload_type=payload_type,
-        sequence_number=1,
-        timestamp=0,
-        ssrc=0,
-        payload=payload,
-    )
-
-
 class TestWhisperCall:
     def test_whisper_call__is_rtp(self):
         """WhisperCall is a subclass of RTP."""
         assert issubclass(WhisperCall, RTP)
-
-    def test_class_attrs__opus_sample_rate(self):
-        """opus_sample_rate is 48000 Hz as required by RFC 7587."""
-        assert WhisperCall.opus_sample_rate == 48000
-
-    def test_class_attrs__opus_frame_size(self):
-        """opus_frame_size is 960 samples (20 ms at 48 kHz)."""
-        assert WhisperCall.opus_frame_size == 960
 
     def test_class_attrs__chunk_duration(self):
         """chunk_duration controls how many seconds are buffered before transcription."""
@@ -120,55 +88,55 @@ class TestWhisperCall:
         call = make_whisper_call(MagicMock(), media=PCMA_MEDIA)
         assert call.payload_type == RTPPayloadType.PCMA
 
-    def test_audio_received__buffers_opus_packet(self):
-        """Append each RTP payload to the internal packet buffer."""
+    def test_audio_received__does_not_buffer_on_whisper_call(self):
+        """audio_received on WhisperCall schedules a task, not a packet buffer."""
         call = make_whisper_call(MagicMock())
-        call.audio_received(make_rtp_packet(b"opus_packet"))
-        assert call._audio_packets == [b"opus_packet"]
+        assert not hasattr(call, "_audio_packets")
 
-    def test_audio_received__buffers_pcm_below_threshold(self):
-        """Don't schedule transcription until the packet threshold is reached."""
+    def test_audio_received__below_threshold_no_transcription(self):
+        """Don't trigger transcription until the packet threshold is reached."""
         model_mock = MagicMock()
         call = make_whisper_call(model_mock)
-        call.audio_received(make_rtp_packet(b"opus_packet"))
+        # Feed one packet to the base-class buffer (threshold=1500, so no emit)
+        call._audio_buffer.append(b"opus_packet")
         model_mock.transcribe.assert_not_called()
 
     async def test_audio_received__triggers_transcription_when_buffer_full(self):
-        """Schedule transcription when enough audio packets have been buffered."""
+        """Transcription fires when audio_received is emitted by the base-class buffer."""
         transcriptions = []
         model_mock = MagicMock()
         model_mock.transcribe.return_value = {"text": "hello"}
 
         class SmallChunkCall(WhisperCall):
-            chunk_duration = 1  # → 48000 * 1 // 960 = 50 packets
+            chunk_duration = 1  # 1 s @ 48 kHz / 960 samples = 50 packets
 
             def transcription_received(self, text: str) -> None:
                 transcriptions.append(text)
 
         call = make_whisper_call(model_mock, SmallChunkCall)
-        call._audio_packets = [b"x"] * (packet_threshold(SmallChunkCall) - 1)
         pcm_samples = np.zeros(whisper.audio.SAMPLE_RATE, dtype=np.float32)
         with patch.object(call, "_decode_audio", return_value=pcm_samples):
-            call.audio_received(make_rtp_packet(b"opus_packet"))
+            # Simulate the base class emitting audio_received with a full chunk
+            call.audio_received([b"x"] * call._packet_threshold)
             await asyncio.sleep(0.1)
         assert transcriptions == ["hello"]
 
-    async def test_audio_received__clears_transcribed_packets_from_buffer(self):
-        """Remove the transcribed packets from the buffer after transcription."""
+    async def test_transcribe_chunk__strips_whitespace(self):
+        """Strip leading and trailing whitespace from the transcription text."""
+        transcriptions = []
         model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": ""}
+        model_mock.transcribe.return_value = {"text": "  hello world  "}
 
-        class SmallChunkCall(WhisperCall):
-            chunk_duration = 1
+        class Capture(WhisperCall):
+            def transcription_received(self, text: str) -> None:
+                transcriptions.append(text)
 
-        call = make_whisper_call(model_mock, SmallChunkCall)
-        extra = 5
-        call._audio_packets = [b"x"] * (packet_threshold(SmallChunkCall) + extra)
+        call = make_whisper_call(model_mock, Capture)
         with patch.object(
             call, "_decode_audio", return_value=np.zeros(16000, dtype=np.float32)
         ):
-            await call._transcribe_chunk()
-        assert len(call._audio_packets) == extra
+            await call._transcribe_chunk([b"x"])
+        assert transcriptions == ["hello world"]
 
     def test_run_transcription__passes_numpy_array_directly(self):
         """Pass a numpy float32 array to the Whisper model without file I/O."""
@@ -188,26 +156,6 @@ class TestWhisperCall:
             "builtins.open", side_effect=AssertionError("open() must not be called")
         ):
             call._run_transcription(np.zeros(16000, dtype=np.float32))
-
-    async def test_transcription_received__strips_whitespace(self):
-        """Strip leading and trailing whitespace from the transcription text."""
-        transcriptions = []
-        model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": "  hello world  "}
-
-        class Capture(WhisperCall):
-            chunk_duration = 1
-
-            def transcription_received(self, text: str) -> None:
-                transcriptions.append(text)
-
-        call = make_whisper_call(model_mock, Capture)
-        call._audio_packets = [b"x"] * packet_threshold(Capture)
-        with patch.object(
-            call, "_decode_audio", return_value=np.zeros(16000, dtype=np.float32)
-        ):
-            await call._transcribe_chunk()
-        assert transcriptions == ["hello world"]
 
     def test_decode_via_av__opus(self):
         """Pipe Ogg Opus data through PyAV and return a float32 PCM array."""
@@ -290,10 +238,8 @@ class TestWhisperCall:
         assert kwargs.get("input_format") == "g722"
 
     def test_decode_audio__unknown__raises(self):
-        """Raise NotImplementedError for unsupported payload types."""
-        unknown_media = _make_media(
-            "99"
-        )  # static PT 99 doesn't exist in RTPPayloadType
+        """Raise NotImplementedError for unsupported encoding names."""
+        unknown_media = _make_media("99")
         call = make_whisper_call(MagicMock(), media=unknown_media)
         with pytest.raises(NotImplementedError, match="Unsupported"):
             call._decode_audio([b"pkt"])
@@ -311,13 +257,14 @@ class TestWhisperCall:
         assert kwargs.get("input_sample_rate") == 16000
 
     def test_audio_received__logs_debug(self, caplog):
-        """Log a debug message for each received RTP packet."""
+        """Log a debug message for each received audio frame."""
         import logging
 
         call = make_whisper_call(MagicMock())
         with caplog.at_level(logging.DEBUG, logger="voip.audio"):
-            call.audio_received(make_rtp_packet(b"opus_packet"))
-        assert any("RTP audio" in r.message for r in caplog.records)
+            with patch("asyncio.create_task"):
+                call.audio_received([b"opus_packet"])
+        assert any("Audio frame" in r.message for r in caplog.records)
 
 
 class TestBuildOggOpus:

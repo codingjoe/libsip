@@ -13,7 +13,7 @@ import av
 import numpy as np
 import whisper
 
-from voip.rtp import RealtimeTransportProtocol, RTPPacket, RTPPayloadType
+from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.types import MediaDescription
 
 __all__ = ["WhisperCall"]
@@ -112,22 +112,10 @@ class WhisperCall(RealtimeTransportProtocol):
                 self.answer(request=request, call_class=WhisperCall)
     """
 
-    #: Opus clock rate (Hz) as specified by RFC 7587 §4.
-    opus_sample_rate = 48000
-    #: Opus frame size in samples for a standard 20 ms frame at 48 kHz.
-    opus_frame_size = 960
     #: Audio buffered (in seconds) before each transcription is triggered.
-    chunk_duration = 30
+    chunk_duration: ClassVar[int] = 30
     #: Maximum seconds to wait for audio decoding to complete.
-    decode_timeout_secs = 60
-
-    #: Standard RTP frame sizes in samples per 20 ms packet, keyed by payload type.
-    _FRAME_SIZES: ClassVar[dict[int, int]] = {
-        RTPPayloadType.OPUS: 960,  # 20 ms at 48 kHz
-        RTPPayloadType.G722: 160,  # 20 ms at 8 kHz RTP clock rate
-        RTPPayloadType.PCMA: 160,  # 20 ms at 8 kHz
-        RTPPayloadType.PCMU: 160,  # 20 ms at 8 kHz
-    }
+    decode_timeout_secs: ClassVar[int] = 60
 
     def __init__(
         self,
@@ -138,67 +126,53 @@ class WhisperCall(RealtimeTransportProtocol):
         super().__init__(caller=caller, media=media)
         logger.debug("Loading Whisper model %r", model)
         self._whisper_model = whisper.load_model(model)
-        self._audio_packets: list[bytes] = []
-        sample_rate = self.sample_rate or 8000
-        frame_size = self._FRAME_SIZES.get(self.payload_type, sample_rate * 20 // 1000)
-        self._packet_threshold = sample_rate * self.chunk_duration // frame_size
-        self._transcribe_task: asyncio.Task | None = None
 
-    def audio_received(self, packet: RTPPacket) -> None:
-        """Buffer an audio payload and transcribe when the chunk threshold is reached."""
-        logger.debug("RTP audio packet received: %d bytes", len(packet.payload))
-        self._audio_packets.append(packet.payload)
-        if (
-            len(self._audio_packets) >= self._packet_threshold
-            and self._transcribe_task is None
-        ):
-            self._transcribe_task = asyncio.create_task(self._transcribe_chunk())
+    def audio_received(self, packets: list[bytes]) -> None:
+        """Schedule async transcription for a buffered audio chunk."""
+        logger.debug("Audio frame received: %d packets", len(packets))
+        asyncio.create_task(self._transcribe_chunk(packets))
 
-    async def _transcribe_chunk(self) -> None:
-        """Decode and transcribe the buffered audio packets, draining all complete chunks."""
-        try:
-            while len(self._audio_packets) >= self._packet_threshold:
-                packets = self._audio_packets[: self._packet_threshold]
-                self._audio_packets = self._audio_packets[self._packet_threshold :]
-                loop = asyncio.get_running_loop()
-                audio = await loop.run_in_executor(None, self._decode_audio, packets)
-                logger.info(
-                    "Transcribing %d samples (%.1f s)",
-                    len(audio),
-                    len(audio) / whisper.audio.SAMPLE_RATE,
-                )
-                text = await loop.run_in_executor(None, self._run_transcription, audio)
-                self.transcription_received(text.strip())
-        finally:
-            self._transcribe_task = None
+    async def _transcribe_chunk(self, packets: list[bytes]) -> None:
+        """Decode and transcribe one audio chunk."""
+        loop = asyncio.get_running_loop()
+        audio = await loop.run_in_executor(None, self._decode_audio, packets)
+        logger.info(
+            "Transcribing %d samples (%.1f s)",
+            len(audio),
+            len(audio) / whisper.audio.SAMPLE_RATE,
+        )
+        text = await loop.run_in_executor(None, self._run_transcription, audio)
+        self.transcription_received(text.strip())
 
     def _decode_audio(self, packets: list[bytes]) -> np.ndarray:
         """Decode audio packets to a float32 PCM array at Whisper's sample rate.
 
-        The codec is identified by :attr:`payload_type` matched against
-        :class:`~voip.rtp.RTPPayloadType` enum values, and the clock rate is
-        taken from :attr:`sample_rate` (both derived from :attr:`media`).
+        The codec is identified from the negotiated :attr:`media` encoding name,
+        and the clock rate is taken from :attr:`sample_rate`.
         """
-        match self.payload_type:
-            case RTPPayloadType.OPUS:
+        encoding = (
+            self.media.fmt[0].encoding_name if self.media and self.media.fmt else ""
+        ) or ""
+        match encoding.lower():
+            case "opus":
                 return self._decode_via_av(
                     _build_ogg_opus(packets),
                     input_format="ogg",
                     input_sample_rate=None,
                 )
-            case RTPPayloadType.G722:
+            case "g722":
                 return self._decode_via_av(
                     b"".join(packets),
                     input_format="g722",
                     input_sample_rate=self.sample_rate,
                 )
-            case RTPPayloadType.PCMA:
+            case "pcma":
                 return self._decode_via_av(
                     b"".join(packets),
                     input_format="alaw",
                     input_sample_rate=self.sample_rate,
                 )
-            case RTPPayloadType.PCMU:
+            case "pcmu":
                 return self._decode_via_av(
                     b"".join(packets),
                     input_format="mulaw",
@@ -206,8 +180,8 @@ class WhisperCall(RealtimeTransportProtocol):
                 )
             case _:
                 raise NotImplementedError(
-                    f"Unsupported RTP payload type: {self.payload_type}. "
-                    f"Supported types: {[pt.value for pt in RTPPayloadType]!r}"
+                    f"Unsupported codec: {encoding!r} (PT {self.payload_type}). "
+                    f"Supported: opus, g722, pcma, pcmu."
                 )
 
     def _decode_via_av(

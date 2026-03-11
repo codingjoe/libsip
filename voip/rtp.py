@@ -69,10 +69,18 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
 
     Subclass and override :meth:`audio_received` to process incoming audio.
     Override :meth:`negotiate_codec` to customise codec selection.
+
+    Set :attr:`chunk_duration` to buffer multiple packets before each
+    :meth:`audio_received` call.  The default of ``0`` passes each packet
+    individually as a single-element list.
     """
 
     #: Fixed RTP header size in bytes (RFC 3550 §5.1).
     rtp_header_size: int = 12
+
+    #: Seconds of audio to buffer before emitting an :meth:`audio_received` event.
+    #: ``0`` (default) emits one event per RTP packet.
+    chunk_duration: ClassVar[int] = 0
 
     #: Preferred codecs, highest to lowest priority.
     PREFERRED_CODECS: ClassVar[list[RTPPayloadFormat]] = [
@@ -98,11 +106,28 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         self.caller = caller
         self.media = media
         if media is not None and media.fmt:
-            self.payload_type: int = media.fmt[0].payload_type
-            self.sample_rate: int = media.fmt[0].sample_rate
+            fmt = media.fmt[0]
+            self.payload_type: int = fmt.payload_type
+            self.sample_rate: int = fmt.sample_rate or 8000
+            logger.info(
+                "Codec: %s/%d%s (PT %d)",
+                fmt.encoding_name or "unknown",
+                fmt.sample_rate or 0,
+                f"/{fmt.channels}" if fmt.channels != 1 else "",
+                fmt.payload_type,
+            )
+            frame_size = fmt.frame_size
         else:
             self.payload_type: int = 0
             self.sample_rate: int = 8000
+            frame_size = 160
+
+        self._audio_buffer: list[bytes] = []
+        self._packet_threshold: int = (
+            self.sample_rate * self.chunk_duration // frame_size
+            if self.chunk_duration
+            else 1
+        )
 
     @classmethod
     def negotiate_codec(cls, remote_media: MediaDescription) -> MediaDescription:
@@ -150,17 +175,25 @@ class RealtimeTransportProtocol(asyncio.DatagramProtocol):
         )
 
     def datagram_received(self, data: bytes, address: tuple[str, int]) -> None:
-        """Parse and forward incoming RTP packets to :meth:`audio_received`."""
+        """Parse incoming RTP packets, buffer them, and emit :meth:`audio_received`."""
         try:
             packet = RTPPacket.parse(data)
         except ValueError:
             return
         if not packet.payload:
             return
-        self.audio_received(packet)
+        self._audio_buffer.append(packet.payload)
+        while len(self._audio_buffer) >= self._packet_threshold:
+            packets = self._audio_buffer[: self._packet_threshold]
+            self._audio_buffer = self._audio_buffer[self._packet_threshold :]
+            self.audio_received(packets)
 
-    def audio_received(self, packet: RTPPacket) -> None:
-        """Handle an RTP packet. Override in subclasses."""
+    def audio_received(self, packets: list[bytes]) -> None:
+        """Handle a buffered audio frame. Override in subclasses.
+
+        Called with a list of :attr:`~RealtimeTransportProtocol._packet_threshold`
+        raw RTP payloads representing one audio chunk.
+        """
 
 
 #: Short alias for :class:`RealtimeTransportProtocol`.

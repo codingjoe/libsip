@@ -203,40 +203,42 @@ class PayloadTypeSpec(NamedTuple):
     sample_rate: int
     encoding_name: str
     channels: int = 1
+    #: Samples per standard 20 ms RTP frame; 0 = variable or not applicable.
+    frame_size: int = 0
 
 
 class StaticPayloadType(PayloadTypeSpec, enum.Enum):
     """Static RTP payload types as defined by RFC 3551 §6.
 
     Each member's :attr:`value` is a :class:`PayloadTypeSpec` carrying the
-    payload type number, sample rate, canonical encoding name, and channel
-    count.  Use :meth:`from_pt` to look up a member by its PT number.
+    payload type number, sample rate, canonical encoding name, channel count,
+    and frame size.  Use :meth:`from_pt` to look up a member by its PT number.
     """
 
     #: G.711 µ-law
-    PCMU = PayloadTypeSpec(0, 8000, "PCMU")
-    GSM = PayloadTypeSpec(3, 8000, "GSM")
-    G723 = PayloadTypeSpec(4, 8000, "G723")
+    PCMU = PayloadTypeSpec(0, 8000, "PCMU", frame_size=160)
+    GSM = PayloadTypeSpec(3, 8000, "GSM", frame_size=160)
+    G723 = PayloadTypeSpec(4, 8000, "G723", frame_size=160)
     #: DVI4 at 8 kHz
-    DVI4_8K = PayloadTypeSpec(5, 8000, "DVI4")
+    DVI4_8K = PayloadTypeSpec(5, 8000, "DVI4", frame_size=160)
     #: DVI4 at 16 kHz
-    DVI4_16K = PayloadTypeSpec(6, 16000, "DVI4")
-    LPC = PayloadTypeSpec(7, 8000, "LPC")
+    DVI4_16K = PayloadTypeSpec(6, 16000, "DVI4", frame_size=320)
+    LPC = PayloadTypeSpec(7, 8000, "LPC", frame_size=160)
     #: G.711 A-law
-    PCMA = PayloadTypeSpec(8, 8000, "PCMA")
+    PCMA = PayloadTypeSpec(8, 8000, "PCMA", frame_size=160)
     #: RTP clock rate is 8000 per RFC 3551 even though wideband
-    G722 = PayloadTypeSpec(9, 8000, "G722")
-    L16_STEREO = PayloadTypeSpec(10, 44100, "L16", 2)
-    L16_MONO = PayloadTypeSpec(11, 44100, "L16")
-    QCELP = PayloadTypeSpec(12, 8000, "QCELP")
-    CN = PayloadTypeSpec(13, 8000, "CN")
+    G722 = PayloadTypeSpec(9, 8000, "G722", frame_size=160)
+    L16_STEREO = PayloadTypeSpec(10, 44100, "L16", 2, frame_size=882)
+    L16_MONO = PayloadTypeSpec(11, 44100, "L16", frame_size=882)
+    QCELP = PayloadTypeSpec(12, 8000, "QCELP", frame_size=160)
+    CN = PayloadTypeSpec(13, 8000, "CN", frame_size=160)
     MPA = PayloadTypeSpec(14, 90000, "MPA")
-    G728 = PayloadTypeSpec(15, 8000, "G728")
+    G728 = PayloadTypeSpec(15, 8000, "G728", frame_size=160)
     #: DVI4 at 11.025 kHz
-    DVI4_11K = PayloadTypeSpec(16, 11025, "DVI4")
+    DVI4_11K = PayloadTypeSpec(16, 11025, "DVI4", frame_size=220)
     #: DVI4 at 22.05 kHz
-    DVI4_22K = PayloadTypeSpec(17, 22050, "DVI4")
-    G729 = PayloadTypeSpec(18, 8000, "G729")
+    DVI4_22K = PayloadTypeSpec(17, 22050, "DVI4", frame_size=441)
+    G729 = PayloadTypeSpec(18, 8000, "G729", frame_size=160)
     CELB = PayloadTypeSpec(25, 90000, "CelB")
     JPEG = PayloadTypeSpec(26, 90000, "JPEG")
     NV = PayloadTypeSpec(28, 90000, "nv")
@@ -304,6 +306,22 @@ class RTPPayloadFormat:
     def from_pt(cls, pt: int) -> RTPPayloadFormat:
         """Create an :class:`RTPPayloadFormat` from a payload type number."""
         return cls(payload_type=pt)
+
+    @property
+    def frame_size(self) -> int:
+        """Samples per standard 20 ms RTP frame.
+
+        For static payload types the value comes from :class:`StaticPayloadType`.
+        For dynamic payload types (e.g. Opus, PT ≥ 96) it is derived from
+        :attr:`sample_rate` assuming a 20 ms packetisation interval.
+        """
+        try:
+            spec = StaticPayloadType.from_pt(self.payload_type)
+            if spec.frame_size:
+                return spec.frame_size
+        except ValueError:
+            pass
+        return (self.sample_rate or 8000) * 20 // 1000
 
 
 @dataclasses.dataclass(slots=True)

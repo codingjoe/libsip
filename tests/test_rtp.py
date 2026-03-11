@@ -106,37 +106,37 @@ class TestRealtimeTransportProtocol:
         assert RTP is RealtimeTransportProtocol
 
     def test_datagram_received__forwards_audio_payload(self):
-        """Parse the RTP packet and forward it to audio_received."""
-        received: list[RTPPacket] = []
+        """Parse the RTP packet and forward it to audio_received as a list of payloads."""
+        received: list[list[bytes]] = []
 
         class ConcreteRTP(RealtimeTransportProtocol):
-            def audio_received(self, packet: RTPPacket) -> None:
-                received.append(packet)
+            def audio_received(self, packets: list[bytes]) -> None:
+                received.append(packets)
 
         ConcreteRTP().datagram_received(
             make_rtp_packet(payload=b"audio"), ("127.0.0.1", 5004)
         )
         assert len(received) == 1
-        assert received[0].payload == b"audio"
+        assert received[0] == [b"audio"]
 
     def test_datagram_received__skips_packet_shorter_than_header(self):
         """Skip packets shorter than the 12-byte RTP header."""
-        received: list[RTPPacket] = []
+        received: list[list[bytes]] = []
 
         class ConcreteRTP(RealtimeTransportProtocol):
-            def audio_received(self, packet: RTPPacket) -> None:
-                received.append(packet)
+            def audio_received(self, packets: list[bytes]) -> None:
+                received.append(packets)
 
         ConcreteRTP().datagram_received(b"\x80\x00", ("127.0.0.1", 5004))
         assert received == []
 
     def test_datagram_received__skips_header_only_packet(self):
         """Skip packets that contain only the 12-byte header with no audio payload."""
-        received: list[RTPPacket] = []
+        received: list[list[bytes]] = []
 
         class ConcreteRTP(RealtimeTransportProtocol):
-            def audio_received(self, packet: RTPPacket) -> None:
-                received.append(packet)
+            def audio_received(self, packets: list[bytes]) -> None:
+                received.append(packets)
 
         ConcreteRTP().datagram_received(b"\x80" * 12, ("127.0.0.1", 5004))
         assert received == []
@@ -186,6 +186,53 @@ class TestRealtimeTransportProtocol:
     def test_init__default_payload_type_without_media(self):
         """Default payload_type is 0 when no MediaDescription is given."""
         assert RealtimeTransportProtocol().payload_type == 0
+
+    def test_init__logs_codec_info(self, caplog):
+        """Log codec name, sample rate and payload type at INFO level on init."""
+        import logging
+
+        media = MediaDescription(
+            media="audio",
+            port=49170,
+            proto="RTP/AVP",
+            fmt=[
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
+            ],
+        )
+        with caplog.at_level(logging.INFO, logger="voip.rtp"):
+            RealtimeTransportProtocol(media=media)
+        assert any("PCMA" in r.message and "8000" in r.message for r in caplog.records)
+
+    def test_chunk_duration__default_is_zero(self):
+        """chunk_duration defaults to 0 (per-packet mode)."""
+        assert RealtimeTransportProtocol.chunk_duration == 0
+
+    def test_datagram_received__chunk_duration__buffers_until_threshold(self):
+        """Buffer packets and emit audio_received only when the threshold is reached."""
+        received: list[list[bytes]] = []
+        media = MediaDescription(
+            media="audio",
+            port=0,
+            proto="RTP/AVP",
+            fmt=[
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
+            ],
+        )
+
+        class ChunkedRTP(RealtimeTransportProtocol):
+            chunk_duration = 1  # 1 s @ 8 kHz / 160 samples = 50 packets
+
+            def audio_received(self, packets: list[bytes]) -> None:
+                received.append(packets)
+
+        proto = ChunkedRTP(media=media)
+        assert proto._packet_threshold == 50
+        for _ in range(49):
+            proto.datagram_received(make_rtp_packet(), ("127.0.0.1", 5004))
+        assert received == []
+        proto.datagram_received(make_rtp_packet(payload=b"last"), ("127.0.0.1", 5004))
+        assert len(received) == 1
+        assert len(received[0]) == 50
 
 
 class TestNegotiateCodec:
