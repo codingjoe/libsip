@@ -11,12 +11,15 @@ from typing import ClassVar
 
 import av
 import numpy as np
-import whisper
+from faster_whisper import WhisperModel
 
 from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.types import MediaDescription
 
 __all__ = ["WhisperCall"]
+
+#: Native sample rate expected by Whisper models.
+SAMPLE_RATE = 16000
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +116,7 @@ class WhisperCall(RealtimeTransportProtocol):
     """
 
     #: Audio buffered (in seconds) before each transcription is triggered.
-    chunk_duration: ClassVar[int] = 30
+    chunk_duration: ClassVar[int] = 5
     #: Maximum seconds to wait for audio decoding to complete.
     decode_timeout_secs: ClassVar[int] = 60
 
@@ -125,7 +128,7 @@ class WhisperCall(RealtimeTransportProtocol):
     ) -> None:
         super().__init__(caller=caller, media=media)
         logger.debug("Loading Whisper model %r", model)
-        self._whisper_model = whisper.load_model(model)
+        self._whisper_model = WhisperModel(model, device="auto")
 
     def audio_received(self, packets: list[bytes]) -> None:
         """Schedule async transcription for a buffered audio chunk."""
@@ -139,7 +142,7 @@ class WhisperCall(RealtimeTransportProtocol):
         logger.debug(
             "Transcribing %d samples (%.1f s)",
             len(audio),
-            len(audio) / whisper.audio.SAMPLE_RATE,
+            len(audio) / SAMPLE_RATE,
         )
         text = await loop.run_in_executor(None, self._run_transcription, audio)
         self.transcription_received(text.strip())
@@ -194,7 +197,7 @@ class WhisperCall(RealtimeTransportProtocol):
         resampler = av.audio.resampler.AudioResampler(
             format="fltp",
             layout="mono",
-            rate=whisper.audio.SAMPLE_RATE,
+            rate=SAMPLE_RATE,
         )
         frames: list[np.ndarray] = []
         try:
@@ -218,7 +221,8 @@ class WhisperCall(RealtimeTransportProtocol):
 
     def _run_transcription(self, audio: np.ndarray) -> str:
         """Transcribe a float32 PCM array using the Whisper model."""
-        result = self._whisper_model.transcribe(audio)["text"]
+        segments, _ = self._whisper_model.transcribe(audio)
+        result = "".join(segment.text for segment in segments)
         logger.debug("Transcription result: %r", result)
         return result
 

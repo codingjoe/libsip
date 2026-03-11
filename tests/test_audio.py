@@ -9,9 +9,8 @@ import pytest
 
 np = pytest.importorskip("numpy")
 av = pytest.importorskip("av")
-pytest.importorskip("whisper")
+pytest.importorskip("faster_whisper")
 
-import whisper  # noqa: E402
 from voip.audio import WhisperCall, _build_ogg_opus  # noqa: E402
 from voip.rtp import RTP, RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
@@ -40,7 +39,7 @@ def make_whisper_call(
     """Return a WhisperCall with a mocked Whisper model."""
     cls = call_class or WhisperCall
     med = media if media is not None else OPUS_MEDIA
-    with patch("whisper.load_model", return_value=model_mock):
+    with patch("voip.audio.WhisperModel", return_value=model_mock):
         return cls(caller="sip:bob@biloxi.com", media=med)
 
 
@@ -51,27 +50,27 @@ class TestWhisperCall:
 
     def test_class_attrs__chunk_duration(self):
         """chunk_duration controls how many seconds are buffered before transcription."""
-        assert WhisperCall.chunk_duration == 30
+        assert WhisperCall.chunk_duration == 5
 
     def test_init__packet_threshold__opus(self):
-        """_packet_threshold is 1500 for Opus with chunk_duration=30 (50 pkt/s × 30 s)."""
+        """_packet_threshold is 250 for Opus with chunk_duration=5 (50 pkt/s × 5 s)."""
         call = make_whisper_call(MagicMock(), media=OPUS_MEDIA)
-        assert call._packet_threshold == 1500
+        assert call._packet_threshold == 250
 
     def test_init__packet_threshold__g722(self):
-        """_packet_threshold is 1500 for G.722 with chunk_duration=30 (50 pkt/s × 30 s)."""
+        """_packet_threshold is 250 for G.722 with chunk_duration=5 (50 pkt/s × 5 s)."""
         call = make_whisper_call(MagicMock(), media=G722_MEDIA)
-        assert call._packet_threshold == 1500
+        assert call._packet_threshold == 250
 
     def test_init__packet_threshold__pcma(self):
-        """_packet_threshold is 1500 for PCMA with chunk_duration=30 (50 pkt/s × 30 s)."""
+        """_packet_threshold is 250 for PCMA with chunk_duration=5 (50 pkt/s × 5 s)."""
         call = make_whisper_call(MagicMock(), media=PCMA_MEDIA)
-        assert call._packet_threshold == 1500
+        assert call._packet_threshold == 250
 
     def test_init__packet_threshold__pcmu(self):
-        """_packet_threshold is 1500 for PCMU with chunk_duration=30 (50 pkt/s × 30 s)."""
+        """_packet_threshold is 250 for PCMU with chunk_duration=5 (50 pkt/s × 5 s)."""
         call = make_whisper_call(MagicMock(), media=PCMU_MEDIA)
-        assert call._packet_threshold == 1500
+        assert call._packet_threshold == 250
 
     def test_init__stores_media(self):
         """Media is stored and accessible as self.media."""
@@ -105,7 +104,9 @@ class TestWhisperCall:
         """Transcription fires when audio_received is emitted by the base-class buffer."""
         transcriptions = []
         model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": "hello"}
+        seg = MagicMock()
+        seg.text = "hello"
+        model_mock.transcribe.return_value = ([seg], MagicMock())
 
         class SmallChunkCall(WhisperCall):
             chunk_duration = 1  # 1 s @ 48 kHz / 960 samples = 50 packets
@@ -114,7 +115,7 @@ class TestWhisperCall:
                 transcriptions.append(text)
 
         call = make_whisper_call(model_mock, SmallChunkCall)
-        pcm_samples = np.zeros(whisper.audio.SAMPLE_RATE, dtype=np.float32)
+        pcm_samples = np.zeros(16000, dtype=np.float32)
         with patch.object(call, "_decode_audio", return_value=pcm_samples):
             # Simulate the base class emitting audio_received with a full chunk
             call.audio_received([b"x"] * call._packet_threshold)
@@ -125,7 +126,9 @@ class TestWhisperCall:
         """Strip leading and trailing whitespace from the transcription text."""
         transcriptions = []
         model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": "  hello world  "}
+        seg = MagicMock()
+        seg.text = "  hello world  "
+        model_mock.transcribe.return_value = ([seg], MagicMock())
 
         class Capture(WhisperCall):
             def transcription_received(self, text: str) -> None:
@@ -141,7 +144,9 @@ class TestWhisperCall:
     def test_run_transcription__passes_numpy_array_directly(self):
         """Pass a numpy float32 array to the Whisper model without file I/O."""
         model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": "test"}
+        seg = MagicMock()
+        seg.text = "test"
+        model_mock.transcribe.return_value = ([seg], MagicMock())
         call = make_whisper_call(model_mock)
         audio = np.zeros(16000, dtype=np.float32)
         assert call._run_transcription(audio) == "test"
@@ -150,7 +155,9 @@ class TestWhisperCall:
     def test_run_transcription__no_file_written(self):
         """The transcription path must not write any files to disk."""
         model_mock = MagicMock()
-        model_mock.transcribe.return_value = {"text": ""}
+        seg = MagicMock()
+        seg.text = ""
+        model_mock.transcribe.return_value = ([seg], MagicMock())
         call = make_whisper_call(model_mock)
         with patch(
             "builtins.open", side_effect=AssertionError("open() must not be called")
