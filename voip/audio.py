@@ -136,7 +136,7 @@ class WhisperCall(RealtimeTransportProtocol):
         """Decode and transcribe one audio chunk."""
         loop = asyncio.get_running_loop()
         audio = await loop.run_in_executor(None, self._decode_audio, packets)
-        logger.info(
+        logger.debug(
             "Transcribing %d samples (%.1f s)",
             len(audio),
             len(audio) / whisper.audio.SAMPLE_RATE,

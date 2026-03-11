@@ -38,6 +38,33 @@ logger = logging.getLogger(__name__)
 __all__ = ["SIP", "SessionInitiationProtocol"]
 
 
+def _mask_caller(header: str) -> str:
+    """Return a privacy-safe label from a SIP From/To header value.
+
+    Strips the ``tag=`` parameter, extracts the display name or SIP user part,
+    and replaces all but the last four characters with ``*``.
+
+    Examples::
+
+        >>> _mask_caller('"015114455910" <sip:015114455910@example.com>;tag=abc')
+        '********5910'
+        >>> _mask_caller('sip:alice@example.com')
+        '*lice'
+    """
+    # Drop the tag and any subsequent parameters
+    value = header.split(";")[0].strip()
+    # Extract display name: "Name" <sip:…> or Name <sip:…>
+    m = re.match(r'^"?([^"<]+?)"?\s*<', value)
+    name = m.group(1).strip() if m else None
+    if not name:
+        # Bare or angle-bracket URI: sip:user@host or <sip:user@host>
+        m = re.search(r"sips?:([^@>;\s]+)", value)
+        name = m.group(1) if m else value
+    if len(name) > 4:
+        return "*" * (len(name) - 4) + name[-4:]
+    return name
+
+
 class SessionInitiationProtocol(asyncio.DatagramProtocol):
     """SIP session handler (RFC 3261).
 
@@ -101,7 +128,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         """Discover the public address via STUN, then send REGISTER."""
         try:
             self.public_address = await stun_discover(*self.stun_server_address)
-            logger.info(
+            logger.debug(
                 "STUN: public address is %s:%s",
                 self.public_address[0],
                 self.public_address[1],
@@ -134,7 +161,10 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         call_id = request.headers.get("Call-ID", "")
         match request.method:
             case "INVITE":
-                logger.info("INVITE received from %s", addr[0])
+                logger.info(
+                    "Incoming call from %s",
+                    _mask_caller(request.headers.get("From", "")),
+                )
                 if call_id in self._answered_calls:
                     logger.debug(
                         "Ignoring INVITE retransmission for Call-ID %r", call_id
@@ -151,6 +181,9 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 self.ack_received(request)
             case "BYE":
                 self._answered_calls.discard(call_id)
+                logger.info(
+                    "Call ended by %s", _mask_caller(request.headers.get("From", ""))
+                )
                 self.send(
                     Response(
                         status_code=Status["OK"],
@@ -169,7 +202,10 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 self._to_tags.pop(call_id, None)
                 self.bye_received(request)
             case "CANCEL":
-                logger.info("CANCEL received for Call-ID %r", call_id)
+                logger.info(
+                    "Call cancelled by %s",
+                    _mask_caller(request.headers.get("From", "")),
+                )
                 self.send(
                     Response(
                         status_code=Status["OK"],
@@ -341,7 +377,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
         caller = request.headers.get("From", "")
-        logger.info("Answering call from %s", caller)
+        logger.info("Answering call from %s", _mask_caller(caller))
         loop = asyncio.get_running_loop()
         remote_audio = next(
             (
@@ -381,7 +417,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         try:
             public_ip, _ = await stun_discover(*self.stun_server_address)
             sdp_ip = public_ip
-            logger.info("RTP STUN: public IP is %s, port %s", sdp_ip, sdp_port)
+            logger.debug("RTP STUN: public IP is %s, port %s", sdp_ip, sdp_port)
         except (TimeoutError, OSError, RuntimeError) as exc:
             logger.warning("RTP STUN discovery failed (%s), using local address", exc)
             if self.public_address:
@@ -465,8 +501,8 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
         logger.info(
-            "Sending Ringing to %s",
-            request.headers.get("From", "unknown"),
+            "Ringing %s",
+            _mask_caller(request.headers.get("From", "unknown")),
         )
         self.send(
             Response(
@@ -503,8 +539,8 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             logger.error("No address found for INVITE with Call-ID %r", call_id)
             return
         logger.info(
-            "Rejecting call from %s with %s %s",
-            request.headers.get("From", "unknown"),
+            "Rejecting call from %s (%s %s)",
+            _mask_caller(request.headers.get("From", "unknown")),
             status_code,
             reason,
         )

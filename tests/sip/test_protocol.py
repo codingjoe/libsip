@@ -9,7 +9,7 @@ from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.messages import SessionDescription
 from voip.sdp.types import Timing
 from voip.sip.messages import Request, Response
-from voip.sip.protocol import SessionInitiationProtocol
+from voip.sip.protocol import SessionInitiationProtocol, _mask_caller
 
 INVITE_WITH_PCMA = (
     b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
@@ -118,6 +118,32 @@ class ConcreteProtocol(SessionInitiationProtocol):
 
     def response_received(self, response, addr):
         self.responses.append((response, addr))
+
+
+class TestMaskCaller:
+    def test_full_from_header_with_display_name(self):
+        """Mask all but the last 4 chars of a 12-digit display name (8 asterisks)."""
+        header = '"015114455910" <sip:015114455910@telefonica.de>;tag=abc123'
+        assert _mask_caller(header) == "********5910"
+
+    def test_bare_sip_uri(self):
+        """Extract user part from a bare SIP URI and mask all but the last 4 chars."""
+        assert _mask_caller("sip:alice@example.com") == "*lice"
+
+    def test_short_caller__no_masking(self):
+        """Identifiers with 4 or fewer characters are returned as-is."""
+        assert _mask_caller("<sip:bob@example.com>") == "bob"
+
+    def test_strips_tag_parameter(self):
+        """The tag= and any subsequent parameters are stripped before masking."""
+        header = '"015114455910" <sip:015114455910@example.com>;tag=xyz;other=1'
+        result = _mask_caller(header)
+        assert "tag" not in result
+        assert result.endswith("5910")
+
+    def test_angle_bracket_uri_without_display_name(self):
+        """Parse <sip:user@host> style without a display name."""
+        assert _mask_caller("<sip:alice@example.com>") == "*lice"
 
 
 class TestSessionInitiationProtocol:
