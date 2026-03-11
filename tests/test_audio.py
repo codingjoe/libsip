@@ -17,13 +17,14 @@ from voip.rtp import RTP, RTPPacket, RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
 
 
-def packet_threshold(call_class: type[WhisperCall]) -> int:
-    """Return the packet count threshold for the given WhisperCall class."""
-    return (
-        call_class.opus_sample_rate
-        * call_class.chunk_duration
-        // call_class.opus_frame_size
-    )
+def packet_threshold(
+    call_class: type[WhisperCall], media: MediaDescription = None
+) -> int:
+    """Return the packet count threshold for the given WhisperCall class and media."""
+    med = media if media is not None else OPUS_MEDIA
+    with patch("whisper.load_model", return_value=MagicMock()):
+        instance = call_class(media=med)
+    return instance._packet_threshold
 
 
 def _make_media(fmt: str, rtpmap: str | None = None) -> MediaDescription:
@@ -83,6 +84,26 @@ class TestWhisperCall:
     def test_class_attrs__chunk_duration(self):
         """chunk_duration controls how many seconds are buffered before transcription."""
         assert WhisperCall.chunk_duration == 30
+
+    def test_init__packet_threshold__opus(self):
+        """_packet_threshold is 1500 for Opus with chunk_duration=30 (50 pkt/s × 30 s)."""
+        call = make_whisper_call(MagicMock(), media=OPUS_MEDIA)
+        assert call._packet_threshold == 1500
+
+    def test_init__packet_threshold__g722(self):
+        """_packet_threshold is 1500 for G.722 with chunk_duration=30 (50 pkt/s × 30 s)."""
+        call = make_whisper_call(MagicMock(), media=G722_MEDIA)
+        assert call._packet_threshold == 1500
+
+    def test_init__packet_threshold__pcma(self):
+        """_packet_threshold is 1500 for PCMA with chunk_duration=30 (50 pkt/s × 30 s)."""
+        call = make_whisper_call(MagicMock(), media=PCMA_MEDIA)
+        assert call._packet_threshold == 1500
+
+    def test_init__packet_threshold__pcmu(self):
+        """_packet_threshold is 1500 for PCMU with chunk_duration=30 (50 pkt/s × 30 s)."""
+        call = make_whisper_call(MagicMock(), media=PCMU_MEDIA)
+        assert call._packet_threshold == 1500
 
     def test_init__stores_media(self):
         """Media is stored and accessible as self.media."""

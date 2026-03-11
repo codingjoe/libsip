@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import struct
+from typing import ClassVar
 
 import av
 import numpy as np
@@ -120,6 +121,14 @@ class WhisperCall(RealtimeTransportProtocol):
     #: Maximum seconds to wait for audio decoding to complete.
     decode_timeout_secs = 60
 
+    #: Standard RTP frame sizes in samples per 20 ms packet, keyed by payload type.
+    _FRAME_SIZES: ClassVar[dict[int, int]] = {
+        RTPPayloadType.OPUS: 960,  # 20 ms at 48 kHz
+        RTPPayloadType.G722: 160,  # 20 ms at 8 kHz RTP clock rate
+        RTPPayloadType.PCMA: 160,  # 20 ms at 8 kHz
+        RTPPayloadType.PCMU: 160,  # 20 ms at 8 kHz
+    }
+
     def __init__(
         self,
         caller: str = "",
@@ -130,9 +139,9 @@ class WhisperCall(RealtimeTransportProtocol):
         logger.debug("Loading Whisper model %r", model)
         self._whisper_model = whisper.load_model(model)
         self._audio_packets: list[bytes] = []
-        self._packet_threshold = (
-            self.opus_sample_rate * self.chunk_duration // self.opus_frame_size
-        )
+        sample_rate = self.sample_rate or 8000
+        frame_size = self._FRAME_SIZES.get(self.payload_type, sample_rate * 20 // 1000)
+        self._packet_threshold = sample_rate * self.chunk_duration // frame_size
         self._transcribe_task: asyncio.Task | None = None
 
     def audio_received(self, packet: RTPPacket) -> None:
