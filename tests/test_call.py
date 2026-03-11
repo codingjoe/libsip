@@ -438,7 +438,8 @@ class TestSessionInitiationProtocol:
             await asyncio.sleep(0.05)
         transport.sendto.assert_called()
 
-    def test_register__includes_required_headers(self):
+    @pytest.mark.asyncio
+    async def test_register__includes_required_headers(self):
         """REGISTER request includes From, To, Call-ID, CSeq, Contact and Expires."""
         p = make_register_session()
         transport = make_mock_transport()
@@ -452,7 +453,8 @@ class TestSessionInitiationProtocol:
         assert b"Contact: <sip:alice@127.0.0.1:5060>" in data
         assert b"Expires: 3600" in data
 
-    def test_register__increments_cseq(self):
+    @pytest.mark.asyncio
+    async def test_register__increments_cseq(self):
         """CSeq increments with each REGISTER sent."""
         p = make_register_session()
         p._transport = make_mock_transport()
@@ -461,7 +463,8 @@ class TestSessionInitiationProtocol:
         p.register()
         assert p.cseq == 2
 
-    def test_register__with_authorization(self):
+    @pytest.mark.asyncio
+    async def test_register__with_authorization(self):
         """Authorization header is included when credentials are provided."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
@@ -471,7 +474,8 @@ class TestSessionInitiationProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b'Authorization: Digest username="alice"' in data
 
-    def test_register__with_proxy_authorization(self):
+    @pytest.mark.asyncio
+    async def test_register__with_proxy_authorization(self):
         """Proxy-Authorization header is included for proxy challenges."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
@@ -481,7 +485,8 @@ class TestSessionInitiationProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b'Proxy-Authorization: Digest username="alice"' in data
 
-    def test_response_received__200_ok_calls_registered(self):
+    @pytest.mark.asyncio
+    async def test_response_received__200_ok_calls_registered(self):
         """Receiving 200 OK for REGISTER triggers registered()."""
         calls = []
 
@@ -497,7 +502,8 @@ class TestSessionInitiationProtocol:
         )
         assert calls == [True]
 
-    def test_response_received__200_non_register_raises(self):
+    @pytest.mark.asyncio
+    async def test_response_received__200_non_register_raises(self):
         """Receiving 200 OK for a non-REGISTER method raises NotImplementedError."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
@@ -507,7 +513,8 @@ class TestSessionInitiationProtocol:
                 ("192.0.2.2", 5060),
             )
 
-    def test_response_received__401_retries_with_authorization(self):
+    @pytest.mark.asyncio
+    async def test_response_received__401_retries_with_authorization(self):
         """Receiving 401 triggers a re-REGISTER with an Authorization header."""
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         p.connection_made(make_mock_transport())
@@ -529,7 +536,8 @@ class TestSessionInitiationProtocol:
         assert b'nonce="abc123"' in data
         assert b'algorithm="MD5"' in data
 
-    def test_response_received__407_retries_with_proxy_authorization(self):
+    @pytest.mark.asyncio
+    async def test_response_received__407_retries_with_proxy_authorization(self):
         """Receiving 407 triggers a re-REGISTER with a Proxy-Authorization header."""
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         p.connection_made(make_mock_transport())
@@ -548,7 +556,8 @@ class TestSessionInitiationProtocol:
         assert b"Proxy-Authorization: Digest" in data
         assert b'username="alice"' in data
 
-    def test_response_received__401_with_qop_auth_includes_nc_cnonce(self):
+    @pytest.mark.asyncio
+    async def test_response_received__401_with_qop_auth_includes_nc_cnonce(self):
         """401 with qop=auth causes the retry to include nc and cnonce fields."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
@@ -568,7 +577,8 @@ class TestSessionInitiationProtocol:
         assert b"nc=00000001" in data
         assert b"cnonce=" in data
 
-    def test_response_received__401_with_opaque_echoes_opaque(self):
+    @pytest.mark.asyncio
+    async def test_response_received__401_with_opaque_echoes_opaque(self):
         """The opaque field from the challenge is echoed back in the Authorization."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
@@ -586,7 +596,8 @@ class TestSessionInitiationProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b'opaque="secret-opaque"' in data
 
-    def test_register__via_header_has_rport(self):
+    @pytest.mark.asyncio
+    async def test_register__via_header_has_rport(self):
         """REGISTER request includes a Via header with the rport parameter for NAT traversal."""
         import re
 
@@ -598,7 +609,8 @@ class TestSessionInitiationProtocol:
         assert b"Via: SIP/2.0/UDP 192.0.2.10:5060;rport;branch=z9hG4bK" in data
         assert re.search(rb"branch=z9hG4bK[0-9a-f]{32}", data)
 
-    def test_register__via_branch_is_unique_per_request(self):
+    @pytest.mark.asyncio
+    async def test_register__via_branch_is_unique_per_request(self):
         """Each REGISTER generates a unique Via branch to prevent transaction conflicts."""
         import re
 
@@ -614,7 +626,8 @@ class TestSessionInitiationProtocol:
         branch2 = re.search(rb"branch=(z9hG4bK[0-9a-f]{32})", data2).group(1)
         assert branch1 != branch2
 
-    def test_register__contact_uses_local_addr_before_stun_completes(self):
+    @pytest.mark.asyncio
+    async def test_register__contact_uses_local_addr_before_stun_completes(self):
         """Contact header uses local socket address when public_address is not yet set."""
         p = make_register_session()
         transport = make_mock_transport("10.0.0.5", 5060)
@@ -623,7 +636,8 @@ class TestSessionInitiationProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b"Contact: <sip:alice@10.0.0.5:5060>" in data
 
-    def test_register__contact_uses_public_addr_when_stun_discovered(self):
+    @pytest.mark.asyncio
+    async def test_register__contact_uses_public_addr_when_stun_discovered(self):
         """Contact header uses the STUN-discovered public address."""
         p = make_register_session()
         transport = make_mock_transport("10.0.0.5", 5060)
@@ -634,7 +648,8 @@ class TestSessionInitiationProtocol:
         data, _ = transport.sendto.call_args[0]
         assert b"Contact: <sip:alice@203.0.113.1:12345>" in data
 
-    def test_datagram_received__sip_response__calls_response_received(self):
+    @pytest.mark.asyncio
+    async def test_datagram_received__sip_response__calls_response_received(self):
         """datagram_received routes SIP messages to response_received."""
         received = []
 
@@ -649,7 +664,8 @@ class TestSessionInitiationProtocol:
         assert len(received) == 1
         assert received[0].status_code == 200
 
-    def test_invite_received_after_register(self):
+    @pytest.mark.asyncio
+    async def test_invite_received_after_register(self):
         """INVITE dispatching still works after registration (call_received is called)."""
         received = []
 
@@ -668,7 +684,8 @@ class TestSessionInitiationProtocol:
         assert len(received) == 1
         assert received[0] is request
 
-    def test_response_received__200_ok__logs_info(self, caplog):
+    @pytest.mark.asyncio
+    async def test_response_received__200_ok__logs_info(self, caplog):
         """Receiving 200 OK logs an info message."""
         import logging
 
@@ -681,7 +698,8 @@ class TestSessionInitiationProtocol:
             )
         assert any("Registration successful" in r.message for r in caplog.records)
 
-    def test_response_received__unexpected_status__logs_warning(self, caplog):
+    @pytest.mark.asyncio
+    async def test_response_received__unexpected_status__logs_warning(self, caplog):
         """An unhandled status code logs a warning and raises NotImplementedError."""
         import logging
 
