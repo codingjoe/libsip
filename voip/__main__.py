@@ -118,7 +118,7 @@ def _parse_stun_server(ctx, param, value: str) -> tuple[str, int] | None:
     envvar="STUN_SERVER",
     show_default=True,
     callback=_parse_stun_server,
-    help="STUN server for NAT traversal (HOST:PORT or 'none' to disable).",
+    help="STUN server for NAT traversal (HOST:PORT).",
 )
 @click.pass_context
 def transcribe(ctx, model, server, aor, username, password, local_port, stun_server):
