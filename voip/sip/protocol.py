@@ -359,7 +359,10 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             negotiated_media = call_class.negotiate_codec(remote_audio)
         else:
             negotiated_media = MediaDescription(
-                media="audio", port=0, proto="RTP/AVP", fmt=[RTPPayloadFormat.from_pt(0)]
+                media="audio",
+                port=0,
+                proto="RTP/AVP",
+                fmt=[RTPPayloadFormat.from_pt(0)],
             )
         rtp_transport, rtp_protocol = await loop.create_datagram_endpoint(
             lambda: call_class(
