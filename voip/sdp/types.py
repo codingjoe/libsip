@@ -419,6 +419,42 @@ class MediaDescription:
         target = int(pt)
         return next((f for f in self.fmt if f.payload_type == target), None)
 
+    def apply_attribute(self, attr: Attribute) -> bool:
+        """Apply a media-level ``a=`` attribute to this description.
+
+        Handles ``a=rtpmap`` and ``a=fmtp`` by updating the matching
+        :class:`RTPPayloadFormat` entry in :attr:`fmt`.  All other
+        attributes are appended to :attr:`attributes`.
+
+        Args:
+            attr: The parsed :class:`Attribute` to apply.
+
+        Returns:
+            ``True`` when the attribute was consumed as a format-specific
+            attribute (``rtpmap`` or ``fmtp``), ``False`` otherwise.
+        """
+        if attr.name == "rtpmap" and attr.value is not None:
+            rtpfmt = RTPPayloadFormat.parse(attr.value)
+            for i, f in enumerate(self.fmt):
+                if f.payload_type == rtpfmt.payload_type:
+                    # Preserve fmtp if it was already applied out-of-order.
+                    if f.fmtp is not None and rtpfmt.fmtp is None:
+                        rtpfmt.fmtp = f.fmtp
+                    self.fmt[i] = rtpfmt
+                    break
+            return True
+        if attr.name == "fmtp" and attr.value is not None:
+            pt_str, _, params = attr.value.partition(" ")
+            try:
+                pt = int(pt_str)
+            except ValueError:
+                return False
+            for f in self.fmt:
+                if f.payload_type == pt:
+                    f.fmtp = params
+                    return True
+        return False
+
     def __str__(self) -> str:
         """Serialize to SDP m= section lines."""
         fmt_str = " ".join(str(f.payload_type) for f in self.fmt)
@@ -438,7 +474,38 @@ class MediaDescription:
 
     @classmethod
     def parse(cls, value: str) -> MediaDescription:
-        """Parse an m= line value into a MediaDescription."""
-        media, port_str, proto, *fmts = value.split(" ")
-        fmt = [RTPPayloadFormat.from_pt(int(pt)) for pt in " ".join(fmts).split(" ")]
-        return cls(media=media, port=int(port_str), proto=proto, fmt=fmt)
+        """Parse an ``m=`` line value into a :class:`MediaDescription`.
+
+        *value* may be either just the ``m=`` line's value (e.g.
+        ``"audio 49170 RTP/AVP 0 111"``) or a multi-line block as produced
+        by :meth:`__str__` — i.e. including a leading ``m=`` and subsequent
+        ``i=``, ``c=``, ``b=``, ``a=rtpmap``, ``a=fmtp`` and generic ``a=``
+        lines.  This allows :meth:`parse` and :meth:`__str__` to round-trip
+        without going through :class:`~voip.sdp.messages.SessionDescription`.
+
+        Args:
+            value: The ``m=`` line value or a full media-section block.
+        """
+        lines = value.splitlines()
+        first = lines[0].rstrip("\r")
+        if first.startswith("m="):
+            first = first[2:]
+        media_type, port_str, proto, *fmts = first.split()
+        fmt = [RTPPayloadFormat.from_pt(int(pt)) for pt in fmts]
+        obj = cls(media=media_type, port=int(port_str), proto=proto, fmt=fmt)
+        for line in lines[1:]:
+            line = line.rstrip("\r")
+            if not line or "=" not in line:
+                continue
+            letter, _, attr_value = line.partition("=")
+            if letter == "i":
+                obj.title = attr_value
+            elif letter == "c":
+                obj.connection = ConnectionData.parse(attr_value)
+            elif letter == "b":
+                obj.bandwidths.append(Bandwidth.parse(attr_value))
+            elif letter == "a":
+                attr = Attribute.parse(attr_value)
+                if not obj.apply_attribute(attr):
+                    obj.attributes.append(attr)
+        return obj
