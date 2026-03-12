@@ -46,7 +46,7 @@ def _prf(master_key: bytes, label: int, master_salt: bytes, length: int) -> byte
         ``length`` bytes of pseudo-random keying material.
     """
     # x = (label * 2^48) XOR master_salt  (both treated as 112-bit integers)
-    x = (label << 48) ^ int.from_bytes(master_salt, "big")
+    x = ((label << 48) ^ int.from_bytes(master_salt, "big")) & ((1 << 112) - 1)
     # Pad x to 128 bits (AES block size): x occupies bits 127–16, bits 15–0 = 0
     iv = x.to_bytes(14, "big") + b"\x00\x00"
     # AES-CM: encrypt all-zeros to obtain keystream

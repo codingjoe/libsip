@@ -333,7 +333,6 @@ class TestSRTPIntegration:
 
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
-        import dataclasses as dc  # noqa: PLC0415
         handler = SRTPCapture(rtp=mux, sip=MagicMock(), srtp=session)
         mux.register_call(None, handler)
 
@@ -358,7 +357,6 @@ class TestSRTPIntegration:
 
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
-        import dataclasses as dc  # noqa: PLC0415
         handler = SRTPCapture(rtp=mux, sip=MagicMock(), srtp=session)
         mux.register_call(None, handler)
 
