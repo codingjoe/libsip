@@ -68,7 +68,7 @@ class RTPPacket:
         )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(kw_only=True, slots=True)
 class RealtimeTransportProtocol(STUNProtocol):
     """RTP multiplexer: routes incoming datagrams to per-call handlers (RFC 3550).
 

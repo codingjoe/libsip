@@ -162,11 +162,10 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
         loop = asyncio.get_running_loop()
         await loop.create_datagram_endpoint(
             lambda: TranscribeSession(
-                server_addr,
-                aor,
-                username,
-                password,
-                stun_server,
+                server_address=server_addr,
+                aor=aor,
+                username=username,
+                password=password,
             ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )

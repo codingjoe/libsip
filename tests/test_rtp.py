@@ -162,9 +162,17 @@ class TestRealtimeTransportProtocol:
                 ip_int = (203 << 24) | (0 << 16) | (113 << 8) | 5
                 xor_ip = ip_int ^ MAGIC_COOKIE
                 xor_port = 54321 ^ (MAGIC_COOKIE >> 16)
-                attr = struct.pack(">HH", 0x0020, 8) + struct.pack(">BBH I", 0, 1, xor_port, xor_ip)
+                attr = struct.pack(">HH", 0x0020, 8) + struct.pack(
+                    ">BBH I", 0, 1, xor_port, xor_ip
+                )
                 response = (
-                    struct.pack(">HHI12s", STUNMessageType.BINDING_SUCCESS_RESPONSE, len(attr), MAGIC_COOKIE, tid)
+                    struct.pack(
+                        ">HHI12s",
+                        STUNMessageType.BINDING_SUCCESS_RESPONSE,
+                        len(attr),
+                        MAGIC_COOKIE,
+                        tid,
+                    )
                     + attr
                 )
                 server_transport.sendto(response, addr)
@@ -180,7 +188,7 @@ class TestRealtimeTransportProtocol:
             lambda: proto, local_addr=("127.0.0.1", 0)
         )
         try:
-            result = await proto.stun_discover(server_addr[0], server_addr[1])
+            result = await proto._send_stun_request(server_addr[0], server_addr[1])
             assert result == ("203.0.113.5", 54321)
             assert len(received_requests) == 1
         finally:

@@ -7,12 +7,14 @@ See also: https://datatracker.ietf.org/doc/html/rfc3261
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import errno
 import hashlib
 import json
 import logging
 import re
 import secrets
+import typing
 import uuid
 
 from voip.call import Call
@@ -64,6 +66,7 @@ def _mask_caller(header: str) -> str:
     return name
 
 
+@dataclasses.dataclass(kw_only=True, slots=True)
 class SessionInitiationProtocol(STUNProtocol):
     """SIP session handler (RFC 3261).
 
@@ -87,38 +90,31 @@ class SessionInitiationProtocol(STUNProtocol):
     """
 
     #: RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
-    VIA_BRANCH_PREFIX = "z9hG4bK"
+    VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
 
     #: RFC 3261 §11 – methods supported by this UA (used in Allow header).
-    ALLOW = "INVITE, ACK, BYE, CANCEL, OPTIONS"
+    ALLOW: typing.ClassVar[str] = "INVITE, ACK, BYE, CANCEL, OPTIONS"
 
-    def __init__(
-        self,
-        server_address: tuple[str, int] | None = None,
-        aor: str | None = None,
-        username: str | None = None,
-        password: str | None = None,
-        stun_server_address: tuple[str, int] | None = None,
-    ) -> None:
-        super().__init__(stun_server_address=stun_server_address)
-        #: Pending INVITE addresses keyed by Call-ID.
-        self._request_addrs: dict[str, tuple[str, int]] = {}
-        #: Call-IDs for which a 200 OK has already been sent.
-        self._answered_calls: set[str] = set()
-        #: To tags keyed by Call-ID (RFC 3261 §8.2.6.2).
-        self._to_tags: dict[str, str] = {}
-        self.server_address = server_address
-        self.aor = aor
-        self.username = username
-        self.password = password
-        self.call_id = str(uuid.uuid4())
-        self.cseq = 0
-        #: Shared RTP multiplexer and its transport, created eagerly in
-        #: :meth:`connection_made` and reused for all calls on this session.
-        self._rtp_protocol: RealtimeTransportProtocol | None = None
-        self._rtp_transport: asyncio.DatagramTransport | None = None
-        #: Remote RTP address per call, used to unregister on BYE/CANCEL.
-        self._call_rtp_addrs: dict[str, tuple[str, int] | None] = {}
+    _request_addrs: dict[str, tuple[str, int]] = dataclasses.field(
+        init=False, default_factory=dict
+    )
+    _answered_calls: set[str] = dataclasses.field(init=False, default_factory=set)
+    _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
+    _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
+        init=False, default=None
+    )
+    _rtp_transport: asyncio.DatagramTransport | None = dataclasses.field(
+        init=False, default=None
+    )
+    _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
+        init=False, default_factory=dict
+    )
+    server_address: tuple[str, int] | None = dataclasses.field(default=None)
+    aor: str | None = dataclasses.field(default=None)
+    username: str | None = dataclasses.field(default=None)
+    password: str | None = dataclasses.field(default=None)
+    call_id: str = dataclasses.field(init=False, default_factory=uuid.uuid4)
+    cseq: int = dataclasses.field(init=False, default=0)
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport, start STUN (if configured), and begin initialization."""
@@ -140,10 +136,9 @@ class SessionInitiationProtocol(STUNProtocol):
         sending REGISTER so that the Contact header contains the correct public
         address.
         """
-        await self.await_stun_discovery()
+        await self.public_address
         await self._start_rtp_mux()
-        if self.server_address is not None:
-            self.register()
+        await self.register()
 
     def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Handle RFC 5626 keepalive pings, then dispatch SIP messages."""
@@ -188,7 +183,7 @@ class SessionInitiationProtocol(STUNProtocol):
         logger.debug("RTP mux listening on %s:%d", *rtp_addr)
         # Wait for RTP STUN to complete before returning so that the mux's
         # public_address is available when _answer() builds the SDP.
-        await mux.await_stun_discovery()
+        await mux.public_address
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Dispatch a received SIP request to the appropriate handler."""
@@ -365,9 +360,9 @@ class SessionInitiationProtocol(STUNProtocol):
             if opaque:
                 auth_value += f', opaque="{opaque}"'
             if is_proxy:
-                self.register(proxy_authorization=auth_value)
+                asyncio.create_task(self.register(proxy_authorization=auth_value))
             else:
-                self.register(authorization=auth_value)
+                asyncio.create_task(self.register(authorization=auth_value))
             return
         logger.warning(
             "Unexpected REGISTER response: %s %s", response.status_code, response.reason
@@ -501,16 +496,10 @@ class SessionInitiationProtocol(STUNProtocol):
         self._call_rtp_addrs[call_id] = remote_rtp_addr
 
         local_rtp_addr = self._rtp_transport.get_extra_info("sockname")
-        # Prefer the RTP mux's publicly routable address (from STUN) for the SDP
-        # connection and origin fields.  Fall back to the local address when STUN
-        # is not configured or has not yet completed.
-        rtp_public = self._rtp_protocol.public_address
+        rtp_public = await self._rtp_protocol.public_address
         sdp_ip = rtp_public[0] if rtp_public else local_rtp_addr[0]
         sdp_port = rtp_public[1] if rtp_public else local_rtp_addr[1]
-        # Contact header uses the SIP socket's public address (from this protocol's
-        # own STUN discovery), falling back to the local SIP socket address.
-        sip_local = self.transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
-        contact_addr = self.public_address or sip_local
+        contact_addr = await self.public_address
         logger.debug("RTP mux at %s:%s; contact %s:%s", sdp_ip, sdp_port, *contact_addr)
         record_route = request.headers.get("Record-Route")
         sess_id = str(secrets.randbelow(2**32) + 1)
@@ -673,7 +662,7 @@ class SessionInitiationProtocol(STUNProtocol):
         _, _, hostport = rest.partition("@")
         return f"{scheme}:{hostport}"
 
-    def register(
+    async def register(
         self,
         authorization: str | None = None,
         proxy_authorization: str | None = None,
@@ -686,10 +675,9 @@ class SessionInitiationProtocol(STUNProtocol):
             self.server_address[1],
             self.cseq,
         )
-        local_address = self.transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
         # Prefer the publicly routable SIP address (from STUN) for Via and Contact.
         # Falls back to the local address when STUN is not configured.
-        public_address = self.public_address or local_address
+        public_address = await self.public_address
         branch = f"{self.VIA_BRANCH_PREFIX}{secrets.token_hex(16)}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
