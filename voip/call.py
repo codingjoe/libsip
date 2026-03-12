@@ -68,7 +68,7 @@ class Call:
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Handle a raw RTP datagram.  Override in subclasses to process media."""
 
-    async def send_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
+    def send_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
         """Send a datagram through the shared RTP socket.
 
         Args:
