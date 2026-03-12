@@ -7,8 +7,8 @@ See also: https://datatracker.ietf.org/doc/html/rfc3261
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
-import errno
 import hashlib
 import json
 import logging
@@ -38,6 +38,10 @@ from .types import CallerID, Status
 logger = logging.getLogger("voip.sip")
 
 __all__ = ["SIP", "SessionInitiationProtocol"]
+
+#: Maximum number of answered Call-IDs to remember for retransmission suppression.
+#: Oldest entries are evicted first when this limit is reached.
+_MAX_ANSWERED_CALLS: int = 1000
 
 
 def _mask_caller(header: str) -> str:
@@ -99,7 +103,9 @@ class SessionInitiationProtocol(STUNProtocol):
     _request_addrs: dict[str, tuple[str, int]] = dataclasses.field(
         init=False, default_factory=dict
     )
-    _answered_calls: set[str] = dataclasses.field(init=False, default_factory=set)
+    _answered_calls: collections.OrderedDict[str, None] = dataclasses.field(
+        init=False, default_factory=collections.OrderedDict
+    )
     _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
     _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
         init=False, default=None
@@ -189,6 +195,15 @@ class SessionInitiationProtocol(STUNProtocol):
         # public_address is available when _answer() builds the SDP.
         await mux.public_address
 
+    def _mark_call_answered(self, call_id: str) -> None:
+        """Record *call_id* as answered, evicting the oldest entry if the LRU is full."""
+        if call_id in self._answered_calls:
+            self._answered_calls.move_to_end(call_id)
+        else:
+            if len(self._answered_calls) >= _MAX_ANSWERED_CALLS:
+                self._answered_calls.popitem(last=False)
+            self._answered_calls[call_id] = None
+
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Dispatch a received SIP request to the appropriate handler."""
         call_id = request.headers.get("Call-ID", "")
@@ -213,15 +228,14 @@ class SessionInitiationProtocol(STUNProtocol):
                     return
                 # Mark immediately (before async answering) so retransmissions
                 # that arrive while RTP setup is in progress are suppressed.
-                self._answered_calls.add(call_id)
+                self._mark_call_answered(call_id)
                 self._request_addrs[call_id] = addr
                 self._to_tags[call_id] = secrets.token_hex(8)
                 self.call_received(request)
             case "ACK":
-                self._answered_calls.discard(call_id)
                 self.ack_received(request)
             case "BYE":
-                self._answered_calls.discard(call_id)
+                self._answered_calls.pop(call_id, None)
                 caller = CallerID(request.headers.get("From", ""))
                 logger.info(
                     json.dumps(
@@ -294,7 +308,7 @@ class SessionInitiationProtocol(STUNProtocol):
                         ),
                         invite_addr,
                     )
-                self._answered_calls.discard(call_id)
+                self._answered_calls.pop(call_id, None)
                 self._to_tags.pop(call_id, None)
                 self._cleanup_rtp_call(call_id)
                 self.cancel_received(request)
@@ -549,7 +563,7 @@ class SessionInitiationProtocol(STUNProtocol):
             ),
             addr,
         )
-        self._answered_calls.add(call_id)
+        self._mark_call_answered(call_id)
         self._to_tags.pop(call_id, None)
 
     def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
@@ -737,11 +751,8 @@ class SessionInitiationProtocol(STUNProtocol):
         return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()  # noqa: S324
 
     def error_received(self, exc: OSError) -> None:
-        """Handle a transport-level error."""
-        if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-            logger.exception("Blocking IO error", exc_info=exc)
-        else:
-            raise exc
+        """Handle a transport-level error, delegating to the STUN base class."""
+        STUNProtocol.error_received(self, exc)
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Handle a lost connection."""
