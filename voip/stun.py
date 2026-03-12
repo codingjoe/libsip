@@ -69,7 +69,11 @@ class STUNProtocol(asyncio.DatagramProtocol):
         loop = asyncio.get_running_loop()
         self._stun_transaction_id = uuid.uuid4().bytes[:12]
         self.public_address = loop.create_future()
-        self._send_stun_request()
+        if self.stun_server_address is None:
+            # STUN disabled: resolve public_address immediately with the local socket address.
+            self.public_address.set_result(transport.get_extra_info("sockname"))
+        else:
+            self._send_stun_request()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Demultiplex STUN responses (RFC 7983) from other traffic.

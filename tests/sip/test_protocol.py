@@ -97,7 +97,7 @@ class FakeProtocol(SessionInitiationProtocol):
 
     def __init__(self):
         super().__init__()
-        self._transport = FakeTransport()
+        self.transport = FakeTransport()
         self._sent_responses: list[tuple[Response, tuple]] = []
 
     def send(self, message, addr):
@@ -470,10 +470,16 @@ class TestAnswer:
 
     async def _run_answer(self, protocol, invite, fake_rtp_transport):
         """Run _answer coroutine with a pre-populated shared RTP mux."""
+        loop = asyncio.get_running_loop()
         # Pre-populate the shared RTP mux so _answer() skips socket creation.
-        protocol._rtp_protocol = RealtimeTransportProtocol()
+        mux = RealtimeTransportProtocol()
+        mux.public_address = loop.create_future()
+        mux.public_address.set_result(("127.0.0.1", 12000))
+        protocol._rtp_protocol = mux
         protocol._rtp_transport = fake_rtp_transport
-
+        # Resolve the SIP protocol's own public address (for Contact header).
+        protocol.public_address = loop.create_future()
+        protocol.public_address.set_result(("127.0.0.1", 5060))
         await protocol._answer(invite, AudioCall)
 
     @pytest.mark.asyncio

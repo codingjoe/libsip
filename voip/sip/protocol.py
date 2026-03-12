@@ -119,8 +119,8 @@ class SessionInitiationProtocol(STUNProtocol):
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport, start STUN (if configured), and begin initialization."""
         logger.debug("SIP transport connected")
-        super().connection_made(
-            transport
+        STUNProtocol.connection_made(
+            self, transport
         )  # STUNProtocol: stores transport and schedules STUN
         # Schedule RTP mux creation and (optionally) registration in a single task so
         # that both the SIP and RTP public addresses are known before we send REGISTER.

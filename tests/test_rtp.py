@@ -128,7 +128,7 @@ class TestRealtimeTransportProtocol:
         # No handler registered; must not raise.
         mux.datagram_received(make_rtp_packet(payload=b"ignored"), ("9.9.9.9", 5004))
 
-    def test_datagram_received__stun_packet__not_forwarded(self):
+    async def test_datagram_received__stun_packet__not_forwarded(self):
         """A STUN packet (first byte < 4) must not reach any Call handler."""
         routed: list[bytes] = []
 
@@ -137,6 +137,7 @@ class TestRealtimeTransportProtocol:
                 routed.append(data)
 
         mux = RealtimeTransportProtocol()
+        mux.connection_made(MagicMock(spec=asyncio.DatagramTransport))
         handler = RecordCall(rtp=mux, sip=MagicMock())
         mux.register_call(None, handler)
         stun_bytes = b"\x01\x01" + b"\x00" * 18  # first byte = 1 (STUN range [0,3])
@@ -144,7 +145,7 @@ class TestRealtimeTransportProtocol:
         assert routed == []
 
     async def test_stun_discover__uses_actual_socket(self):
-        """stun_discover() sends a STUN Binding Request through the RTP socket."""
+        """public_address is resolved via the socket bound to the RTP protocol."""
         from voip.stun import MAGIC_COOKIE, STUNMessageType  # noqa: PLC0415
 
         received_requests: list[bytes] = []
@@ -183,12 +184,12 @@ class TestRealtimeTransportProtocol:
         )
         server_addr = server_t.get_extra_info("sockname")
 
-        proto = RealtimeTransportProtocol()
+        proto = RealtimeTransportProtocol(stun_server_address=server_addr)
         rtp_t, _ = await loop.create_datagram_endpoint(
             lambda: proto, local_addr=("127.0.0.1", 0)
         )
         try:
-            result = await proto._send_stun_request(server_addr[0], server_addr[1])
+            result = await proto.public_address
             assert result == ("203.0.113.5", 54321)
             assert len(received_requests) == 1
         finally:

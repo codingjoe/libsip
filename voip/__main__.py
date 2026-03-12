@@ -166,6 +166,7 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
                 aor=aor,
                 username=username,
                 password=password,
+                stun_server_address=stun_server,
             ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
         )
