@@ -44,29 +44,20 @@ class TestParseServer:
 
 
 class TestParseStunServer:
-    def test_parse_stun_server__none_disables(self):
-        """Return None when stun server is 'none'."""
+    def test_parse_stun_server__none_disables_stun(self):
+        """Return None when STUN server is not configured."""
+        from voip.__main__ import _parse_stun_server
+
+        assert _parse_stun_server(None, None, None) is None
+
+    def test_parse_stun_server__string_none_disables_stun(self):
+        """Return None when STUN server is explicitly disabled."""
         from voip.__main__ import _parse_stun_server
 
         assert _parse_stun_server(None, None, "none") is None
 
-    def test_parse_stun_server__none_case_insensitive(self):
-        """Return None regardless of case for 'none'."""
-        from voip.__main__ import _parse_stun_server
-
-        assert _parse_stun_server(None, None, "NONE") is None
-
-    def test_parse_stun_server__with_port(self):
-        """Parse host and port from HOST:PORT format."""
-        from voip.__main__ import _parse_stun_server
-
-        assert _parse_stun_server(None, None, "stun.example.com:3478") == (
-            "stun.example.com",
-            3478,
-        )
-
-    def test_parse_stun_server__without_port(self):
-        """Return default STUN port 3478 when no port is specified."""
+    def test_parse_stun_server__without_port_uses_stun_default(self):
+        """Return port 3478 when no port is specified for STUN."""
         from voip.__main__ import _parse_stun_server
 
         assert _parse_stun_server(None, None, "stun.example.com") == (

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import dataclasses
 import logging
 import time
 
@@ -65,22 +66,20 @@ def sip():
 main = voip
 
 
-def _parse_server(ctx, param, value: str) -> tuple[str, int]:
+def _parse_server(ctx, param, value: str, default_port=5060) -> tuple[str, int]:
     """Parse 'HOST[:PORT]' option into a (host, port) tuple."""
-    if ":" in value:
+    try:
         host, port_str = value.rsplit(":", 1)
-        return (host, int(port_str))
-    return (value, 5060)
+    except ValueError:
+        host, port_str = value, default_port
+    return host, int(port_str)
 
 
-def _parse_stun_server(ctx, param, value: str) -> tuple[str, int] | None:
-    """Parse a STUN server option into a (host, port) tuple, or None if disabled."""
-    if value.lower() == "none":
+def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
+    """Parse the --stun-server option; return None when the value is 'none'."""
+    if value is None or value.lower() == "none":
         return None
-    if ":" in value:
-        stun_host, stun_port_str = value.rsplit(":", 1)
-        return (stun_host, int(stun_port_str))
-    return (value, 3478)
+    return _parse_server(ctx, param, value, default_port=3478)
 
 
 @sip.command()
@@ -114,11 +113,13 @@ def _parse_stun_server(ctx, param, value: str) -> tuple[str, int] | None:
 )
 @click.option(
     "--stun-server",
-    default="stun.cloudflare.com",
     envvar="STUN_SERVER",
+    default="stun.cloudflare.com:3478",
     show_default=True,
+    metavar="HOST[:PORT]",
     callback=_parse_stun_server,
-    help="STUN server for NAT traversal (HOST:PORT).",
+    is_eager=False,
+    help="STUN server for NAT traversal (use 'none' to disable).",
 )
 @click.pass_context
 def transcribe(ctx, model, server, aor, username, password, local_port, stun_server):
@@ -134,12 +135,18 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
 
     verbose = ctx.obj.get("verbose", 0)
 
+    # Capture the CLI model arg as the dataclass field default so that the
+    # class can still be passed as a plain type to SIP.answer().
+    _model = model
+
+    @dataclasses.dataclass
     class TranscribingCall(WhisperCall):
-        def __init__(self, caller: str = "", media=None) -> None:
-            super().__init__(caller=caller, model=model, media=media)
+        """WhisperCall with the CLI-selected model and console output."""
+
+        model: str = _model
 
         def transcription_received(self, text: str) -> None:
-            click.echo(text)
+            click.echo(click.style(text, fg="green", bold=True), nl=False)
 
     # Mix in ConsoleMessageProcessor only at maximum verbosity (-vvv) so that
     # normal operation is not flooded with protocol-level message dumps.
@@ -148,16 +155,18 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
     class TranscribeSession(*bases):
         def call_received(self, request) -> None:
             self.ringing(request=request)
-            self.answer(request=request, call_class=TranscribingCall)
+            asyncio.create_task(
+                self.answer(request=request, call_class=TranscribingCall)
+            )
 
     async def run():
         loop = asyncio.get_running_loop()
         await loop.create_datagram_endpoint(
             lambda: TranscribeSession(
-                server_addr,
-                aor,
-                username,
-                password,
+                server_address=server_addr,
+                aor=aor,
+                username=username,
+                password=password,
                 stun_server_address=stun_server,
             ),
             local_addr=("0.0.0.0", local_port),  # noqa: S104
