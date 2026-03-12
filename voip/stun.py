@@ -68,7 +68,6 @@ class STUNProtocol(asyncio.DatagramProtocol):
     transport: asyncio.DatagramTransport | None = dataclasses.field(
         init=False, default=None
     )
-    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:  # type: ignore[override]
         """Store the transport, create :attr:`public_address`, and start STUN discovery.
@@ -81,11 +80,8 @@ class STUNProtocol(asyncio.DatagramProtocol):
         once the server's response arrives.
         """
         self.transport = transport
-        self.public_address = asyncio.get_running_loop().create_future()
         if self.stun_server_address is None:
-            addr = transport.get_extra_info("sockname")
-            self.public_address.set_result(addr)
-            self.stun_connection_made(transport, addr)
+            self.stun_connection_made(transport, transport.get_extra_info("sockname"))
         else:
             self._stun_transaction_id = uuid.uuid4().bytes[:12]
             self._send_stun_request()
@@ -110,7 +106,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
             transport: The UDP transport bound to this protocol.
             addr: Reachable ``(host, port)`` — public when STUN is used,
                 local otherwise.
-        """
+        """  # noqa: D401
 
     def send(self, data: bytes, addr: tuple[str, int]) -> None:
         """Send a raw datagram through the shared UDP socket.
@@ -228,8 +224,6 @@ class STUNProtocol(asyncio.DatagramProtocol):
         result = xor_mapped or mapped
         if result:
             logger.debug("STUN response: %s:%s", *result)
-            if not self.public_address.done():
-                self.public_address.set_result(result)
             self.stun_connection_made(self.transport, result)
         else:
             logger.error("No address attribute in STUN response")
