@@ -87,6 +87,16 @@ class STUNProtocol(asyncio.DatagramProtocol):
             return
         self.packet_received(data, addr)
 
+    def error_received(self, exc: Exception) -> None:
+        """Handle transport-level errors without closing the socket.
+
+        On Windows, sending to an unreachable UDP port triggers an ICMP
+        "Port Unreachable" response, which surfaces as ``ConnectionResetError``
+        (``WSAECONNRESET``) on the next receive.  Logging and ignoring it keeps
+        the socket alive so subsequent datagrams (e.g. RTP) are still delivered.
+        """
+        logger.warning("UDP transport error (ignored): %s", exc)
+
     def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Override in subclasses to handle non-STUN datagrams.
 

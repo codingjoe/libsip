@@ -1187,11 +1187,10 @@ class TestSIPProtocol:
         protocol.transport = make_mock_transport()
         protocol.public_address = loop.create_future()
         protocol.public_address.set_result(("127.0.0.1", 5060))
-        mux = RealtimeTransportProtocol(stun_server_address=("127.0.0.1", 65535))
+        mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        mux.public_address.set_result(rtp_transport.get_extra_info("sockname"))
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
@@ -1232,11 +1231,10 @@ class TestSIPProtocol:
         protocol.transport = make_mock_transport()
         protocol.public_address = loop.create_future()
         protocol.public_address.set_result(("127.0.0.1", 5060))
-        mux = RealtimeTransportProtocol(stun_server_address=("127.0.0.1", 65535))
+        mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        mux.public_address.set_result(rtp_transport.get_extra_info("sockname"))
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
@@ -1296,11 +1294,10 @@ class TestSIPProtocol:
         protocol.transport = make_mock_transport()
         protocol.public_address = loop.create_future()
         protocol.public_address.set_result(("127.0.0.1", 5060))
-        mux = RealtimeTransportProtocol(stun_server_address=("127.0.0.1", 65535))
+        mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        mux.public_address.set_result(rtp_transport.get_extra_info("sockname"))
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
 
@@ -1356,11 +1353,10 @@ class TestSIPProtocol:
         protocol.transport = make_mock_transport()
         protocol.public_address = loop.create_future()
         protocol.public_address.set_result(("127.0.0.1", 5060))
-        mux = RealtimeTransportProtocol(stun_server_address=("127.0.0.1", 65535))
+        mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        mux.public_address.set_result(rtp_transport.get_extra_info("sockname"))
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
