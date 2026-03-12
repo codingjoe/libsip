@@ -493,8 +493,7 @@ class TestAnswer:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = fake_rtp_transport
         # Resolve the SIP protocol's own public address (for Contact header).
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         await protocol._answer(invite, _CodecAwareCall)
 
     @pytest.mark.asyncio
@@ -1037,18 +1036,28 @@ class TestSIPProtocol:
             self._sent.append((message, addr))
 
     async def test_connection_made__stores_transport(self):
-        """Store the transport when a connection is established."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        """Store the transport when a connection is established (STUN disabled)."""
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
         assert protocol.transport is transport
 
     async def test_send__serializes_and_forwards_to_transport(self):
         """Serialize the message and forward it to the underlying transport."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
-        transport.sendto.reset_mock()  # clear the STUN request call
+        transport.sendto.reset_mock()  # clear any calls made during connection_made
         response = Response(status_code=200, reason="OK")
         addr = ("192.0.2.1", 5060)
         protocol.send(response, addr)
@@ -1082,8 +1091,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1105,8 +1113,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1126,8 +1133,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1157,8 +1163,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1184,8 +1189,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
@@ -1228,8 +1232,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
@@ -1266,8 +1269,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1291,8 +1293,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
@@ -1350,8 +1351,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol(stun_server_address=None)
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
@@ -1387,8 +1387,7 @@ class TestSIPProtocol:
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
         protocol.transport = make_mock_transport()
-        protocol.public_address = loop.create_future()
-        protocol.public_address.set_result(("127.0.0.1", 5060))
+        protocol.public_address = ("127.0.0.1", 5060)
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result(("127.0.0.1", 12000))
@@ -1461,8 +1460,13 @@ class TestSIPProtocol:
 
     async def test_datagram_received__keepalive__sends_pong(self):
         """Double-CRLF keepalive (RFC 5626 §4.4.1) is answered with a single-CRLF pong."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
         transport.sendto.reset_mock()
         addr = ("192.0.2.1", 5060)
@@ -1519,7 +1523,7 @@ class TestRegistration:
         assert p.registrar_uri == "sip:example.com:5080"
 
     async def test_connection_made__sends_register(self):
-        """Send a REGISTER request immediately when connection is established."""
+        """Send a REGISTER request when STUN completes after connection is established."""
 
         class _SessionNoRTP(SessionInitiationProtocol):
             async def _start_rtp_mux(self):
@@ -1530,10 +1534,10 @@ class TestRegistration:
             aor="sip:alice@example.com",
             username="alice",
             password="secret",  # noqa: S106
+            stun_server_address=None,  # immediately triggers stun_connection_made
         )
         transport = make_mock_transport()
         p.connection_made(transport)
-        p.public_address.set_result(("127.0.0.1", 5060))
         await asyncio.sleep(0.05)
         transport.sendto.assert_called()
         data, addr = transport.sendto.call_args[0]
@@ -1542,12 +1546,10 @@ class TestRegistration:
 
     async def test_register__includes_required_headers(self):
         """REGISTER request includes From, To, Call-ID, CSeq, Contact and Expires."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         await p.register()
         data, _ = transport.sendto.call_args[0]
         assert b"From: sip:alice@example.com" in data
@@ -1557,36 +1559,31 @@ class TestRegistration:
 
     async def test_register__increments_cseq(self):
         """CSeq increments with each REGISTER sent."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         p.transport = make_mock_transport()
         await p.register()
         assert p.cseq == 1
         await p.register()
         assert p.cseq == 2
 
+    @pytest.mark.asyncio
     async def test_register__with_authorization(self):
         """Authorization header is included when credentials are provided."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = "127.0.0.1", 5060
         await p.register(authorization='Digest username="alice"')
         data, _ = transport.sendto.call_args[0]
         assert b'Authorization: Digest username="alice"' in data
 
     async def test_register__with_proxy_authorization(self):
         """Proxy-Authorization header is included for proxy challenges."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = "127.0.0.1", 5060
         await p.register(proxy_authorization='Digest username="alice"')
         data, _ = transport.sendto.call_args[0]
         assert b'Proxy-Authorization: Digest username="alice"' in data
@@ -1624,12 +1621,10 @@ class TestRegistration:
 
     async def test_response_received__401_retries_with_authorization(self):
         """Receiving 401 triggers a re-REGISTER with an Authorization header."""
-        loop = asyncio.get_running_loop()
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         challenge = 'Digest realm="example.com", nonce="abc123"'
         p.response_received(
             Response(
@@ -1649,12 +1644,10 @@ class TestRegistration:
 
     async def test_response_received__407_retries_with_proxy_authorization(self):
         """Receiving 407 triggers a re-REGISTER with a Proxy-Authorization header."""
-        loop = asyncio.get_running_loop()
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         challenge = 'Digest realm="example.com", nonce="xyz"'
         p.response_received(
             Response(
@@ -1671,12 +1664,10 @@ class TestRegistration:
 
     async def test_response_received__401_with_qop_auth_includes_nc_cnonce(self):
         """401 with qop=auth causes the retry to include nc and cnonce fields."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         challenge = 'Digest realm="example.com", nonce="n", qop="auth"'
         p.response_received(
             Response(
@@ -1694,12 +1685,10 @@ class TestRegistration:
 
     async def test_response_received__401_with_opaque_echoes_opaque(self):
         """The opaque field from the challenge is echoed back in the Authorization."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
         transport = make_mock_transport()
         p.transport = transport
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = ("127.0.0.1", 5060)
         challenge = 'Digest realm="example.com", nonce="n", opaque="secret-opaque"'
         p.response_received(
             Response(
@@ -1717,10 +1706,8 @@ class TestRegistration:
         """REGISTER request includes a Via header with the rport parameter."""
         import re
 
-        loop = asyncio.get_running_loop()
         p = make_register_session()
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("192.0.2.10", 5060))
+        p.public_address = ("192.0.2.10", 5060)
         transport = make_mock_transport("192.0.2.10", 5060)
         p.transport = transport
         await p.register()
@@ -1732,10 +1719,8 @@ class TestRegistration:
         """Each REGISTER generates a unique Via branch."""
         import re
 
-        loop = asyncio.get_running_loop()
         p = make_register_session()
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("127.0.0.1", 5060))
+        p.public_address = "127.0.0.1", 5060
         transport = make_mock_transport()
         p.transport = transport
         await p.register()
@@ -1749,10 +1734,8 @@ class TestRegistration:
 
     async def test_register__contact_uses_local_addr(self):
         """Contact header always uses the local socket address."""
-        loop = asyncio.get_running_loop()
         p = make_register_session()
-        p.public_address = loop.create_future()
-        p.public_address.set_result(("10.0.0.5", 5060))
+        p.public_address = "10.0.0.5", 5060
         transport = make_mock_transport("10.0.0.5", 5060)
         p.transport = transport
         await p.register()

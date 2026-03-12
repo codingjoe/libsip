@@ -6,6 +6,7 @@ See also: https://datatracker.ietf.org/doc/html/rfc3550#section-5
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import enum
 import json
@@ -86,15 +87,12 @@ class RealtimeTransportProtocol(STUNProtocol):
     calls: dict[tuple[str, int] | None, Call] = dataclasses.field(
         init=False, default_factory=dict
     )
+    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(
+        init=False, default_factory=asyncio.Future
+    )
 
-    def send(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Send a raw datagram through the shared UDP socket.
-
-        Args:
-            data: Raw bytes to transmit.
-            addr: Destination ``(host, port)``.
-        """
-        self.transport.sendto(data, addr)
+    def stun_connection_made(self, transport, addr):
+        self.public_address.set_result(addr)
 
     def register_call(
         self,

@@ -69,13 +69,34 @@ class TestSTUNProtocol:
         """STUNProtocol is an asyncio.DatagramProtocol subclass."""
         assert issubclass(STUNProtocol, asyncio.DatagramProtocol)
 
-    async def test_connection_made__stores_transport(self):
-        """connection_made() stores the transport and initialises public_address."""
-        proto = STUNProtocol()
+    async def test_connection_made__stun_disabled__calls_stun_connection_made(self):
+        """When stun_server_address is None, stun_connection_made is called with the local addr."""
+        received: list[tuple] = []
+
+        class ConcreteProto(STUNProtocol):
+            def stun_connection_made(self, transport, addr):
+                received.append((transport, addr))
+
+        proto = ConcreteProto(stun_server_address=None)
+        transport = unittest.mock.MagicMock(spec=asyncio.DatagramTransport)
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
+        proto.connection_made(transport)
+        # No STUN request was sent — the callback is immediate.
+        transport.sendto.assert_not_called()
+        # stun_connection_made is called once with the local socket address.
+        assert len(received) == 1
+        assert received[0][0] is transport
+        assert received[0][1] == ("127.0.0.1", 5060)
+
+    async def test_connection_made__stun_enabled__sends_binding_request(self):
+        """When stun_server_address is set, a STUN Binding Request is sent."""
+        proto = STUNProtocol(stun_server_address=("127.0.0.1", 3478))
         transport = unittest.mock.MagicMock(spec=asyncio.DatagramTransport)
         proto.connection_made(transport)
-        assert proto.transport is transport
-        assert isinstance(proto.public_address, asyncio.Future)
+        # A STUN request should have been sent to the STUN server.
+        assert transport.sendto.called
+        call_args = transport.sendto.call_args
+        assert call_args[0][1] == ("127.0.0.1", 3478)
 
     async def test_datagram_received__stun_packet__not_forwarded(self):
         """A STUN packet (first byte < 4) does not reach packet_received."""
@@ -106,8 +127,8 @@ class TestSTUNProtocol:
         proto.datagram_received(b"\x80hello", ("127.0.0.1", 5004))
         assert received == [b"\x80hello"]
 
-    async def test_stun_discover__uses_actual_socket(self):
-        """public_address is resolved via the socket bound to the protocol."""
+    async def test_stun_discover__calls_stun_connection_made_with_public_addr(self):
+        """stun_connection_made is invoked with the public address discovered via STUN."""
         received_requests: list[bytes] = []
         server_transport: asyncio.DatagramTransport | None = None
 
@@ -143,12 +164,19 @@ class TestSTUNProtocol:
         )
         server_addr = server_t.get_extra_info("sockname")
 
-        proto = STUNProtocol(stun_server_address=server_addr)
+        done: asyncio.Future[tuple[str, int]] = loop.create_future()
+
+        class TrackingProto(STUNProtocol):
+            def stun_connection_made(self, transport, addr):
+                if not done.done():
+                    done.set_result(addr)
+
+        proto = TrackingProto(stun_server_address=server_addr)
         client_t, _ = await loop.create_datagram_endpoint(
             lambda: proto, local_addr=("127.0.0.1", 0)
         )
         try:
-            result = await proto.public_address
+            result = await asyncio.wait_for(done, 2.0)
             assert result == ("203.0.113.5", 12345)
             assert len(received_requests) == 1
         finally:

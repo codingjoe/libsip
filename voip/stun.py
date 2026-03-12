@@ -38,54 +38,111 @@ class STUNProtocol(asyncio.DatagramProtocol):
 
     Use this as the base class for any protocol that shares a UDP socket with
     STUN. Incoming datagrams whose first byte is in ``[0, 3]`` (RFC 7983) are
-    treated as STUN messages and routed to the pending discovery future. All
-    other datagrams are forwarded to :meth:`packet_received`.
+    treated as STUN messages and routed to the STUN handler. All other
+    datagrams are forwarded to :meth:`packet_received`.
 
-    :attr:`public_address` is an :class:`asyncio.Future` resolved automatically
-    in :meth:`connection_made` via STUN so that subclasses can simply
-    ``await`` it to obtain the correct routable address::
+    When the socket is ready and the reachable address is known,
+    :meth:`stun_connection_made` is called.  If ``stun_server_address`` is
+    ``None`` this happens synchronously from :meth:`connection_made` with the
+    local socket address.  If STUN is configured it is called from
+    :meth:`datagram_received` when the Binding Response arrives, with the
+    discovered public address.  Subclasses only need to override
+    :meth:`stun_connection_made` — no :meth:`connection_made` override is
+    required::
 
         class MyProtocol(STUNProtocol):
-            async def on_ready(self) -> None:
-                ip, port = await self.public_address
+            def stun_connection_made(
+                self,
+                transport: asyncio.DatagramTransport,
+                addr: tuple[str, int],
+            ) -> None:
+                # socket is ready; addr is the reachable (public or local) address
+                ...
 
             def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
                 process(data)
     """
 
-    stun_server_address: tuple[str, int] = "stun.cloudflare.com", 3478
-    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
-    _stun_pending: dict[bytes, asyncio.Future[tuple[str, int]]] = dataclasses.field(
-        init=False, default_factory=dict
+    stun_server_address: tuple[str, int] | None = ("stun.cloudflare.com", 3478)
+    _stun_transaction_id: bytes = dataclasses.field(init=False, default=b"")
+    transport: asyncio.DatagramTransport | None = dataclasses.field(
+        init=False, default=None
     )
-    _stun_transaction_id: bytes = dataclasses.field(init=False)
-    transport: asyncio.DatagramTransport = dataclasses.field(init=False)
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:  # type: ignore[override]
-        """Store the transport, initialise :attr:`public_address`, and start STUN discovery."""
+        """Store the transport, create :attr:`public_address`, and start STUN discovery.
+
+        When ``stun_server_address`` is ``None`` the socket is considered
+        ready immediately: :attr:`public_address` is resolved with the local
+        socket address and :meth:`stun_connection_made` is called right away.
+        Otherwise a STUN Binding Request is sent and
+        :meth:`stun_connection_made` will be called by :meth:`datagram_received`
+        once the server's response arrives.
+        """
         self.transport = transport
-        loop = asyncio.get_running_loop()
-        self._stun_transaction_id = uuid.uuid4().bytes[:12]
-        self.public_address = loop.create_future()
         if self.stun_server_address is None:
-            # STUN disabled: resolve public_address immediately with the local socket address.
-            self.public_address.set_result(transport.get_extra_info("sockname"))
+            self.stun_connection_made(transport, transport.get_extra_info("sockname"))
         else:
+            self._stun_transaction_id = uuid.uuid4().bytes[:12]
             self._send_stun_request()
+
+    def stun_connection_made(
+        self,
+        transport: asyncio.DatagramTransport,
+        addr: tuple[str, int],
+    ) -> None:
+        """Called when the socket is ready and the reachable address is known.
+
+        When STUN is configured, *addr* is the **public** ``(ip, port)``
+        discovered from the STUN Binding Response and this method is called
+        by :meth:`datagram_received`.  When ``stun_server_address=None``,
+        *addr* is the local socket address and this method is called
+        synchronously from :meth:`connection_made`.
+
+        Subclasses override this method to trigger protocol-specific
+        initialisation once the socket is ready.
+
+        Args:
+            transport: The UDP transport bound to this protocol.
+            addr: Reachable ``(host, port)`` — public when STUN is used,
+                local otherwise.
+        """  # noqa: D401
+
+    def send(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Send a raw datagram through the shared UDP socket.
+
+        Args:
+            data: Raw bytes to transmit.
+            addr: Destination ``(host, port)``.
+        """
+        if self.transport is not None:
+            self.transport.sendto(data, addr)
+
+    def close(self) -> None:
+        """Close the underlying UDP transport."""
+        if self.transport is not None:
+            self.transport.close()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Demultiplex STUN responses (RFC 7983) from other traffic.
 
-        Datagrams with first byte in ``[0, 3]`` are dispatched to any pending
-        discovery future; all others are forwarded to :meth:`packet_received`.
+        Datagrams with first byte in ``[0, 3]`` are dispatched to the STUN
+        handler; all others are forwarded to :meth:`packet_received`.
         """
         if data and data[0] < 4:
             # RFC 7983: first byte in [0, 3] indicates a STUN packet.
-            if len(data) >= 20:
-                if data[8:20] == self._stun_transaction_id:
-                    self._parse_stun_response(data)
+            if (
+                len(data) >= 20
+                and self._stun_transaction_id
+                and data[8:20] == self._stun_transaction_id
+            ):
+                self._parse_stun_response(data)
             return
         self.packet_received(data, addr)
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        """Clear the internal transport reference on disconnect."""
+        self.transport = None
 
     def error_received(self, exc: Exception) -> None:
         """Handle transport-level errors without closing the socket.
@@ -106,16 +163,14 @@ class STUNProtocol(asyncio.DatagramProtocol):
         """
 
     def _send_stun_request(self) -> None:
-        """Send a STUN Binding Request and resolve :attr:`public_address`.
+        """Send a STUN Binding Request through the protocol's own transport.
 
         Sends the request through the transport bound to this protocol so the
         server observes the same NAT mapping as real traffic.  Responses are
         demultiplexed from normal datagrams via the RFC 7983 first-byte rule.
-
-        Raises:
-            asyncio.TimeoutError: If the server does not respond in time.
-            RuntimeError: If the STUN response contains no address attribute.
         """
+        if self.transport is None:
+            return
         request = struct.pack(
             ">HHI12s",
             STUNMessageType.BINDING_REQUEST,
@@ -126,11 +181,8 @@ class STUNProtocol(asyncio.DatagramProtocol):
         logger.debug("Sending STUN Binding Request to %s:%s", *self.stun_server_address)
         self.transport.sendto(request, self.stun_server_address)
 
-    def _parse_stun_response(
-        self,
-        data: bytes,
-    ) -> None:
-        """Parse a STUN Binding Success Response and resolve the given future."""
+    def _parse_stun_response(self, data: bytes) -> None:
+        """Parse a STUN Binding Success Response and invoke :meth:`stun_connection_made`."""
         if len(data) < 20:
             return
         message_type, _message_len, magic_cookie = struct.unpack(">HHI", data[:8])
@@ -141,8 +193,8 @@ class STUNProtocol(asyncio.DatagramProtocol):
             or response_tid != self._stun_transaction_id
         ):
             return
-        if self.public_address.done():
-            return
+        # Clear transaction ID so duplicate responses are ignored.
+        self._stun_transaction_id = b""
         offset = 20
         xor_mapped: tuple[str, int] | None = None
         mapped: tuple[str, int] | None = None
@@ -172,8 +224,6 @@ class STUNProtocol(asyncio.DatagramProtocol):
         result = xor_mapped or mapped
         if result:
             logger.debug("STUN response: %s:%s", *result)
-            self.public_address.set_result(result)
+            self.stun_connection_made(self.transport, result)
         else:
-            self.public_address.set_exception(
-                RuntimeError("No address attribute in STUN response")
-            )
+            logger.error("No address attribute in STUN response")

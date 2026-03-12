@@ -119,18 +119,18 @@ class SessionInitiationProtocol(STUNProtocol):
     password: str | None = None
     call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
+    public_address: tuple[str, int] = dataclasses.field(init=False)
 
     def __post_init__(self):
         self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
 
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport, start STUN (if configured), and begin initialization."""
-        logger.debug("SIP transport connected")
-        STUNProtocol.connection_made(
-            self, transport
-        )  # STUNProtocol: stores transport and schedules STUN
-        # Schedule RTP mux creation and (optionally) registration in a single task so
-        # that both the SIP and RTP public addresses are known before we send REGISTER.
+    def stun_connection_made(
+        self,
+        transport: asyncio.DatagramTransport,
+        addr: tuple[str, int],
+    ) -> None:
+        """Schedule RTP mux creation and SIP registration on socket readiness."""
+        self.public_address = addr
         try:
             asyncio.get_running_loop().create_task(self._initialize())
         except RuntimeError:
@@ -139,12 +139,16 @@ class SessionInitiationProtocol(STUNProtocol):
     async def _initialize(self) -> None:
         """Set up the RTP mux and register with the carrier (in that order).
 
-        Waits for STUN on both the SIP and RTP sockets (if configured) before
-        sending REGISTER so that the Contact header contains the correct public
-        address.
+        Scheduled by :meth:`stun_connection_made` after STUN completes, so
+        :attr:`public_address` is already resolved when :meth:`register` runs.
         """
-        await asyncio.wait_for(self.public_address, 2)
-        await self._start_rtp_mux()
+        loop = asyncio.get_running_loop()
+        self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
+            lambda: RealtimeTransportProtocol(
+                stun_server_address=self.stun_server_address
+            ),
+            local_addr=("0.0.0.0", 0),  # noqa: S104
+        )
         await self.register()
 
     def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
@@ -168,29 +172,6 @@ class SessionInitiationProtocol(STUNProtocol):
         """Remove the call handler registered with the shared RTP mux, if any."""
         if call_id in self._call_rtp_addrs and self._rtp_protocol is not None:
             self._rtp_protocol.unregister_call(self._call_rtp_addrs.pop(call_id))
-
-    async def _start_rtp_mux(self) -> None:
-        """Create and connect the shared RTP multiplexer socket (idempotent).
-
-        Passes :attr:`stun_server_address` to the mux so that it discovers its
-        own public address automatically on ``connection_made``.  Waits for both
-        the SIP and RTP STUN tasks to settle before returning so that callers
-        can rely on :attr:`public_address` and
-        ``self._rtp_protocol.public_address`` being populated.
-        """
-        if self._rtp_protocol is not None:
-            return
-        loop = asyncio.get_running_loop()
-        mux = RealtimeTransportProtocol(stun_server_address=self.stun_server_address)
-        self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
-            lambda: mux,
-            local_addr=("0.0.0.0", 0),  # noqa: S104
-        )
-        rtp_addr = self._rtp_transport.get_extra_info("sockname")
-        logger.debug("RTP mux listening on %s:%d", *rtp_addr)
-        # Wait for RTP STUN to complete before returning so that the mux's
-        # public_address is available when _answer() builds the SDP.
-        await mux.public_address
 
     def _mark_call_answered(self, call_id: str) -> None:
         """Record *call_id* as answered, evicting the oldest entry if the LRU is full."""
@@ -504,12 +485,6 @@ class SessionInitiationProtocol(STUNProtocol):
         self._rtp_protocol.register_call(remote_rtp_addr, call_handler)
         self._call_rtp_addrs[call_id] = remote_rtp_addr
 
-        local_rtp_addr = self._rtp_transport.get_extra_info("sockname")
-        rtp_public = await self._rtp_protocol.public_address
-        sdp_ip = rtp_public[0] if rtp_public else local_rtp_addr[0]
-        sdp_port = rtp_public[1] if rtp_public else local_rtp_addr[1]
-        contact_addr = await self.public_address
-        logger.debug("RTP mux at %s:%s; contact %s:%s", sdp_ip, sdp_port, *contact_addr)
         record_route = request.headers.get("Record-Route")
         sess_id = str(secrets.randbelow(2**32) + 1)
         sdp_media_attributes = [
@@ -529,7 +504,7 @@ class SessionInitiationProtocol(STUNProtocol):
                         call_id,
                     ),
                     **({"Record-Route": record_route} if record_route else {}),
-                    "Contact": f"<sip:{contact_addr[0]}:{contact_addr[1]}>",
+                    "Contact": f"<sip:{self.public_address[0]}:{self.public_address[1]}>",
                     "Allow": self.ALLOW,
                     "Supported": "replaces",
                     "Content-Type": "application/sdp",
@@ -541,16 +516,18 @@ class SessionInitiationProtocol(STUNProtocol):
                         sess_version=sess_id,
                         nettype="IN",
                         addrtype="IP4",
-                        unicast_address=sdp_ip,
+                        unicast_address=(await self._rtp_protocol.public_address)[0],
                     ),
                     timings=[Timing(start_time=0, stop_time=0)],
                     connection=ConnectionData(
-                        nettype="IN", addrtype="IP4", connection_address=sdp_ip
+                        nettype="IN",
+                        addrtype="IP4",
+                        connection_address=(await self._rtp_protocol.public_address)[0],
                     ),
                     media=[
                         MediaDescription(
                             media="audio",
-                            port=sdp_port,
+                            port=(await self._rtp_protocol.public_address)[1],
                             proto="RTP/AVP",
                             fmt=negotiated_media.fmt,
                             attributes=sdp_media_attributes,
@@ -686,19 +663,18 @@ class SessionInitiationProtocol(STUNProtocol):
         )
         # Prefer the publicly routable SIP address (from STUN) for Via and Contact.
         # Falls back to the local address when STUN is not configured.
-        public_address = await self.public_address
         branch = f"{self.VIA_BRANCH_PREFIX}{secrets.token_hex(16)}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sip:alice@example.com" -> "alice")
         aor_rest = self.aor.partition(":")[2] if self.aor else ""
         user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         headers = {
-            "Via": f"SIP/2.0/UDP {public_address[0]}:{public_address[1]};rport;branch={branch}",
+            "Via": f"SIP/2.0/UDP {self.public_address[0]}:{self.public_address[1]};rport;branch={branch}",
             "From": self.aor,
             "To": self.aor,
             "Call-ID": self.call_id,
             "CSeq": f"{self.cseq} REGISTER",
-            "Contact": f"<sip:{user}@{public_address[0]}:{public_address[1]}>",
+            "Contact": f"<sip:{user}@{self.public_address[0]}:{self.public_address[1]}>",
             "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
         }
@@ -756,6 +732,7 @@ class SessionInitiationProtocol(STUNProtocol):
         if exc is not None:
             logger.exception("Connection lost", exc_info=exc)
         self.transport = None
+        STUNProtocol.connection_lost(self, exc)
 
 
 #: Short alias for :class:`SessionInitiationProtocol`.
