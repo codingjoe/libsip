@@ -10,6 +10,7 @@ import dataclasses
 import enum
 import json
 import logging
+import typing
 from typing import TYPE_CHECKING
 
 from voip.stun import STUNProtocol
@@ -67,6 +68,7 @@ class RTPPacket:
         )
 
 
+@dataclasses.dataclass(slots=True)
 class RealtimeTransportProtocol(STUNProtocol):
     """RTP multiplexer: routes incoming datagrams to per-call handlers (RFC 3550).
 
@@ -80,14 +82,10 @@ class RealtimeTransportProtocol(STUNProtocol):
     calls whose remote RTP address is not known in advance (no SDP in INVITE).
     """
 
-    #: Fixed RTP header size in bytes (RFC 3550 §5.1).
-    rtp_header_size: int = 12
-
-    def __init__(self, stun_server_address: tuple[str, int] | None = None) -> None:
-        super().__init__(stun_server_address=stun_server_address)
-        #: Per-call handlers keyed by the remote ``(ip, port)`` address.
-        #: ``None`` is a wildcard key for calls with an unknown remote address.
-        self._calls: dict[tuple[str, int] | None, Call] = {}
+    rtp_header_size: typing.ClassVar[int] = 12
+    calls: dict[tuple[str, int] | None, Call] = dataclasses.field(
+        init=False, default_factory=dict
+    )
 
     def send(self, data: bytes, addr: tuple[str, int]) -> None:
         """Send a raw datagram through the shared UDP socket.
@@ -96,7 +94,7 @@ class RealtimeTransportProtocol(STUNProtocol):
             data: Raw bytes to transmit.
             addr: Destination ``(host, port)``.
         """
-        self._transport.sendto(data, addr)
+        self.transport.sendto(data, addr)
 
     def register_call(
         self,
@@ -126,7 +124,7 @@ class RealtimeTransportProtocol(STUNProtocol):
             ),
             extra={"addr": addr},
         )
-        self._calls[addr] = handler
+        self.calls[addr] = handler
 
     def unregister_call(self, addr: tuple[str, int] | None) -> None:
         """Remove the handler registered for *addr*.
@@ -135,7 +133,7 @@ class RealtimeTransportProtocol(STUNProtocol):
             addr: The same key that was passed to :meth:`register_call`.
                 Silently ignored when no handler is registered for *addr*.
         """
-        if addr in self._calls:
+        if addr in self.calls:
             logger.info(
                 json.dumps(
                     {
@@ -145,7 +143,7 @@ class RealtimeTransportProtocol(STUNProtocol):
                 ),
                 extra={"addr": addr},
             )
-            self._calls.pop(addr)
+            self.calls.pop(addr)
 
     def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Route an incoming RTP datagram to the matching per-call handler.
@@ -154,9 +152,9 @@ class RealtimeTransportProtocol(STUNProtocol):
         ``None`` handler when no exact match exists.  Drops the packet with a
         debug log when no handler is registered at all.
         """
-        handler = self._calls.get(addr)
+        handler = self.calls.get(addr)
         if handler is None:
-            handler = self._calls.get(None)
+            handler = self.calls.get(None)
         if handler is not None:
             logger.debug(
                 "Routing RTP packet from %s:%s to %s",
@@ -173,5 +171,4 @@ class RealtimeTransportProtocol(STUNProtocol):
             )
 
 
-#: Short alias for :class:`RealtimeTransportProtocol`.
 RTP = RealtimeTransportProtocol

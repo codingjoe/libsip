@@ -113,7 +113,7 @@ def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
 @click.option(
     "--stun-server",
     envvar="STUN_SERVER",
-    default="stun.l.google.com:19302",
+    default="stun.cloudflare.com:3478",
     show_default=True,
     metavar="HOST[:PORT]",
     callback=_parse_stun_server,
@@ -154,7 +154,9 @@ def transcribe(ctx, model, server, aor, username, password, local_port, stun_ser
     class TranscribeSession(*bases):
         def call_received(self, request) -> None:
             self.ringing(request=request)
-            asyncio.create_task(self.answer(request=request, call_class=TranscribingCall))
+            asyncio.create_task(
+                self.answer(request=request, call_class=TranscribingCall)
+            )
 
     async def run():
         loop = asyncio.get_running_loop()

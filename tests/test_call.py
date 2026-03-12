@@ -12,7 +12,10 @@ from voip.sip.protocol import SIP, SessionInitiationProtocol
 
 def make_audio_call(**kwargs) -> AudioCall:
     """Create an AudioCall with mock rtp/sip for unit testing."""
-    defaults: dict = {"rtp": MagicMock(spec=RealtimeTransportProtocol), "sip": MagicMock()}
+    defaults: dict = {
+        "rtp": MagicMock(spec=RealtimeTransportProtocol),
+        "sip": MagicMock(),
+    }
     defaults.update(kwargs)
     return AudioCall(**defaults)
 
@@ -48,7 +51,9 @@ class TestAudioCall:
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=[RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)],
+            fmt=[
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
+            ],
         )
         call = make_audio_call(media=media)
         assert call.media is media
@@ -61,7 +66,9 @@ class TestAudioCall:
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=[RTPPayloadFormat(payload_type=9, encoding_name="G722", sample_rate=8000)],
+            fmt=[
+                RTPPayloadFormat(payload_type=9, encoding_name="G722", sample_rate=8000)
+            ],
         )
         call = make_audio_call(media=media)
         assert call.sample_rate == 8000
@@ -97,7 +104,9 @@ class TestAudioCall:
             media="audio",
             port=49170,
             proto="RTP/AVP",
-            fmt=[RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)],
+            fmt=[
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
+            ],
         )
         with caplog.at_level(logging.INFO, logger="voip.audio"):
             make_audio_call(media=media)
@@ -140,7 +149,9 @@ class TestAudioCall:
             media="audio",
             port=0,
             proto="RTP/AVP",
-            fmt=[RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)],
+            fmt=[
+                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
+            ],
         )
 
         class ChunkedCall(AudioCall):
@@ -170,9 +181,7 @@ class TestAudioCall:
 
 
 class TestNegotiateCodec:
-    def _make_media(
-        self, fmts: list[str], rtpmaps: list[str] | None = None
-    ):
+    def _make_media(self, fmts: list[str], rtpmaps: list[str] | None = None):
         """Build a MediaDescription with given format list and optional rtpmap attributes."""
         from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: PLC0415
 
@@ -248,7 +257,7 @@ class TestSIP:
         protocol = SIP()
         transport = MagicMock()
         protocol.connection_made(transport)
-        assert protocol._transport is transport
+        assert protocol.transport is transport
 
     def test_send__serializes_and_forwards_to_transport(self):
         """Serialize the message and forward it to the underlying transport."""
@@ -257,7 +266,7 @@ class TestSIP:
         response = Response(status_code=200, reason="OK")
         addr = ("192.0.2.1", 5060)
         protocol.send(response, addr)
-        protocol._transport.sendto.assert_called_once_with(bytes(response), addr)
+        protocol.transport.sendto.assert_called_once_with(bytes(response), addr)
 
     def test_request_received__invite__stores_addr_and_calls_call_received(self):
         """Dispatch an INVITE to call_received and store the addr by Call-ID."""
@@ -287,7 +296,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCall)
@@ -302,7 +311,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCall)
@@ -315,7 +324,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCall)
@@ -337,7 +346,7 @@ class TestSIP:
 
         protocol = SIP()
         protocol.send = MagicMock()
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, MyCall)
@@ -358,7 +367,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCapture)
@@ -396,7 +405,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCapture)
@@ -425,7 +434,7 @@ class TestSIP:
         protocol = SIP()
         send = MagicMock()
         protocol.send = send
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCall)
@@ -441,7 +450,7 @@ class TestSIP:
 
         protocol = SIP()
         protocol.send = MagicMock()
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
 
         sdp_body1 = SessionDescription.parse(
             b"v=0\r\no=- 0 0 IN IP4 1.2.3.4\r\ns=-\r\nc=IN IP4 1.2.3.4\r\nt=0 0\r\nm=audio 5000 RTP/AVP 0\r\n"
@@ -486,8 +495,8 @@ class TestSIP:
         assert protocol._rtp_transport is rtp_transport_1
 
         # Both calls registered under their respective remote addrs.
-        assert ("1.2.3.4", 5000) in rtp_proto_1._calls
-        assert ("5.6.7.8", 6000) in rtp_proto_1._calls
+        assert ("1.2.3.4", 5000) in rtp_proto_1.calls
+        assert ("5.6.7.8", 6000) in rtp_proto_1.calls
 
         # Clean up the real socket.
         if rtp_transport_1:
@@ -497,14 +506,14 @@ class TestSIP:
         """BYE for an active call removes its handler from the shared RTP mux."""
         protocol = SIP()
         protocol.send = MagicMock()
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         await protocol._answer(request, AudioCall)
 
         mux = protocol._rtp_protocol
         # The call is registered under the None wildcard (no SDP in invite).
-        assert None in mux._calls
+        assert None in mux.calls
 
         bye = Request(
             method="BYE",
@@ -518,7 +527,7 @@ class TestSIP:
             },
         )
         protocol.request_received(bye, ("192.0.2.1", 5060))
-        assert None not in mux._calls
+        assert None not in mux.calls
 
         if protocol._rtp_transport:
             protocol._rtp_transport.close()
@@ -529,7 +538,7 @@ class TestSIP:
 
         protocol = SIP()
         protocol.send = MagicMock()
-        protocol._transport = make_mock_transport()
+        protocol.transport = make_mock_transport()
         request = make_invite()
         protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
         with caplog.at_level(logging.INFO, logger="voip.sip"):
@@ -672,7 +681,7 @@ class TestSessionInitiationProtocol:
         p = make_register_session()
         transport = make_mock_transport()
         p.connection_made(make_mock_transport())
-        p._transport = transport
+        p.transport = transport
         transport.reset_mock()
         p.register()
         data, _ = transport.sendto.call_args[0]
@@ -685,7 +694,7 @@ class TestSessionInitiationProtocol:
     async def test_register__increments_cseq(self):
         """CSeq increments with each REGISTER sent."""
         p = make_register_session()
-        p._transport = make_mock_transport()
+        p.transport = make_mock_transport()
         p.register()
         assert p.cseq == 1
         p.register()
@@ -696,7 +705,7 @@ class TestSessionInitiationProtocol:
         """Authorization header is included when credentials are provided."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         p.register(authorization='Digest username="alice"')
         data, _ = transport.sendto.call_args[0]
@@ -707,7 +716,7 @@ class TestSessionInitiationProtocol:
         """Proxy-Authorization header is included for proxy challenges."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         p.register(proxy_authorization='Digest username="alice"')
         data, _ = transport.sendto.call_args[0]
@@ -746,7 +755,7 @@ class TestSessionInitiationProtocol:
         """Receiving 401 triggers a re-REGISTER with an Authorization header."""
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         challenge = 'Digest realm="example.com", nonce="abc123"'
         p.response_received(
@@ -769,7 +778,7 @@ class TestSessionInitiationProtocol:
         """Receiving 407 triggers a re-REGISTER with a Proxy-Authorization header."""
         p = make_register_session(username="alice", password="secret")  # noqa: S106
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         challenge = 'Digest realm="example.com", nonce="xyz"'
         p.response_received(
@@ -789,7 +798,7 @@ class TestSessionInitiationProtocol:
         """401 with qop=auth causes the retry to include nc and cnonce fields."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         challenge = 'Digest realm="example.com", nonce="n", qop="auth"'
         p.response_received(
@@ -810,7 +819,7 @@ class TestSessionInitiationProtocol:
         """The opaque field from the challenge is echoed back in the Authorization."""
         p = make_register_session()
         p.connection_made(make_mock_transport())
-        transport = p._transport
+        transport = p.transport
         transport.reset_mock()
         challenge = 'Digest realm="example.com", nonce="n", opaque="secret-opaque"'
         p.response_received(
@@ -831,7 +840,7 @@ class TestSessionInitiationProtocol:
 
         p = make_register_session()
         transport = make_mock_transport("192.0.2.10", 5060)
-        p._transport = transport
+        p.transport = transport
         p.register()
         data, _ = transport.sendto.call_args[0]
         assert b"Via: SIP/2.0/UDP 192.0.2.10:5060;rport;branch=z9hG4bK" in data
@@ -844,7 +853,7 @@ class TestSessionInitiationProtocol:
 
         p = make_register_session()
         transport = make_mock_transport()
-        p._transport = transport
+        p.transport = transport
         p.register()
         data1, _ = transport.sendto.call_args[0]
         transport.reset_mock()
@@ -859,7 +868,7 @@ class TestSessionInitiationProtocol:
         """Contact header always uses the local socket address."""
         p = make_register_session()
         transport = make_mock_transport("10.0.0.5", 5060)
-        p._transport = transport
+        p.transport = transport
         p.register()
         data, _ = transport.sendto.call_args[0]
         assert b"Contact: <sip:alice@10.0.0.5:5060>" in data

@@ -256,7 +256,7 @@ class TestSTUNProtocol:
         proto = STUNProtocol()
         transport = asyncio.DatagramTransport()
         proto.connection_made(transport)
-        assert proto._transport is transport
+        assert proto.transport is transport
 
     def test_datagram_received__stun_packet__not_forwarded(self):
         """A STUN packet (first byte < 4) does not reach packet_received."""
@@ -297,7 +297,9 @@ class TestSTUNProtocol:
                 ip_int = (203 << 24) | (0 << 16) | (113 << 8) | 5
                 xor_ip = ip_int ^ MAGIC_COOKIE
                 xor_port = 12345 ^ (MAGIC_COOKIE >> 16)
-                attr = struct.pack(">HH", 0x0020, 8) + struct.pack(">BBH I", 0, 1, xor_port, xor_ip)
+                attr = struct.pack(">HH", 0x0020, 8) + struct.pack(
+                    ">BBH I", 0, 1, xor_port, xor_ip
+                )
                 response = (
                     struct.pack(
                         ">HHI12s",

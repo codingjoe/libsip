@@ -123,7 +123,9 @@ class SessionInitiationProtocol(STUNProtocol):
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport, start STUN (if configured), and begin initialization."""
         logger.debug("SIP transport connected")
-        super().connection_made(transport)  # STUNProtocol: stores transport and schedules STUN
+        super().connection_made(
+            transport
+        )  # STUNProtocol: stores transport and schedules STUN
         # Schedule RTP mux creation and (optionally) registration in a single task so
         # that both the SIP and RTP public addresses are known before we send REGISTER.
         try:
@@ -147,7 +149,7 @@ class SessionInitiationProtocol(STUNProtocol):
         """Handle RFC 5626 keepalive pings, then dispatch SIP messages."""
         if data == b"\r\n\r\n":  # RFC 5626 §4.4.1 double-CRLF keepalive ping
             logger.debug("RFC 5626 keepalive from %s, sending pong", addr)
-            self._transport.sendto(b"\r\n", addr)
+            self.transport.sendto(b"\r\n", addr)
             return
         match Message.parse(data):
             case Request() as request:
@@ -158,7 +160,7 @@ class SessionInitiationProtocol(STUNProtocol):
     def send(self, message: Response | Request, addr: tuple[str, int]) -> None:
         """Serialize and send a SIP message to the given address."""
         logger.debug("Sending %r to %r", message, addr)
-        self._transport.sendto(bytes(message), addr)
+        self.transport.sendto(bytes(message), addr)
 
     def _cleanup_rtp_call(self, call_id: str) -> None:
         """Remove the call handler registered with the shared RTP mux, if any."""
@@ -412,9 +414,7 @@ class SessionInitiationProtocol(STUNProtocol):
             request: The SIP CANCEL request.
         """
 
-    async def answer(
-        self, request: Request, *, call_class: type[Call]
-    ) -> None:
+    async def answer(self, request: Request, *, call_class: type[Call]) -> None:
         """Answer an incoming call by setting up RTP and sending 200 OK with SDP.
 
         This coroutine can be awaited directly or wrapped in a task::
@@ -438,9 +438,7 @@ class SessionInitiationProtocol(STUNProtocol):
         """
         await self._answer(request, call_class)
 
-    async def _answer(
-        self, request: Request, call_class: type[Call]
-    ) -> None:
+    async def _answer(self, request: Request, call_class: type[Call]) -> None:
         """Perform the asynchronous part of answering: set up RTP, send 200 OK."""
         call_id = request.headers.get("Call-ID", "")
         addr = self._request_addrs.pop(call_id, None)
@@ -511,7 +509,7 @@ class SessionInitiationProtocol(STUNProtocol):
         sdp_port = rtp_public[1] if rtp_public else local_rtp_addr[1]
         # Contact header uses the SIP socket's public address (from this protocol's
         # own STUN discovery), falling back to the local SIP socket address.
-        sip_local = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
+        sip_local = self.transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
         contact_addr = self.public_address or sip_local
         logger.debug("RTP mux at %s:%s; contact %s:%s", sdp_ip, sdp_port, *contact_addr)
         record_route = request.headers.get("Record-Route")
@@ -688,7 +686,7 @@ class SessionInitiationProtocol(STUNProtocol):
             self.server_address[1],
             self.cseq,
         )
-        local_address = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
+        local_address = self.transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
         # Prefer the publicly routable SIP address (from STUN) for Via and Contact.
         # Falls back to the local address when STUN is not configured.
         public_address = self.public_address or local_address
@@ -763,7 +761,7 @@ class SessionInitiationProtocol(STUNProtocol):
         """Handle a lost connection."""
         if exc is not None:
             logger.exception("Connection lost", exc_info=exc)
-        self._transport = None
+        self.transport = None
 
 
 #: Short alias for :class:`SessionInitiationProtocol`.
