@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import dataclasses
 import logging
 import time
 
@@ -108,8 +109,6 @@ def transcribe(ctx, model, server, aor, username, password, local_port):
     from voip.sip.protocol import SIP
 
     from .audio import WhisperCall  # noqa: PLC0415
-    from .rtp import RealtimeTransportProtocol  # noqa: PLC0415
-    from .sdp.types import MediaDescription  # noqa: PLC0415
 
     server_addr = server
     host = server_addr[0]
@@ -118,15 +117,15 @@ def transcribe(ctx, model, server, aor, username, password, local_port):
 
     verbose = ctx.obj.get("verbose", 0)
 
+    # Capture the CLI model arg as the dataclass field default so that the
+    # class can still be passed as a plain type to SIP.answer().
+    _model = model
+
+    @dataclasses.dataclass
     class TranscribingCall(WhisperCall):
-        def __init__(
-            self,
-            rtp: RealtimeTransportProtocol,
-            sip: SIP,
-            caller: str = "",
-            media: MediaDescription | None = None,
-        ) -> None:
-            super().__init__(rtp=rtp, sip=sip, caller=caller, media=media, model=model)
+        """WhisperCall with the CLI-selected model and console output."""
+
+        model: str = _model
 
         def transcription_received(self, text: str) -> None:
             click.echo(text)
@@ -138,7 +137,7 @@ def transcribe(ctx, model, server, aor, username, password, local_port):
     class TranscribeSession(*bases):
         def call_received(self, request) -> None:
             self.ringing(request=request)
-            self.answer(request=request, call_class=TranscribingCall)
+            asyncio.create_task(self.answer(request=request, call_class=TranscribingCall))
 
     async def run():
         loop = asyncio.get_running_loop()

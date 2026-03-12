@@ -12,7 +12,7 @@ av = pytest.importorskip("av")
 pytest.importorskip("faster_whisper")
 
 from voip.audio import WhisperCall, _build_ogg_opus  # noqa: E402
-from voip.rtp import RTP, RTPPayloadType  # noqa: E402
+from voip.rtp import RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
 
 
@@ -40,13 +40,20 @@ def make_whisper_call(
     cls = call_class or WhisperCall
     med = media if media is not None else OPUS_MEDIA
     with patch("voip.audio.WhisperModel", return_value=model_mock):
-        return cls(caller="sip:bob@biloxi.com", media=med)
+        return cls(
+            rtp=MagicMock(),
+            sip=MagicMock(),
+            caller="sip:bob@biloxi.com",
+            media=med,
+        )
 
 
 class TestWhisperCall:
-    def test_whisper_call__is_rtp(self):
-        """WhisperCall is a subclass of RTP."""
-        assert issubclass(WhisperCall, RTP)
+    def test_whisper_call__is_audio_call(self):
+        """WhisperCall is a subclass of AudioCall."""
+        from voip.audio import AudioCall  # noqa: PLC0415
+
+        assert issubclass(WhisperCall, AudioCall)
 
     def test_class_attrs__chunk_duration(self):
         """chunk_duration controls how many seconds are buffered before transcription."""
@@ -101,7 +108,7 @@ class TestWhisperCall:
         model_mock.transcribe.assert_not_called()
 
     async def test_audio_received__triggers_transcription_when_buffer_full(self):
-        """Transcription fires when audio_received is emitted by the base-class buffer."""
+        """Transcription fires when audio_received is called with decoded PCM."""
         transcriptions = []
         model_mock = MagicMock()
         seg = MagicMock()
@@ -116,13 +123,12 @@ class TestWhisperCall:
 
         call = make_whisper_call(model_mock, SmallChunkCall)
         pcm_samples = np.zeros(16000, dtype=np.float32)
-        with patch.object(call, "_decode_audio", return_value=pcm_samples):
-            # Simulate the base class emitting audio_received with a full chunk
-            call.audio_received([b"x"] * call._packet_threshold)
-            await asyncio.sleep(0.1)
+        # audio_received now takes decoded PCM directly (np.ndarray)
+        call.audio_received(pcm_samples)
+        await asyncio.sleep(0.1)
         assert transcriptions == ["hello"]
 
-    async def test_transcribe_chunk__strips_whitespace(self):
+    async def test_transcribe__strips_whitespace(self):
         """Strip leading and trailing whitespace from the transcription text."""
         transcriptions = []
         model_mock = MagicMock()
@@ -135,10 +141,7 @@ class TestWhisperCall:
                 transcriptions.append(text)
 
         call = make_whisper_call(model_mock, Capture)
-        with patch.object(
-            call, "_decode_audio", return_value=np.zeros(16000, dtype=np.float32)
-        ):
-            await call._transcribe_chunk([b"x"])
+        await call._transcribe(np.zeros(16000, dtype=np.float32))
         assert transcriptions == ["hello world"]
 
     def test_run_transcription__passes_numpy_array_directly(self):
@@ -200,58 +203,58 @@ class TestWhisperCall:
             mock_av.open.side_effect = RuntimeError("av error")
             call._decode_via_av(b"bad_data", input_format="ogg", input_sample_rate=None)
 
-    def test_decode_audio__opus__wraps_in_ogg(self):
+    def test_decode_raw__opus__wraps_in_ogg(self):
         """Decode Opus packets by wrapping them in an Ogg container before calling PyAV."""
         call = make_whisper_call(MagicMock(), media=OPUS_MEDIA)
         assert call.payload_type == RTPPayloadType.OPUS
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "ogg"
 
-    def test_decode_audio__pcma__uses_alaw_format(self):
+    def test_decode_raw__pcma__uses_alaw_format(self):
         """Decode PCMA packets using the alaw PyAV input format."""
         call = make_whisper_call(MagicMock(), media=PCMA_MEDIA)
         assert call.payload_type == RTPPayloadType.PCMA
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "alaw"
 
-    def test_decode_audio__pcmu__uses_mulaw_format(self):
+    def test_decode_raw__pcmu__uses_mulaw_format(self):
         """Decode PCMU packets using the mulaw PyAV input format."""
         call = make_whisper_call(MagicMock(), media=PCMU_MEDIA)
         assert call.payload_type == RTPPayloadType.PCMU
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "mulaw"
 
-    def test_decode_audio__g722__uses_g722_format(self):
+    def test_decode_raw__g722__uses_g722_format(self):
         """Decode G.722 packets using the g722 PyAV input format."""
         call = make_whisper_call(MagicMock(), media=G722_MEDIA)
         assert call.payload_type == RTPPayloadType.G722
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "g722"
 
-    def test_decode_audio__unknown__raises(self):
+    def test_decode_raw__unknown__raises(self):
         """Raise NotImplementedError for unsupported encoding names."""
         unknown_media = _make_media("99")
         call = make_whisper_call(MagicMock(), media=unknown_media)
         with pytest.raises(NotImplementedError, match="Unsupported"):
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
 
-    def test_decode_audio__uses_sample_rate_from_media(self):
+    def test_decode_raw__uses_sample_rate_from_media(self):
         """Pass the sample rate from the MediaDescription to _decode_via_av."""
         wideband_pcma = _make_media("8", "8 PCMA/16000")
         call = make_whisper_call(MagicMock(), media=wideband_pcma)
@@ -259,19 +262,20 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_audio([b"pkt"])
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_sample_rate") == 16000
 
-    def test_audio_received__logs_debug(self, caplog):
+    @pytest.mark.asyncio
+    async def test_audio_received__logs_debug(self, caplog):
         """Log a debug message for each received audio frame."""
         import logging
 
         call = make_whisper_call(MagicMock())
         with caplog.at_level(logging.DEBUG, logger="voip.audio"):
-            with patch("asyncio.create_task"):
-                call.audio_received([b"opus_packet"])
-        assert any("Audio frame" in r.message for r in caplog.records)
+            call.audio_received(np.zeros(1, dtype=np.float32))
+            await asyncio.sleep(0)  # let the task run so coroutine is not left dangling
+        assert any("Audio received" in r.message for r in caplog.records)
 
 
 class TestBuildOggOpus:

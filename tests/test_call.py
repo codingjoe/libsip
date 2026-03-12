@@ -1,9 +1,10 @@
 """Tests for the SIP session and call handler hierarchy."""
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from voip.call import AudioCall
+from voip.audio import AudioCall
 from voip.rtp import RealtimeTransportProtocol
 from voip.sip.messages import Message, Request, Response
 from voip.sip.protocol import SIP, SessionInitiationProtocol
@@ -28,7 +29,8 @@ class TestAudioCall:
 
     def test_audio_received__noop_by_default(self):
         """audio_received is a no-op in the base AudioCall class."""
-        make_audio_call().audio_received([b"data"])  # must not raise
+        sentinel = object()
+        make_audio_call().audio_received(sentinel)  # must not raise
 
     def test_rtp_and_sip_stored_as_fields(self):
         """Rtp and sip back-references are stored as dataclass fields."""
@@ -97,7 +99,7 @@ class TestAudioCall:
             proto="RTP/AVP",
             fmt=[RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)],
         )
-        with caplog.at_level(logging.INFO, logger="voip.call"):
+        with caplog.at_level(logging.INFO, logger="voip.audio"):
             make_audio_call(media=media)
         assert any("PCMA" in r.message and "8000" in r.message for r in caplog.records)
 
@@ -105,28 +107,35 @@ class TestAudioCall:
         """chunk_duration defaults to 0 (per-packet mode)."""
         assert AudioCall.chunk_duration == 0
 
-    def test_datagram_received__forwards_audio_payload(self):
-        """datagram_received parses the RTP packet and calls audio_received."""
+    @pytest.mark.asyncio
+    async def test_datagram_received__forwards_audio_payload(self):
+        """datagram_received parses the RTP packet and calls audio_received after decode."""
         import struct  # noqa: PLC0415
 
-        received: list[list[bytes]] = []
+        DECODED = object()  # sentinel: returned by mocked _decode_raw
+        received: list = []
 
         class ConcreteCall(AudioCall):
-            def audio_received(self, packets: list[bytes]) -> None:
-                received.append(packets)
+            def _decode_raw(self, raw_packets: list[bytes]):
+                return DECODED  # skip real av decode in unit tests
+
+            def audio_received(self, audio) -> None:
+                received.append(audio)
 
         rtp_packet = struct.pack(">BBHII", 0x80, 111 & 0x7F, 1, 0, 0) + b"audio"
         call = ConcreteCall(rtp=MagicMock(), sip=MagicMock())
         call.datagram_received(rtp_packet, ("127.0.0.1", 5004))
-        assert received == [[b"audio"]]
+        await asyncio.sleep(0)  # let the decode task run
+        assert received == [DECODED]
 
-    def test_datagram_received__chunk_duration__buffers_until_threshold(self):
+    @pytest.mark.asyncio
+    async def test_datagram_received__chunk_duration__buffers_until_threshold(self):
         """Buffer packets and emit audio_received only when the threshold is reached."""
         import struct  # noqa: PLC0415
 
         from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: PLC0415
 
-        received: list[list[bytes]] = []
+        received: list = []
         media = MediaDescription(
             media="audio",
             port=0,
@@ -137,19 +146,25 @@ class TestAudioCall:
         class ChunkedCall(AudioCall):
             chunk_duration = 1  # 1 s @ 8 kHz / 160 samples = 50 packets
 
-            def audio_received(self, packets: list[bytes]) -> None:
-                received.append(packets)
+            def _decode_raw(self, raw_packets: list[bytes]):
+                return raw_packets  # skip real av decode; pass raw list as "audio"
+
+            def audio_received(self, audio) -> None:
+                received.append(audio)
 
         call = ChunkedCall(rtp=MagicMock(), sip=MagicMock(), media=media)
         assert call._packet_threshold == 50
         rtp_packet = struct.pack(">BBHII", 0x80, 8 & 0x7F, 1, 0, 0) + b"x"
         for _ in range(49):
             call.datagram_received(rtp_packet, ("127.0.0.1", 5004))
-        assert received == []
+        assert len(call._audio_buffer) == 49
+        assert received == []  # threshold not yet reached
         call.datagram_received(
             struct.pack(">BBHII", 0x80, 8 & 0x7F, 2, 0, 0) + b"last",
             ("127.0.0.1", 5004),
         )
+        assert len(call._audio_buffer) == 0  # buffer drained
+        await asyncio.sleep(0)  # let the decode task run
         assert len(received) == 1
         assert len(received[0]) == 50
 
@@ -330,11 +345,15 @@ class TestSIP:
 
     async def test_answer__rtp_receives_audio(self):
         """Deliver audio from RTP packets to the call's audio_received via the RTP socket."""
-        received_audio = []
+        received_payloads: list[bytes] = []
 
         class AudioCapture(AudioCall):
-            def audio_received(self, packets: list[bytes]) -> None:
-                received_audio.extend(packets)
+            def _decode_raw(self, raw_packets: list[bytes]):
+                # Skip real av decode; treat first payload as-is
+                return raw_packets[0] if raw_packets else b""
+
+            def audio_received(self, audio) -> None:
+                received_payloads.append(audio)
 
         protocol = SIP()
         send = MagicMock()
@@ -351,8 +370,6 @@ class TestSIP:
             if line.startswith("m=audio")
         )
         rtp_port = int(sdp_line.split()[1])
-
-        import asyncio
 
         loop = asyncio.get_running_loop()
         send_transport, _ = await loop.create_datagram_endpoint(
@@ -363,15 +380,18 @@ class TestSIP:
         send_transport.sendto(rtp_packet)
         await asyncio.sleep(0.05)
         send_transport.close()
-        assert received_audio == [b"audio"]
+        assert received_payloads == [b"audio"]
 
     async def test_answer__rtp_receives_multiple_packets(self):
         """Call audio_received with each RTP payload when multiple packets arrive."""
-        received_audio = []
+        received_payloads: list[bytes] = []
 
         class AudioCapture(AudioCall):
-            def audio_received(self, packets: list[bytes]) -> None:
-                received_audio.extend(packets)
+            def _decode_raw(self, raw_packets: list[bytes]):
+                return raw_packets[0] if raw_packets else b""
+
+            def audio_received(self, audio) -> None:
+                received_payloads.append(audio)
 
         protocol = SIP()
         send = MagicMock()
@@ -387,8 +407,6 @@ class TestSIP:
             if line.startswith("m=audio")
         )
         rtp_port = int(sdp_line.split()[1])
-
-        import asyncio
 
         loop = asyncio.get_running_loop()
         send_transport, _ = await loop.create_datagram_endpoint(
@@ -400,7 +418,7 @@ class TestSIP:
         send_transport.sendto(header + b"chunk2")
         await asyncio.sleep(0.05)
         send_transport.close()
-        assert received_audio == [b"chunk1", b"chunk2"]
+        assert received_payloads == [b"chunk1", b"chunk2"]
 
     async def test_answer__content_length_serialized(self):
         """Content-Length is automatically included when the response is serialized."""
@@ -602,12 +620,12 @@ class TestSIP:
             protocol.request_received(request, ("192.0.2.1", 5060))
 
     async def test_answer__via_call_received__schedules_answer(self):
-        """answer() schedules the async _answer task when called from call_received."""
+        """answer() is async; wrapping it in create_task from call_received works."""
         answered = []
 
         class MySIP(SIP):
             def call_received(self, request):
-                self.answer(request=request, call_class=AudioCall)
+                asyncio.create_task(self.answer(request=request, call_class=AudioCall))
 
             async def _answer(self, request, call_class):
                 answered.append((request, call_class))
@@ -618,7 +636,6 @@ class TestSIP:
         addr = ("192.0.2.1", 5060)
         protocol._request_addrs[request.headers["Call-ID"]] = addr
         protocol.call_received(request)
-        import asyncio
 
         await asyncio.sleep(0.01)
         assert len(answered) == 1

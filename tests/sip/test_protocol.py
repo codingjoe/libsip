@@ -4,7 +4,7 @@ import asyncio
 import errno
 
 import pytest
-from voip.call import AudioCall
+from voip.audio import AudioCall
 from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.messages import SessionDescription
 from voip.sdp.types import Timing

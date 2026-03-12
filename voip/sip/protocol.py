@@ -111,17 +111,24 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         self.password = password
         self.call_id = str(uuid.uuid4())
         self.cseq = 0
-        #: Shared RTP multiplexer and its transport, lazily created on the first
-        #: answered call and reused for all subsequent calls.
+        #: Shared RTP multiplexer and its transport, created eagerly in
+        #: :meth:`connection_made` and reused for all calls on this session.
         self._rtp_protocol: RealtimeTransportProtocol | None = None
         self._rtp_transport: asyncio.DatagramTransport | None = None
         #: Remote RTP address per call, used to unregister on BYE/CANCEL.
         self._call_rtp_addrs: dict[str, tuple[str, int] | None] = {}
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport; if registration params are set, send REGISTER."""
+        """Store the transport, start the RTP mux, and send REGISTER if configured."""
         logger.debug("SIP transport connected")
         self._transport = transport
+        # Start the shared RTP multiplexer immediately — before registration —
+        # so that the mux port is known and can be reused for all incoming calls
+        # on this session (including from multiple registered AoRs).
+        try:
+            asyncio.get_running_loop().create_task(self._start_rtp_mux())
+        except RuntimeError:
+            pass  # no running loop (e.g. synchronous test setup); mux created lazily
         if self.server_address is not None:
             self.register()
 
@@ -146,6 +153,19 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         """Remove the call handler registered with the shared RTP mux, if any."""
         if call_id in self._call_rtp_addrs and self._rtp_protocol is not None:
             self._rtp_protocol.unregister_call(self._call_rtp_addrs.pop(call_id))
+
+    async def _start_rtp_mux(self) -> None:
+        """Create the shared RTP multiplexer socket (idempotent)."""
+        if self._rtp_protocol is not None:
+            return
+        loop = asyncio.get_running_loop()
+        mux = RealtimeTransportProtocol()
+        self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
+            lambda: mux,
+            local_addr=("0.0.0.0", 0),  # noqa: S104
+        )
+        rtp_addr = self._rtp_transport.get_extra_info("sockname")
+        logger.debug("RTP mux listening on %s:%d", *rtp_addr)
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Dispatch a received SIP request to the appropriate handler."""
@@ -371,21 +391,31 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             request: The SIP CANCEL request.
         """
 
-    def answer(
+    async def answer(
         self, request: Request, *, call_class: type[Call]
     ) -> None:
         """Answer an incoming call by setting up RTP and sending 200 OK with SDP.
 
-        Schedules the asynchronous RTP setup and SIP response without blocking.
+        This coroutine can be awaited directly or wrapped in a task::
+
+            # inside a sync call_received:
+            asyncio.create_task(self.answer(request=request, call_class=MyCall))
+
+            # inside an async call_received:
+            await self.answer(request=request, call_class=MyCall)
 
         Args:
             request: The SIP INVITE request (from :meth:`call_received`).
-            call_class: A :class:`~voip.call.Call` subclass (typically
-                :class:`~voip.call.AudioCall`) to instantiate for the call.
+            call_class: A :class:`~voip.call.Call` subclass whose
+                :meth:`~voip.call.Call.negotiate_codec` selects the codec.
                 The class is constructed with ``rtp``, ``sip``, ``caller``,
                 and ``media`` keyword arguments.
+
+        Raises:
+            NotImplementedError: When :meth:`~voip.call.Call.negotiate_codec`
+                raises (no supported codec in the remote SDP offer).
         """
-        asyncio.get_running_loop().create_task(self._answer(request, call_class))
+        await self._answer(request, call_class)
 
     async def _answer(
         self, request: Request, call_class: type[Call]
@@ -408,7 +438,6 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             ),
             extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
         )
-        loop = asyncio.get_running_loop()
         remote_audio = next(
             (
                 m
@@ -417,13 +446,11 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
             ),
             None,
         )
-        # Delegate codec negotiation to the call class so that each subclass
-        # can declare its own codec preferences independently of the SIP layer.
-        # negotiate_codec raises NotImplementedError when no supported codec is
-        # found; when the INVITE contains no SDP audio at all, default to PCMU.
-        negotiate_fn = getattr(call_class, "negotiate_codec", None)
-        if remote_audio is not None and callable(negotiate_fn):
-            negotiated_media = negotiate_fn(remote_audio)
+        # Codec negotiation is delegated to the call class.  If the remote SDP
+        # offers no supported codec, negotiate_codec raises NotImplementedError
+        # and the exception propagates — the call is not answered.
+        if remote_audio is not None:
+            negotiated_media = call_class.negotiate_codec(remote_audio)
         else:
             negotiated_media = MediaDescription(
                 media="audio",
@@ -432,14 +459,9 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                 fmt=[RTPPayloadFormat.from_pt(0)],
             )
 
-        # Create the shared RTP multiplexer socket on the first call and reuse
-        # it for all subsequent calls on this SIP session.
-        if self._rtp_protocol is None:
-            mux = RealtimeTransportProtocol()
-            self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
-                lambda: mux,
-                local_addr=("0.0.0.0", 0),  # noqa: S104
-            )
+        # Ensure the shared RTP mux is ready (normally started in connection_made;
+        # this fallback handles cases where connection_made ran without a loop).
+        await self._start_rtp_mux()
 
         # Instantiate the per-call handler and register it with the shared mux.
         call_handler = call_class(
@@ -460,13 +482,14 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         self._call_rtp_addrs[call_id] = remote_rtp_addr
 
         local_rtp_addr = self._rtp_transport.get_extra_info("sockname")
+        # Use the RTP mux's local address as the authoritative IP for both the
+        # SDP connection/origin lines and the SIP Contact header so that the
+        # remote end reaches us at a consistent address.
         sdp_ip = local_rtp_addr[0]
         sdp_port = local_rtp_addr[1]
-        logger.debug("RTP multiplexer listening on %s:%s", sdp_ip, sdp_port)
-
-        # Contact header reflects the SIP socket's local address; the
-        # SIP carrier handles the external NAT mapping at the signalling layer.
-        sip_contact_addr = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
+        sip_local = self._transport.get_extra_info("sockname") or ("0.0.0.0", 5060)  # noqa: S104
+        contact_addr = (sdp_ip, sip_local[1])
+        logger.debug("RTP mux at %s:%s; contact %s:%s", sdp_ip, sdp_port, *contact_addr)
         record_route = request.headers.get("Record-Route")
         sess_id = str(secrets.randbelow(2**32) + 1)
         sdp_media_attributes = [
@@ -486,7 +509,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
                         call_id,
                     ),
                     **({"Record-Route": record_route} if record_route else {}),
-                    "Contact": f"<sip:{sip_contact_addr[0]}:{sip_contact_addr[1]}>",
+                    "Contact": f"<sip:{contact_addr[0]}:{contact_addr[1]}>",
                     "Allow": self.ALLOW,
                     "Supported": "replaces",
                     "Content-Type": "application/sdp",
