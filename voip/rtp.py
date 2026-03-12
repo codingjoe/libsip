@@ -83,8 +83,8 @@ class RealtimeTransportProtocol(STUNProtocol):
     #: Fixed RTP header size in bytes (RFC 3550 §5.1).
     rtp_header_size: int = 12
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, stun_server_address: tuple[str, int] | None = None) -> None:
+        super().__init__(stun_server_address=stun_server_address)
         #: Per-call handlers keyed by the remote ``(ip, port)`` address.
         #: ``None`` is a wildcard key for calls with an unknown remote address.
         self._calls: dict[tuple[str, int] | None, Call] = {}

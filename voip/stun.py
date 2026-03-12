@@ -139,6 +139,11 @@ class STUNProtocol(asyncio.DatagramProtocol):
     treated as STUN messages and routed to any pending :meth:`stun_discover`
     coroutines. All other datagrams are forwarded to :meth:`packet_received`.
 
+    When *stun_server_address* is provided, :meth:`stun_discover` is called
+    automatically in :meth:`connection_made` and the result is stored as
+    :attr:`public_address` so that subclasses can advertise the correct
+    routable address without any extra wiring.
+
     Subclass and override :meth:`packet_received` to handle your own traffic::
 
         class MyProtocol(STUNProtocol):
@@ -146,13 +151,50 @@ class STUNProtocol(asyncio.DatagramProtocol):
                 process(data)
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, stun_server_address: tuple[str, int] | None = None
+    ) -> None:
         super().__init__()
+        #: Optional STUN server used for automatic address discovery on connect.
+        self.stun_server_address = stun_server_address
+        #: Publicly routable ``(ip, port)`` discovered via STUN, or ``None``.
+        self.public_address: tuple[str, int] | None = None
+        #: Task that resolves :attr:`public_address`; set in :meth:`connection_made`.
+        self._stun_task: asyncio.Task[None] | None = None
         self._stun_pending: dict[bytes, asyncio.Future[tuple[str, int]]] = {}
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:  # type: ignore[override]
-        """Store the transport so that :meth:`stun_discover` can send through it."""
+        """Store the transport and, if configured, schedule STUN address discovery."""
         self._transport = transport
+        if self.stun_server_address is not None:
+            try:
+                self._stun_task = asyncio.get_running_loop().create_task(self._stun_init())
+            except RuntimeError:
+                pass  # no running loop in synchronous test setups
+
+    async def _stun_init(self) -> None:
+        """Discover and store :attr:`public_address` via STUN (runs on connect)."""
+        if self.stun_server_address is None:
+            return
+        host, port = self.stun_server_address
+        try:
+            self.public_address = await self.stun_discover(host, port)
+            logger.info(
+                "STUN: public address for %s is %s:%d",
+                type(self).__name__,
+                *self.public_address,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "STUN discovery failed for %s; public address unavailable",
+                type(self).__name__,
+                exc_info=True,
+            )
+
+    async def await_stun_discovery(self) -> None:
+        """Wait for the STUN discovery task to complete, if one is running."""
+        if self._stun_task is not None:
+            await self._stun_task
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Demultiplex STUN responses (RFC 7983) from other traffic.
