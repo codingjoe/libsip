@@ -66,19 +66,20 @@ def sip():
 main = voip
 
 
-def _parse_server(ctx, param, value: str) -> tuple[str, int]:
+def _parse_server(ctx, param, value: str, default_port=5060) -> tuple[str, int]:
     """Parse 'HOST[:PORT]' option into a (host, port) tuple."""
-    if ":" in value:
+    try:
         host, port_str = value.rsplit(":", 1)
-        return (host, int(port_str))
-    return (value, 5060)
+    except ValueError:
+        host, port_str = value, default_port
+    return host, int(port_str)
 
 
 def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
     """Parse the --stun-server option; return None when the value is 'none'."""
     if value is None or value.lower() == "none":
         return None
-    return _parse_server(ctx, param, value)
+    return _parse_server(ctx, param, value, default_port=3478)
 
 
 @sip.command()
