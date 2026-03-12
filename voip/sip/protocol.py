@@ -39,10 +39,6 @@ logger = logging.getLogger("voip.sip")
 
 __all__ = ["SIP", "SessionInitiationProtocol"]
 
-#: Maximum number of answered Call-IDs to remember for retransmission suppression.
-#: Oldest entries are evicted first when this limit is reached.
-_MAX_ANSWERED_CALLS: int = 1000
-
 
 def _mask_caller(header: str) -> str:
     """Return a privacy-safe label from a SIP From/To header value.
@@ -106,6 +102,7 @@ class SessionInitiationProtocol(STUNProtocol):
     _answered_calls: collections.OrderedDict[str, None] = dataclasses.field(
         init=False, default_factory=collections.OrderedDict
     )
+    answered_call_backlog: int = 1000
     _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
     _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
         init=False, default=None
@@ -200,7 +197,7 @@ class SessionInitiationProtocol(STUNProtocol):
         if call_id in self._answered_calls:
             self._answered_calls.move_to_end(call_id)
         else:
-            if len(self._answered_calls) >= _MAX_ANSWERED_CALLS:
+            if len(self._answered_calls) >= self.answered_call_backlog:
                 self._answered_calls.popitem(last=False)
             self._answered_calls[call_id] = None
 
