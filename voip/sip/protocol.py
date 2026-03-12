@@ -136,7 +136,7 @@ class SessionInitiationProtocol(STUNProtocol):
         sending REGISTER so that the Contact header contains the correct public
         address.
         """
-        await self.public_address
+        await asyncio.wait_for(self.public_address, 2)
         await self._start_rtp_mux()
         await self.register()
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import datetime
 import enum
 import logging
 import socket
@@ -55,7 +54,6 @@ class STUNProtocol(asyncio.DatagramProtocol):
     """
 
     stun_server_address: tuple[str, int] = "stun.cloudflare.com", 3478
-    stun_server_timeout: datetime.timedelta = datetime.timedelta(seconds=3)
     public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
     _stun_pending: dict[bytes, asyncio.Future[tuple[str, int]]] = dataclasses.field(
         init=False, default_factory=dict
