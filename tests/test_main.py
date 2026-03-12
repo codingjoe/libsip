@@ -43,6 +43,27 @@ class TestParseServer:
         )
 
 
+class TestParseStunServer:
+    def test_parse_stun_server__none_disables_stun(self):
+        """Return None when STUN server is not configured."""
+        from voip.__main__ import _parse_stun_server
+
+        assert _parse_stun_server(None, None, None) is None
+
+    def test_parse_stun_server__string_none_disables_stun(self):
+        """Return None when STUN server is explicitly disabled."""
+        from voip.__main__ import _parse_stun_server
+
+        assert _parse_stun_server(None, None, "none") is None
+
+    def test_parse_stun_server__without_port_uses_stun_default(self):
+        """Return port 3478 when no port is specified for STUN."""
+        from voip.__main__ import _parse_stun_server
+
+        assert _parse_stun_server(None, None, "stun.example.com") == (
+            "stun.example.com",
+            3478,
+        )
 class TestVoIPCommand:
     def test_voip__verbose_flag(self):
         """Accept -v flag without error."""
