@@ -553,3 +553,15 @@ class TestNegotiateCodec:
         media = self._make_media(["0", "8", "111"])
         result = PCMAOnlyCall.negotiate_codec(media)
         assert result.fmt[0].payload_type == 8
+
+    def test_preferred_codecs__class_attribute(self):
+        """PREFERRED_CODECS is a class attribute on AudioCall with Opus first."""
+        from voip.sdp.types import RTPPayloadFormat  # noqa: PLC0415
+
+        codecs = AudioCall.PREFERRED_CODECS
+        assert isinstance(codecs, list)
+        assert all(isinstance(c, RTPPayloadFormat) for c in codecs)
+        pts = [c.payload_type for c in codecs]
+        assert pts[0] == 111  # Opus is highest priority
+        assert 8 in pts  # PCMA present
+        assert 0 in pts  # PCMU present

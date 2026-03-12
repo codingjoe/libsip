@@ -6,7 +6,6 @@ import errno
 from unittest.mock import MagicMock
 
 import pytest
-from voip.audio import AudioCall
 from voip.call import Call
 from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.messages import SessionDescription
@@ -497,7 +496,7 @@ class TestAnswer:
         # Resolve the SIP protocol's own public address (for Contact header).
         protocol.public_address = loop.create_future()
         protocol.public_address.set_result(("127.0.0.1", 5060))
-        await protocol._answer(invite, AudioCall)
+        await protocol._answer(invite, _CodecAwareCall)
 
     @pytest.mark.asyncio
     async def test_answer__selects_pcma_from_offer(self, fake_rtp_transport):
@@ -606,18 +605,6 @@ class TestAnswer:
         assert (
             response.body.media[0].fmt[0].payload_type == 100
         )  # Opus at non-standard PT
-
-    def test_preferred_codecs__class_attribute(self):
-        """PREFERRED_CODECS is a class attribute on AudioCall with Opus first."""
-        from voip.sdp.types import RTPPayloadFormat  # noqa: PLC0415
-
-        codecs = AudioCall.PREFERRED_CODECS
-        assert isinstance(codecs, list)
-        assert all(isinstance(c, RTPPayloadFormat) for c in codecs)
-        pts = [c.payload_type for c in codecs]
-        assert pts[0] == 111  # Opus is highest priority
-        assert 8 in pts  # PCMA present
-        assert 0 in pts  # PCMU present
 
     @pytest.mark.asyncio
     async def test_answer__unsupported_codec__raises(self, fake_rtp_transport):
@@ -977,6 +964,55 @@ class _MinimalCall(Call):
             port=0,
             proto="RTP/AVP",
             fmt=[RTPPayloadFormat.from_pt(0)],
+        )
+
+
+@dataclasses.dataclass
+class _CodecAwareCall(Call):
+    """Call subclass that performs real codec negotiation for SIP answer tests.
+
+    Mirrors AudioCall.PREFERRED_CODECS without importing voip.audio.
+    """
+
+    @classmethod
+    def negotiate_codec(cls, remote_media):
+        from voip.rtp import RTPPayloadType  # noqa: PLC0415
+        from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: PLC0415
+
+        preferred = [
+            RTPPayloadFormat(
+                payload_type=RTPPayloadType.OPUS,
+                encoding_name="opus",
+                sample_rate=48000,
+                channels=2,
+            ),
+            RTPPayloadFormat(payload_type=RTPPayloadType.G722),
+            RTPPayloadFormat(payload_type=RTPPayloadType.PCMA),
+            RTPPayloadFormat(payload_type=RTPPayloadType.PCMU),
+        ]
+        if not remote_media.fmt:
+            raise NotImplementedError("Remote SDP offer contains no audio formats")
+        remote_pts = {f.payload_type for f in remote_media.fmt}
+        for codec in preferred:
+            if codec.payload_type in remote_pts:
+                remote_fmt = remote_media.get_format(codec.payload_type)
+                chosen = (
+                    remote_fmt if remote_fmt and remote_fmt.encoding_name else codec
+                )
+                return MediaDescription(
+                    media="audio", port=0, proto="RTP/AVP", fmt=[chosen]
+                )
+            for rfmt in remote_media.fmt:
+                if (
+                    rfmt.encoding_name
+                    and rfmt.encoding_name.lower()
+                    == (codec.encoding_name or "").lower()
+                ):
+                    return MediaDescription(
+                        media="audio", port=0, proto="RTP/AVP", fmt=[rfmt]
+                    )
+        raise NotImplementedError(
+            f"No supported codec in {[f.payload_type for f in remote_media.fmt]!r}"
         )
 
 
