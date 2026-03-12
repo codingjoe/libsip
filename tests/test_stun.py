@@ -69,21 +69,24 @@ class TestSTUNProtocol:
         """STUNProtocol is an asyncio.DatagramProtocol subclass."""
         assert issubclass(STUNProtocol, asyncio.DatagramProtocol)
 
-    async def test_connection_made__stun_disabled__sends_no_request(self):
-        """When stun_server_address is None, no STUN request is sent and stun_connection_made is not called."""
-        called: list[tuple] = []
+    async def test_connection_made__stun_disabled__calls_stun_connection_made(self):
+        """When stun_server_address is None, stun_connection_made is called with the local addr."""
+        received: list[tuple] = []
 
         class ConcreteProto(STUNProtocol):
             def stun_connection_made(self, transport, addr):
-                called.append((transport, addr))
+                received.append((transport, addr))
 
         proto = ConcreteProto(stun_server_address=None)
         transport = unittest.mock.MagicMock(spec=asyncio.DatagramTransport)
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         proto.connection_made(transport)
-        # No STUN request sent (no sendto call to a STUN server).
+        # No STUN request was sent — the callback is immediate.
         transport.sendto.assert_not_called()
-        # stun_connection_made is NOT called by the base class; subclasses handle it.
-        assert called == []
+        # stun_connection_made is called once with the local socket address.
+        assert len(received) == 1
+        assert received[0][0] is transport
+        assert received[0][1] == ("127.0.0.1", 5060)
 
     async def test_connection_made__stun_enabled__sends_binding_request(self):
         """When stun_server_address is set, a STUN Binding Request is sent."""

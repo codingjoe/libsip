@@ -6,7 +6,6 @@ See also: https://datatracker.ietf.org/doc/html/rfc3550#section-5
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import enum
 import json
@@ -84,47 +83,9 @@ class RealtimeTransportProtocol(STUNProtocol):
     """
 
     rtp_header_size: typing.ClassVar[int] = 12
-    transport: asyncio.DatagramTransport = dataclasses.field(init=False)
-    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
     calls: dict[tuple[str, int] | None, Call] = dataclasses.field(
         init=False, default_factory=dict
     )
-
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport, create :attr:`public_address`, and start STUN discovery."""
-        self.transport = transport
-        self.public_address = asyncio.get_running_loop().create_future()
-        STUNProtocol.connection_made(self, transport)
-        if self.stun_server_address is None:
-            # No STUN: resolve immediately with the local socket address.
-            self.public_address.set_result(transport.get_extra_info("sockname"))
-
-    def stun_connection_made(
-        self,
-        transport: asyncio.DatagramTransport,
-        addr: tuple[str, int],
-    ) -> None:
-        """Resolve :attr:`public_address` with the public address from STUN."""
-        if not self.public_address.done():
-            self.public_address.set_result(addr)
-
-    def send(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Send a raw datagram through the shared UDP socket.
-
-        Args:
-            data: Raw bytes to transmit.
-            addr: Destination ``(host, port)``.
-        """
-        self.transport.sendto(data, addr)
-
-    def close(self) -> None:
-        """Close the underlying UDP transport."""
-        STUNProtocol.close(self)
-
-    def connection_lost(self, exc: Exception | None) -> None:
-        """Clear transport references on disconnect."""
-        STUNProtocol.connection_lost(self, exc)
-        self.transport = None
 
     def register_call(
         self,

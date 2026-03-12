@@ -113,8 +113,6 @@ class SessionInitiationProtocol(STUNProtocol):
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
-    transport: asyncio.DatagramTransport = dataclasses.field(init=False)
-    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
     server_address: tuple[str, int]
     aor: str
     username: str | None = None
@@ -125,30 +123,12 @@ class SessionInitiationProtocol(STUNProtocol):
     def __post_init__(self):
         self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
 
-    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport, create :attr:`public_address`, and start STUN discovery."""
-        logger.debug("SIP transport connected")
-        self.transport = transport
-        self.public_address = asyncio.get_running_loop().create_future()
-        STUNProtocol.connection_made(self, transport)
-        if self.stun_server_address is None:
-            # No STUN: use the local socket address and start up immediately.
-            self.public_address.set_result(transport.get_extra_info("sockname"))
-            try:
-                asyncio.get_running_loop().create_task(self._initialize())
-            except RuntimeError:
-                pass  # no running loop in synchronous test setups
-
     def stun_connection_made(
         self,
         transport: asyncio.DatagramTransport,
         addr: tuple[str, int],
     ) -> None:
-        """Resolve :attr:`public_address` and begin initialisation on STUN completion."""
-        if not self.public_address.done():
-            self.public_address.set_result(addr)
-        # Schedule RTP mux creation and (optionally) registration in a single task so
-        # that both the SIP and RTP public addresses are known before we send REGISTER.
+        """Schedule RTP mux creation and SIP registration on socket readiness."""
         try:
             asyncio.get_running_loop().create_task(self._initialize())
         except RuntimeError:
@@ -179,11 +159,6 @@ class SessionInitiationProtocol(STUNProtocol):
         """Serialize and send a SIP message to the given address."""
         logger.debug("Sending %r to %r", message, addr)
         self.transport.sendto(bytes(message), addr)
-
-    def close(self) -> None:
-        """Close the underlying UDP transport."""
-        if self.transport is not None:
-            self.transport.close()
 
     def _cleanup_rtp_call(self, call_id: str) -> None:
         """Remove the call handler registered with the shared RTP mux, if any."""
