@@ -397,7 +397,9 @@ class WhisperCall(AudioCall):
         Args:
             audio: Float32 mono PCM array at :data:`SAMPLE_RATE` Hz.
         """
-        logger.debug("Audio received: %d samples (%.1f s)", len(audio), len(audio) / SAMPLE_RATE)
+        logger.debug(
+            "Audio received: %d samples (%.1f s)", len(audio), len(audio) / SAMPLE_RATE
+        )
         asyncio.create_task(self._transcribe(audio))
 
     async def _transcribe(self, audio: np.ndarray) -> None:
