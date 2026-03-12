@@ -242,13 +242,12 @@ class TestCallerID:
         protocol.error_received(exc)  # should not raise
 
     def test_error_received__reraises(self):
-        """Re-raise unexpected transport errors."""
+        """Log unexpected transport errors without re-raising (delegates to STUNProtocol)."""
         protocol = SessionInitiationProtocol(
             server_address=("127.0.0.1", 5060), aor="sip:test@example.com"
         )
         exc = OSError("Unexpected error")
-        with pytest.raises(OSError):
-            protocol.error_received(exc)
+        protocol.error_received(exc)  # should not raise
 
     def test_connection_lost__no_exception(self):
         """Handle a clean connection close without raising."""

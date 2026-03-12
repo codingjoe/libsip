@@ -410,8 +410,14 @@ class WhisperCall(AudioCall):
             len(audio),
             len(audio) / SAMPLE_RATE,
         )
-        text = await loop.run_in_executor(None, self._run_transcription, audio)
-        self.transcription_received(text.strip())
+        try:
+            text = await loop.run_in_executor(None, self._run_transcription, audio)
+            self.transcription_received(text.strip())
+        except asyncio.CancelledError:
+            logger.debug("Transcription task was cancelled", exc_info=True)
+            raise
+        except Exception:
+            logger.exception("Error while transcribing audio chunk")
 
     def _run_transcription(self, audio: np.ndarray) -> str:
         """Transcribe a float32 PCM array using the Whisper model.

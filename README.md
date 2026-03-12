@@ -64,5 +64,5 @@ async def main():
 asyncio.run(main())
 ```
 
-For raw audio access without transcription, subclass `RTP` and override
-`audio_received(self, packets: list[bytes])` instead.
+For raw audio access without transcription, subclass `AudioCall` and override
+`audio_received(self, audio: np.ndarray)` instead.
