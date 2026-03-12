@@ -113,6 +113,8 @@ class SessionInitiationProtocol(STUNProtocol):
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
+    transport: asyncio.DatagramTransport = dataclasses.field(init=False)
+    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
     server_address: tuple[str, int]
     aor: str
     username: str | None = None
@@ -124,11 +126,20 @@ class SessionInitiationProtocol(STUNProtocol):
         self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        """Store the transport, start STUN (if configured), and begin initialization."""
+        """Create :attr:`public_address` future and start STUN discovery."""
         logger.debug("SIP transport connected")
-        STUNProtocol.connection_made(
-            self, transport
-        )  # STUNProtocol: stores transport and schedules STUN
+        self.public_address = asyncio.get_running_loop().create_future()
+        STUNProtocol.connection_made(self, transport)
+
+    def stun_connection_made(
+        self,
+        transport: asyncio.DatagramTransport,
+        addr: tuple[str, int],
+    ) -> None:
+        """Store transport, resolve :attr:`public_address`, and begin initialisation."""
+        self.transport = transport
+        if not self.public_address.done():
+            self.public_address.set_result(addr)
         # Schedule RTP mux creation and (optionally) registration in a single task so
         # that both the SIP and RTP public addresses are known before we send REGISTER.
         try:
@@ -139,11 +150,9 @@ class SessionInitiationProtocol(STUNProtocol):
     async def _initialize(self) -> None:
         """Set up the RTP mux and register with the carrier (in that order).
 
-        Waits for STUN on both the SIP and RTP sockets (if configured) before
-        sending REGISTER so that the Contact header contains the correct public
-        address.
+        Scheduled by :meth:`stun_connection_made` after STUN completes, so
+        :attr:`public_address` is already resolved when :meth:`register` runs.
         """
-        await asyncio.wait_for(self.public_address, 2)
         await self._start_rtp_mux()
         await self.register()
 
@@ -164,6 +173,11 @@ class SessionInitiationProtocol(STUNProtocol):
         logger.debug("Sending %r to %r", message, addr)
         self.transport.sendto(bytes(message), addr)
 
+    def close(self) -> None:
+        """Close the underlying UDP transport."""
+        if self.transport is not None:
+            self.transport.close()
+
     def _cleanup_rtp_call(self, call_id: str) -> None:
         """Remove the call handler registered with the shared RTP mux, if any."""
         if call_id in self._call_rtp_addrs and self._rtp_protocol is not None:
@@ -173,9 +187,8 @@ class SessionInitiationProtocol(STUNProtocol):
         """Create and connect the shared RTP multiplexer socket (idempotent).
 
         Passes :attr:`stun_server_address` to the mux so that it discovers its
-        own public address automatically on ``connection_made``.  Waits for both
-        the SIP and RTP STUN tasks to settle before returning so that callers
-        can rely on :attr:`public_address` and
+        own public address automatically on ``connection_made``.  Waits for the
+        RTP STUN task to settle before returning so that callers can rely on
         ``self._rtp_protocol.public_address`` being populated.
         """
         if self._rtp_protocol is not None:
@@ -756,6 +769,7 @@ class SessionInitiationProtocol(STUNProtocol):
         if exc is not None:
             logger.exception("Connection lost", exc_info=exc)
         self.transport = None
+        STUNProtocol.connection_lost(self, exc)
 
 
 #: Short alias for :class:`SessionInitiationProtocol`.

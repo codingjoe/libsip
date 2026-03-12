@@ -6,6 +6,7 @@ See also: https://datatracker.ietf.org/doc/html/rfc3550#section-5
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import enum
 import json
@@ -83,9 +84,26 @@ class RealtimeTransportProtocol(STUNProtocol):
     """
 
     rtp_header_size: typing.ClassVar[int] = 12
+    transport: asyncio.DatagramTransport = dataclasses.field(init=False)
+    public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(init=False)
     calls: dict[tuple[str, int] | None, Call] = dataclasses.field(
         init=False, default_factory=dict
     )
+
+    def connection_made(self, transport: asyncio.DatagramTransport) -> None:
+        """Create the :attr:`public_address` future and start STUN discovery."""
+        self.public_address = asyncio.get_running_loop().create_future()
+        STUNProtocol.connection_made(self, transport)
+
+    def stun_connection_made(
+        self,
+        transport: asyncio.DatagramTransport,
+        addr: tuple[str, int],
+    ) -> None:
+        """Store the transport and resolve :attr:`public_address` on STUN completion."""
+        self.transport = transport
+        if not self.public_address.done():
+            self.public_address.set_result(addr)
 
     def send(self, data: bytes, addr: tuple[str, int]) -> None:
         """Send a raw datagram through the shared UDP socket.
@@ -95,6 +113,15 @@ class RealtimeTransportProtocol(STUNProtocol):
             addr: Destination ``(host, port)``.
         """
         self.transport.sendto(data, addr)
+
+    def close(self) -> None:
+        """Close the underlying UDP transport."""
+        STUNProtocol.close(self)
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        """Clear transport references on disconnect."""
+        STUNProtocol.connection_lost(self, exc)
+        self.transport = None
 
     def register_call(
         self,

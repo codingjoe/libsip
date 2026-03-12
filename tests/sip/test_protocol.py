@@ -1037,18 +1037,28 @@ class TestSIPProtocol:
             self._sent.append((message, addr))
 
     async def test_connection_made__stores_transport(self):
-        """Store the transport when a connection is established."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        """Store the transport when a connection is established (STUN disabled)."""
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
         assert protocol.transport is transport
 
     async def test_send__serializes_and_forwards_to_transport(self):
         """Serialize the message and forward it to the underlying transport."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
-        transport.sendto.reset_mock()  # clear the STUN request call
+        transport.sendto.reset_mock()  # clear any calls made during connection_made
         response = Response(status_code=200, reason="OK")
         addr = ("192.0.2.1", 5060)
         protocol.send(response, addr)
@@ -1461,8 +1471,13 @@ class TestSIPProtocol:
 
     async def test_datagram_received__keepalive__sends_pong(self):
         """Double-CRLF keepalive (RFC 5626 §4.4.1) is answered with a single-CRLF pong."""
-        protocol = SIP(server_address=("127.0.0.1", 5060), aor="sip:test@example.com")
+        protocol = SIP(
+            server_address=("127.0.0.1", 5060),
+            aor="sip:test@example.com",
+            stun_server_address=None,
+        )
         transport = MagicMock()
+        transport.get_extra_info.return_value = ("127.0.0.1", 5060)
         protocol.connection_made(transport)
         transport.sendto.reset_mock()
         addr = ("192.0.2.1", 5060)
@@ -1519,7 +1534,7 @@ class TestRegistration:
         assert p.registrar_uri == "sip:example.com:5080"
 
     async def test_connection_made__sends_register(self):
-        """Send a REGISTER request immediately when connection is established."""
+        """Send a REGISTER request when STUN completes after connection is established."""
 
         class _SessionNoRTP(SessionInitiationProtocol):
             async def _start_rtp_mux(self):
@@ -1530,10 +1545,10 @@ class TestRegistration:
             aor="sip:alice@example.com",
             username="alice",
             password="secret",  # noqa: S106
+            stun_server_address=None,  # immediately triggers stun_connection_made
         )
         transport = make_mock_transport()
         p.connection_made(transport)
-        p.public_address.set_result(("127.0.0.1", 5060))
         await asyncio.sleep(0.05)
         transport.sendto.assert_called()
         data, addr = transport.sendto.call_args[0]
