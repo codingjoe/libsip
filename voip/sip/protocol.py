@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import secrets
+import socket
 import typing
 import uuid
 
@@ -109,12 +110,15 @@ class SessionInitiationProtocol(STUNProtocol):
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
-    server_address: tuple[str, int] | None = dataclasses.field(default=None)
-    aor: str | None = dataclasses.field(default=None)
-    username: str | None = dataclasses.field(default=None)
-    password: str | None = dataclasses.field(default=None)
-    call_id: str = dataclasses.field(init=False, default_factory=uuid.uuid4)
+    server_address: tuple[str, int]
+    aor: str
+    username: str | None = None
+    password: str | None = None
+    call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
+
+    def __post_init__(self):
+        self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         """Store the transport, start STUN (if configured), and begin initialization."""
@@ -304,8 +308,6 @@ class SessionInitiationProtocol(STUNProtocol):
 
         Only processes responses when registration parameters are configured.
         """
-        if self.server_address is None:
-            return  # no registration active; ignore unsolicited responses
         if response.status_code == Status["OK"] and "REGISTER" in response.headers.get(
             "CSeq", ""
         ):
@@ -472,10 +474,6 @@ class SessionInitiationProtocol(STUNProtocol):
                 proto="RTP/AVP",
                 fmt=[RTPPayloadFormat.from_pt(0)],
             )
-
-        # Ensure the shared RTP mux is ready (normally started in connection_made;
-        # this fallback handles cases where connection_made ran without a loop).
-        await self._start_rtp_mux()
 
         # Instantiate the per-call handler and register it with the shared mux.
         call_handler = call_class(
