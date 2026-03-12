@@ -128,7 +128,7 @@ class SessionInitiationProtocol(asyncio.DatagramProtocol):
         try:
             asyncio.get_running_loop().create_task(self._start_rtp_mux())
         except RuntimeError:
-            pass  # no running loop (e.g. synchronous test setup); mux created lazily
+            pass  # no running loop (e.g. synchronous test setup); mux created lazily in _answer()
         if self.server_address is not None:
             self.register()
 

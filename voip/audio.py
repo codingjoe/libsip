@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import struct
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 import av
 import numpy as np
@@ -26,9 +26,6 @@ from faster_whisper import WhisperModel
 from voip.call import Call
 from voip.rtp import RTPPacket, RTPPayloadType
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = ["AudioCall", "WhisperCall"]
 
@@ -310,9 +307,12 @@ class AudioCall(Call):
                 )
             case _:
                 encoding_name = encoding or str(self._payload_type)
+                supported = [
+                    c.encoding_name for c in self.PREFERRED_CODECS if c.encoding_name
+                ]
                 raise NotImplementedError(
                     f"Unsupported codec: {encoding_name!r}. "
-                    "Supported: opus, g722, pcma, pcmu."
+                    f"Supported: {', '.join(supported)}."
                 )
 
     def _decode_via_av(
