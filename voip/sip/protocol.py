@@ -348,10 +348,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
         Only processes responses when registration parameters are configured.
         """
-        if (
-            response.status_code == Status["OK"]
-            and response.headers.get("CSeq", "").split()[-1:] == ["REGISTER"]
-        ):
+        if response.status_code == Status["OK"] and response.headers.get(
+            "CSeq", ""
+        ).split()[-1:] == ["REGISTER"]:
             logger.info("Registration successful")
             self.registered()
             return
