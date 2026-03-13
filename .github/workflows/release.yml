@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
-      - run: uv run mkdocs build
+      - run: uv run --group docs mkdocs build
       - uses: actions/upload-pages-artifact@v4
         with:
           path: site
