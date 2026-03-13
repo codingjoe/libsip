@@ -30,7 +30,7 @@ from voip.sdp.types import (
     Timing,
 )
 from voip.srtp import SRTPSession
-from voip.types import DigestQoP
+from voip.types import DigestAlgorithm, DigestQoP
 
 from .messages import Message, Request, Response
 from .types import CallerID, Status
@@ -370,6 +370,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             realm = params.get("realm", "")
             nonce = params.get("nonce", "")
             opaque = params.get("opaque")
+            algorithm = params.get("algorithm", DigestAlgorithm.SHA_256)
             qop_options = params.get("qop", "")
             qop = (
                 DigestQoP.AUTH.value
@@ -385,6 +386,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 nonce=nonce,
                 method="REGISTER",
                 uri=self.registrar_uri,
+                algorithm=algorithm,
                 qop=qop,
                 nc=nc,
                 cnonce=cnonce,
@@ -392,7 +394,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             auth_value = (
                 f'Digest username="{self.username}", realm="{realm}", '
                 f'nonce="{nonce}", uri="{self.registrar_uri}", '
-                f'response="{digest}", algorithm="MD5"'
+                f'response="{digest}", algorithm="{algorithm}"'
             )
             if qop:
                 auth_value += f', qop={qop}, nc={nc}, cnonce="{cnonce}"'
@@ -762,8 +764,19 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 params[key.strip()] = value.strip().strip('"')
         return params
 
-    @staticmethod
+    #: Map from :class:`~voip.types.DigestAlgorithm` to the hashlib name.
+    _DIGEST_HASH_NAME: typing.ClassVar[dict[str, str]] = {
+        DigestAlgorithm.MD5: "md5",
+        DigestAlgorithm.MD5_SESS: "md5",
+        DigestAlgorithm.SHA_256: "sha256",
+        DigestAlgorithm.SHA_256_SESS: "sha256",
+        DigestAlgorithm.SHA_512_256: "sha512_256",
+        DigestAlgorithm.SHA_512_256_SESS: "sha512_256",
+    }
+
+    @classmethod
     def digest_response(
+        cls,
         *,
         username: str,
         password: str,
@@ -771,18 +784,36 @@ class SessionInitiationProtocol(asyncio.Protocol):
         nonce: str,
         method: str,
         uri: str,
+        algorithm: str = DigestAlgorithm.SHA_256,
         qop: str | None = None,
         nc: str = "00000001",
         cnonce: str | None = None,
     ) -> str:
-        """Compute an RFC 2617 / RFC 3261 §22 MD5 digest response."""
-        ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()  # noqa: S324
-        ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()  # noqa: S324
+        """Compute a SIP digest response per RFC 3261 §22 and RFC 8760.
+
+        RFC 8760 deprecates MD5 and mandates support for SHA-256 and
+        SHA-512-256.  The ``algorithm`` parameter selects the hash function;
+        it defaults to ``SHA-256``.
+
+        Raises:
+            ValueError: If ``algorithm`` is not a recognised :class:`DigestAlgorithm`.
+        """
+        try:
+            hash_name = cls._DIGEST_HASH_NAME[algorithm]
+        except KeyError:
+            raise ValueError(f"Unsupported digest algorithm: {algorithm!r}") from None
+        is_sess = algorithm.endswith("-sess")
+
+        def h(data: str) -> str:
+            return hashlib.new(hash_name, data.encode()).hexdigest()
+
+        ha1 = h(f"{username}:{realm}:{password}")
+        if is_sess:
+            ha1 = h(f"{ha1}:{nonce}:{cnonce}")
+        ha2 = h(f"{method}:{uri}")
         if qop in (DigestQoP.AUTH, DigestQoP.AUTH_INT):
-            return hashlib.md5(  # noqa: S324
-                f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}".encode()
-            ).hexdigest()
-        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()  # noqa: S324
+            return h(f"{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}")
+        return h(f"{ha1}:{nonce}:{ha2}")
 
     def error_received(self, exc: Exception) -> None:
         """Handle a transport-level error.

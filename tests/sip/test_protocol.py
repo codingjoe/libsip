@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 import errno
+import hashlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from voip.sdp.types import Timing
 from voip.sip.messages import Message, Request, Response
 from voip.sip.protocol import SIP, SessionInitiationProtocol, _mask_caller
 from voip.sip.types import CallerID
+from voip.types import DigestAlgorithm
 
 INVITE_WITH_PCMA = (
     b"INVITE sip:bob@biloxi.com SIP/2.0\r\n"
@@ -1754,7 +1756,7 @@ class TestRegistration:
         assert b'username="alice"' in data
         assert b'realm="example.com"' in data
         assert b'nonce="abc123"' in data
-        assert b'algorithm="MD5"' in data
+        assert b'algorithm="SHA-256"' in data
 
     async def test_response_received__407_retries_with_proxy_authorization(self):
         """Receiving 407 triggers a re-REGISTER with a Proxy-Authorization header."""
@@ -1932,3 +1934,118 @@ class TestRegistration:
                     ("192.0.2.2", 5060),
                 )
         assert any("500" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Tests for digest_response (RFC 3261 §22, RFC 8760)
+# ---------------------------------------------------------------------------
+
+
+class TestDigestResponse:
+    """Unit tests for SessionInitiationProtocol.digest_response."""
+
+    def test_default_algorithm_is_sha256(self):
+        """digest_response uses SHA-256 by default (RFC 8760)."""
+        result = SessionInitiationProtocol.digest_response(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+        )
+        # SHA-256 produces a 64-character hex digest
+        assert len(result) == 64
+
+    def test_sha256_response_is_correct(self):
+        """SHA-256 digest is computed from the correct input per RFC 8760."""
+        username, password, realm, nonce, method, uri = (
+            "alice",
+            "secret",
+            "example.com",
+            "abc123",
+            "REGISTER",
+            "sip:example.com",
+        )
+        ha1 = hashlib.sha256(f"{username}:{realm}:{password}".encode()).hexdigest()
+        ha2 = hashlib.sha256(f"{method}:{uri}".encode()).hexdigest()
+        expected = hashlib.sha256(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+
+        result = SessionInitiationProtocol.digest_response(
+            username=username,
+            password=password,  # noqa: S106
+            realm=realm,
+            nonce=nonce,
+            method=method,
+            uri=uri,
+            algorithm=DigestAlgorithm.SHA_256,
+        )
+        assert result == expected
+
+    def test_md5_response_is_32_hex_chars(self):
+        """MD5 algorithm still produces a valid 32-character hex digest."""
+        result = SessionInitiationProtocol.digest_response(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+            algorithm=DigestAlgorithm.MD5,
+        )
+        assert len(result) == 32
+
+    def test_sha512_256_response_is_64_hex_chars(self):
+        """SHA-512-256 produces a 64-character hex digest."""
+        result = SessionInitiationProtocol.digest_response(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+            algorithm=DigestAlgorithm.SHA_512_256,
+        )
+        assert len(result) == 64
+
+    def test_algorithms_produce_distinct_responses(self):
+        """Different algorithms produce distinct digest values."""
+        digest_params = dict(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+        )
+        r_md5 = SessionInitiationProtocol.digest_response(
+            **digest_params, algorithm=DigestAlgorithm.MD5
+        )
+        r_sha256 = SessionInitiationProtocol.digest_response(
+            **digest_params, algorithm=DigestAlgorithm.SHA_256
+        )
+        r_sha512 = SessionInitiationProtocol.digest_response(
+            **digest_params, algorithm=DigestAlgorithm.SHA_512_256
+        )
+        assert r_md5 != r_sha256
+        assert r_sha256 != r_sha512
+
+    async def test_response_received__401_uses_server_algorithm(self):
+        """401 challenge with algorithm=SHA-256 causes Authorization to echo SHA-256."""
+        p = make_register_session(username="alice", password="secret")  # noqa: S106
+        transport = make_mock_transport()
+        p.transport = transport
+        p.local_address = ("127.0.0.1", 5061)
+        challenge = 'Digest realm="example.com", nonce="abc123", algorithm="SHA-256"'
+        p.response_received(
+            Response(
+                status_code=401,
+                reason="Unauthorized",
+                headers={"WWW-Authenticate": challenge, "CSeq": "1 REGISTER"},
+            ),
+            ("192.0.2.2", 5061),
+        )
+        await asyncio.sleep(0.05)
+        (data,) = transport.write.call_args[0]
+        assert b'algorithm="SHA-256"' in data
+        assert b'algorithm="MD5"' not in data
