@@ -403,11 +403,11 @@ class WhisperCall(AudioCall):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if isinstance(self.model, WhisperModel):
-            self._whisper_model = self.model
-        else:
+        if isinstance(self.model, str):
             logger.debug("Loading Whisper model %r", self.model)
             self._whisper_model = WhisperModel(self.model)
+        else:
+            self._whisper_model = self.model
 
     def audio_received(self, audio: np.ndarray) -> None:
         """Schedule async transcription for a decoded audio chunk.
