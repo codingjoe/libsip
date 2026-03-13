@@ -796,13 +796,18 @@ class SessionInitiationProtocol(asyncio.Protocol):
         it defaults to ``SHA-256``.
 
         Raises:
-            ValueError: If ``algorithm`` is not a recognised :class:`DigestAlgorithm`.
+            ValueError: If ``algorithm`` is not a recognised :class:`DigestAlgorithm`,
+                or if a ``*-sess`` algorithm is requested without a ``cnonce``.
         """
         try:
             hash_name = cls._DIGEST_HASH_NAME[algorithm]
         except KeyError:
             raise ValueError(f"Unsupported digest algorithm: {algorithm!r}") from None
         is_sess = algorithm.endswith("-sess")
+        if is_sess and cnonce is None:
+            raise ValueError(
+                f"algorithm={algorithm!r} requires a cnonce value"
+            )
 
         def h(data: str) -> str:
             return hashlib.new(hash_name, data.encode()).hexdigest()

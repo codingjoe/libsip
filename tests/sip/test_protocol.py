@@ -2049,3 +2049,72 @@ class TestDigestResponse:
         (data,) = transport.write.call_args[0]
         assert b'algorithm="SHA-256"' in data
         assert b'algorithm="MD5"' not in data
+
+    def test_sess_algorithm_incorporates_cnonce(self):
+        """SHA-256-sess and MD5-sess include cnonce in HA1, changing the result."""
+        base = dict(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+        )
+        r1 = SessionInitiationProtocol.digest_response(
+            **base, algorithm=DigestAlgorithm.SHA_256_SESS, cnonce="cnonce-A"
+        )
+        r2 = SessionInitiationProtocol.digest_response(
+            **base, algorithm=DigestAlgorithm.SHA_256_SESS, cnonce="cnonce-B"
+        )
+        # Different cnonce values must yield different responses
+        assert r1 != r2
+        # A -sess result must differ from the non-sess result for the same inputs
+        r_plain = SessionInitiationProtocol.digest_response(
+            **base, algorithm=DigestAlgorithm.SHA_256
+        )
+        assert r1 != r_plain
+
+    def test_md5_sess_incorporates_cnonce(self):
+        """MD5-sess includes cnonce in HA1."""
+        base = dict(
+            username="alice",
+            password="secret",  # noqa: S106
+            realm="example.com",
+            nonce="abc123",
+            method="REGISTER",
+            uri="sip:example.com",
+        )
+        r1 = SessionInitiationProtocol.digest_response(
+            **base, algorithm=DigestAlgorithm.MD5_SESS, cnonce="cnonce-A"
+        )
+        r2 = SessionInitiationProtocol.digest_response(
+            **base, algorithm=DigestAlgorithm.MD5_SESS, cnonce="cnonce-B"
+        )
+        assert r1 != r2
+
+    def test_sess_algorithm_without_cnonce_raises(self):
+        """Calling a *-sess algorithm without cnonce raises ValueError."""
+        with pytest.raises(ValueError, match="cnonce"):
+            SessionInitiationProtocol.digest_response(
+                username="alice",
+                password="secret",  # noqa: S106
+                realm="example.com",
+                nonce="abc123",
+                method="REGISTER",
+                uri="sip:example.com",
+                algorithm=DigestAlgorithm.SHA_256_SESS,
+                cnonce=None,
+            )
+
+    def test_unsupported_algorithm_raises(self):
+        """An unrecognised algorithm string raises ValueError."""
+        with pytest.raises(ValueError, match="Unsupported digest algorithm"):
+            SessionInitiationProtocol.digest_response(
+                username="alice",
+                password="secret",  # noqa: S106
+                realm="example.com",
+                nonce="abc123",
+                method="REGISTER",
+                uri="sip:example.com",
+                algorithm="BLAKE2b",
+            )
