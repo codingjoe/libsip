@@ -32,5 +32,5 @@ The documentation is built using [MkDocs](https://www.mkdocs.org/) with [mkdocst
 To serve the documentation locally for development, run:
 
 ```bash
-uv run mkdocs serve --livereload
+uv run --group docs mkdocs serve --livereload
 ```
