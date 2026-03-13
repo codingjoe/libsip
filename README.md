@@ -82,3 +82,27 @@ asyncio.run(main())
 
 For raw audio access without transcription, subclass `AudioCall` and override
 `audio_received(self, audio: np.ndarray)` instead.
+
+## Roadmap
+
+| RFC | Title | Status |
+|-----|-------|--------|
+| [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261) | SIP: Session Initiation Protocol | 🚧 Partial |
+| [RFC 3824](https://datatracker.ietf.org/doc/html/rfc3824) | Using E.164 Numbers with SIP | ❌ Planned |
+| [RFC 3966](https://datatracker.ietf.org/doc/html/rfc3966) | The tel URI for Telephone Numbers | ❌ Planned |
+| [RFC 6116](https://datatracker.ietf.org/doc/html/rfc6116) | The E.164 to URI DDDS Application (ENUM) | ❌ Planned |
+| [RFC 4733](https://datatracker.ietf.org/doc/html/rfc4733) | RTP Payload for DTMF Digits, Telephony Tones, and Telephony Signals | ❌ Planned |
+| [RFC 2805](https://datatracker.ietf.org/doc/html/rfc2805) | Media Gateway Control Protocol (MGCP) Architecture and Requirements | ❌ Planned |
+| [RFC 3435](https://datatracker.ietf.org/doc/html/rfc3435) | Media Gateway Control Protocol (MGCP) Version 1.0 | ❌ Planned |
+| [RFC 3660](https://datatracker.ietf.org/doc/html/rfc3660) | Basic Media Gateway Control Protocol (MGCP) Packages | ❌ Planned |
+| [RFC 3661](https://datatracker.ietf.org/doc/html/rfc3661) | Media Gateway Control Protocol (MGCP) Return Code Usage | ❌ Planned |
+| [RFC 3991](https://datatracker.ietf.org/doc/html/rfc3991) | MGCP Redirect and Reset Package | ❌ Planned |
+| [RFC 6230](https://datatracker.ietf.org/doc/html/rfc6230) | Media Control Channel Framework | ❌ Planned |
+| [RFC 6231](https://datatracker.ietf.org/doc/html/rfc6231) | An Interactive Voice Response (IVR) Control Package for the Media Control Channel Framework | ❌ Planned |
+| [RFC 4458](https://datatracker.ietf.org/doc/html/rfc4458) | SIP URIs for Applications such as Voicemail and IVR | ❌ Planned |
+| [RFC 3880](https://datatracker.ietf.org/doc/html/rfc3880) | Call Processing Language (CPL) | ❌ Planned |
+| [RFC 3801](https://datatracker.ietf.org/doc/html/rfc3801) | Voice Profile for Internet Mail – version 2 (VPIMv2) | ❌ Planned |
+| [RFC 4239](https://datatracker.ietf.org/doc/html/rfc4239) | Internet Voice Messaging (IVM) | ❌ Planned |
+| [RFC 2871](https://datatracker.ietf.org/doc/html/rfc2871) | A Framework for Telephony Routing over IP | ❌ Planned |
+| [RFC 3219](https://datatracker.ietf.org/doc/html/rfc3219) | Telephony Routing over IP (TRIP) | ❌ Planned |
+| [RFC 5115](https://datatracker.ietf.org/doc/html/rfc5115) | Telephony Routing over IP (TRIP) Attribute for Resource Priority | ❌ Planned |
