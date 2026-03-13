@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 
-__all__ = ["Request", "Response"]
+from voip.sdp.messages import SessionDescription
+
+from .types import CallerID
+
+__all__ = ["Request", "Response", "Message"]
+
+#: Headers whose values are parsed as :class:`CallerID` objects.
+_CALLER_HEADERS = frozenset({"From", "To"})
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -12,7 +19,7 @@ class Message:
     """A SIP message (RFC 3261 §7)."""
 
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
-    body: bytes = dataclasses.field(default=b"", repr=False)
+    body: SessionDescription | None = dataclasses.field(default=None, repr=False)
     version: str = "SIP/2.0"
 
     @classmethod
@@ -23,12 +30,12 @@ class Message:
         first_line, *header_lines = lines
         headers = {}
         for line in header_lines:
-            if not line:
-                continue
             name, sep, value = line.partition(":")
             if not sep:
                 continue
-            headers[name.strip()] = value.strip()
+            name = name.strip()
+            value = value.strip()
+            headers[name] = CallerID(value) if name in _CALLER_HEADERS else value
         parts = first_line.split(" ", 2)
         if first_line.startswith("SIP/"):
             version, status_code_str, reason = parts
@@ -36,23 +43,42 @@ class Message:
                 status_code=int(status_code_str),
                 reason=reason,
                 headers=headers,
-                body=body,
+                body=cls._parse_body(headers, body),
                 version=version,
             )
-        method, uri, version = parts
+        try:
+            method, uri, version = parts
+        except ValueError:
+            raise ValueError(f"Invalid SIP message first line: {data!r}")
         return Request(
-            method=method, uri=uri, headers=headers, body=body, version=version
+            method=method,
+            uri=uri,
+            headers=headers,
+            body=cls._parse_body(headers, body),
+            version=version,
         )
+
+    @staticmethod
+    def _parse_body(headers: dict[str, str], body: bytes) -> SessionDescription | None:
+        """Parse the body according to the Content-Type header."""
+        if headers.get("Content-Type") == "application/sdp" and body:
+            return SessionDescription.parse(body)
+        return None
 
     def __bytes__(self) -> bytes:
-        """Serialize to bytes."""
+        headers = dict(self.headers)
+        raw_body = bytes(self.body) if self.body is not None else b""
+        if raw_body:
+            headers.setdefault("Content-Length", str(len(raw_body)))
         header_lines = "".join(
-            f"{name}: {value}\r\n" for name, value in self.headers.items()
+            f"{name}: {value}\r\n" for name, value in headers.items()
         )
-        return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + self.body
+        return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + raw_body
 
-    def _first_line(self) -> str:
-        return NotImplemented
+    def __str__(self) -> str:
+        return self.__bytes__().decode()
+
+    def _first_line(self) -> str: ...
 
 
 @dataclasses.dataclass(kw_only=True)
