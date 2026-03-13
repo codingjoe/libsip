@@ -37,7 +37,15 @@ from .types import CallerID, Status
 
 logger = logging.getLogger("voip.sip")
 
-__all__ = ["SIP", "SessionInitiationProtocol"]
+__all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol"]
+
+
+class RegistrationError(Exception):
+    """Raised when a SIP REGISTER request fails with an unexpected response.
+
+    The exception message includes the response status code and reason phrase
+    from the server, e.g. ``"403 Forbidden"`` or ``"500 Server Error"``.
+    """
 
 
 def _mask_caller(header: str) -> str:
@@ -147,9 +155,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
     transport: asyncio.Transport | None = dataclasses.field(init=False, default=None)
     #: True when the underlying transport is TLS-wrapped; False for plain TCP.
     _is_tls: bool = dataclasses.field(init=False, default=False)
-    #: True once a 403 Forbidden forces us to fall back from ``sips:`` to
-    #: ``sip:`` with ``transport=tls`` (RFC 5630 §4).
-    _sips_downgraded: bool = dataclasses.field(init=False, default=False)
 
     def __post_init__(self):
         self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
@@ -429,26 +434,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             else:
                 asyncio.create_task(self.register(authorization=auth_value))
             return
-        if (
-            response.status_code == Status["Forbidden"]
-            and response.headers.get("CSeq", "").split()[-1:] == ["REGISTER"]
-            and self._is_tls
-            and not self._sips_downgraded
-        ):
-            # RFC 5630 §4: some servers reject ``sips:`` URIs even over TLS.
-            # Downgrade to ``sip:`` with ``transport=tls`` and retry once.
-            logger.warning(
-                "REGISTER rejected with 403 Forbidden while using sips: URIs; "
-                "server may not support sips: — retrying with sip:;transport=tls "
-                "(RFC 5630 §4 fallback)"
-            )
-            self._sips_downgraded = True
-            asyncio.create_task(self.register())
-            return
-        logger.warning(
-            "Unexpected REGISTER response: %s %s", response.status_code, response.reason
-        )
-        raise NotImplementedError("Unexpected REGISTER response")
+        raise RegistrationError(f"{response.status_code} {response.reason}")
 
     def call_received(self, request: Request) -> None:
         """Handle an incoming call.
@@ -659,19 +645,20 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def _build_contact(self, user: str | None = None) -> str:
         """Return a ``Contact:`` header value for this UA.
 
-        Prefers the ``sips:`` URI scheme when connected over TLS and the server
-        has not yet rejected it (RFC 5630 §4 first attempt).  After a
-        403-driven downgrade (:attr:`_sips_downgraded`) the compatible
-        ``sip:`` form with ``transport=tls`` is used instead.
+        The URI scheme mirrors :attr:`aor`: a ``sips:`` AOR produces a
+        ``sips:`` Contact (the strongest TLS guarantee); a ``sip:`` AOR over
+        TLS produces ``sip:`` with ``transport=tls``; plain TCP produces plain
+        ``sip:``.
 
         Args:
             user: SIP user part (e.g. ``"alice"``).  When provided the Contact
                 is of the form ``<scheme:user@host:port>``; otherwise just
                 ``<scheme:host:port>``.
         """
+        aor_scheme = self.aor.partition(":")[0]  # "sip" or "sips"
         host_port = f"{self.local_address[0]}:{self.local_address[1]}"
         addr = f"{user}@{host_port}" if user else host_port
-        if self._is_tls and not self._sips_downgraded:
+        if aor_scheme == "sips":
             return f"<sips:{addr}>"
         tls_param = ";transport=tls" if self._is_tls else ""
         return f"<sip:{addr}{tls_param}>"
@@ -767,20 +754,22 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
     @property
     def registrar_uri(self) -> str:
-        """Registrar Request-URI derived from the AOR.
+        """Registrar Request-URI derived from the AOR, preserving its scheme.
 
-        Over a TLS connection the most secure form, ``sips:host``, is preferred
-        (RFC 5630 §4).  If the server rejects this with ``403 Forbidden``,
-        :meth:`response_received` sets :attr:`_sips_downgraded` to ``True`` and
-        retries; subsequent calls then return the compatible ``sip:host`` form.
-        TLS transport is already signalled by ``Via: SIP/2.0/TLS``, so this
-        downgrade is safe and interoperable.
+        The scheme (``sip:`` or ``sips:``) is taken directly from :attr:`aor`
+        so the client honours whatever security contract the administrator has
+        configured.  The user part is stripped; only the host (and optional
+        port) is kept, per RFC 3261 §10.2.
+
+        Examples::
+
+            sip:alice@example.com   →  sip:example.com
+            sips:alice@example.com  →  sips:example.com
         """
         if not self.aor:
             raise ValueError("AOR is not configured; cannot derive registrar URI")
-        _, _, rest = self.aor.partition(":")
+        scheme, _, rest = self.aor.partition(":")
         _, _, hostport = rest.partition("@")
-        scheme = "sips" if (self._is_tls and not self._sips_downgraded) else "sip"
         return f"{scheme}:{hostport}"
 
     async def register(
