@@ -2010,14 +2010,14 @@ class TestDigestResponse:
 
     def test_algorithms_produce_distinct_responses(self):
         """Different algorithms produce distinct digest values."""
-        digest_params = dict(
-            username="alice",
-            password="secret",  # noqa: S106
-            realm="example.com",
-            nonce="abc123",
-            method="REGISTER",
-            uri="sip:example.com",
-        )
+        digest_params = {
+            "username": "alice",
+            "password": "secret",  # noqa: S106
+            "realm": "example.com",
+            "nonce": "abc123",
+            "method": "REGISTER",
+            "uri": "sip:example.com",
+        }
         r_md5 = SessionInitiationProtocol.digest_response(
             **digest_params, algorithm=DigestAlgorithm.MD5
         )
@@ -2052,14 +2052,14 @@ class TestDigestResponse:
 
     def test_sess_algorithm_incorporates_cnonce(self):
         """SHA-256-sess and MD5-sess include cnonce in HA1, changing the result."""
-        base = dict(
-            username="alice",
-            password="secret",  # noqa: S106
-            realm="example.com",
-            nonce="abc123",
-            method="REGISTER",
-            uri="sip:example.com",
-        )
+        base = {
+            "username": "alice",
+            "password": "secret",  # noqa: S106
+            "realm": "example.com",
+            "nonce": "abc123",
+            "method": "REGISTER",
+            "uri": "sip:example.com",
+        }
         r1 = SessionInitiationProtocol.digest_response(
             **base, algorithm=DigestAlgorithm.SHA_256_SESS, cnonce="cnonce-A"
         )
@@ -2076,14 +2076,14 @@ class TestDigestResponse:
 
     def test_md5_sess_incorporates_cnonce(self):
         """MD5-sess includes cnonce in HA1."""
-        base = dict(
-            username="alice",
-            password="secret",  # noqa: S106
-            realm="example.com",
-            nonce="abc123",
-            method="REGISTER",
-            uri="sip:example.com",
-        )
+        base = {
+            "username": "alice",
+            "password": "secret",  # noqa: S106
+            "realm": "example.com",
+            "nonce": "abc123",
+            "method": "REGISTER",
+            "uri": "sip:example.com",
+        }
         r1 = SessionInitiationProtocol.digest_response(
             **base, algorithm=DigestAlgorithm.MD5_SESS, cnonce="cnonce-A"
         )
