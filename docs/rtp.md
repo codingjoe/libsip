@@ -7,8 +7,6 @@ The `voip.rtp` module implements the Real-time Transport Protocol (RFC 3550), ha
 ::: voip.rtp.RealtimeTransportProtocol
 
 ::: voip.rtp.RTP
-options:
-members: false
 
 ## Packets
 
