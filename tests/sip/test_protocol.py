@@ -110,12 +110,12 @@ class FakeProtocol(SessionInitiationProtocol):
         super().__init__(server_address=("127.0.0.1", 5061), aor="sip:test@example.com")
         self.transport = FakeTransport()
         self.local_address = ("127.0.0.1", 5061)
-        self._sent_responses: list[tuple[Response, tuple]] = []
+        self._sent_responses: list[tuple[Response, None]] = []
 
-    def send(self, message, addr=None):
+    def send(self, message):
         if isinstance(message, Response):
-            self._sent_responses.append((message, addr))
-        super().send(message, addr)
+            self._sent_responses.append((message, None))
+        super().send(message)
 
 
 class ConcreteProtocol(SessionInitiationProtocol):
@@ -328,7 +328,7 @@ class TestRinging:
         assert ";tag=" in to_header
 
     def test_ringing__no_address(self, caplog):
-        """Log an error and send nothing when no address is stored for the Call-ID."""
+        """Log an error and send nothing when no pending INVITE is stored for the Call-ID."""
         protocol = FakeProtocol()
         request = Request(
             method="INVITE",
@@ -338,7 +338,7 @@ class TestRinging:
         with caplog.at_level("ERROR"):
             protocol.ringing(request)
         assert not protocol._sent_responses
-        assert "No address found" in caplog.text
+        assert "No pending INVITE found" in caplog.text
 
 
 class TestReject:
@@ -379,7 +379,7 @@ class TestReject:
         assert "reject-cleanup-1" not in protocol._to_tags
 
     def test_reject__no_address(self, caplog):
-        """Log an error and send nothing when no address is stored for the Call-ID."""
+        """Log an error and send nothing when no pending INVITE is stored for the Call-ID."""
         protocol = FakeProtocol()
         request = Request(
             method="INVITE",
@@ -389,7 +389,7 @@ class TestReject:
         with caplog.at_level("ERROR"):
             protocol.reject(request)
         assert not protocol._sent_responses
-        assert "No address found" in caplog.text
+        assert "No pending INVITE found" in caplog.text
 
 
 class TestBYEHandler:
@@ -668,13 +668,13 @@ class TestAnswer:
 
     @pytest.mark.asyncio
     async def test_answer__no_address_logs_error(self, caplog):
-        """Log an error and return early when no address is stored for the Call-ID."""
+        """Log an error and return early when no pending INVITE is tracked for the Call-ID."""
         protocol = FakeProtocol()
         invite = self._make_invite("no-addr-answer-1")
 
         with caplog.at_level("ERROR"):
-            await protocol._answer(invite, asyncio.DatagramProtocol)
-        assert "No address found" in caplog.text
+            await protocol._answer(invite, Call)
+        assert "No pending INVITE found" in caplog.text
         assert not protocol._sent_responses
 
     @pytest.mark.asyncio
@@ -841,7 +841,7 @@ class TestCANCELHandler:
         assert f";tag={tag}" in terminated.headers.get("To", "")
 
     def test_cancel__cleans_up_state(self):
-        """Remove Call-ID from _answered_calls, _request_addrs, and _to_tags."""
+        """Remove Call-ID from _answered_calls, _pending_invites, and _to_tags."""
         protocol = FakeProtocol()
         addr = ("192.0.2.1", 5060)
         invite = Request(
@@ -871,7 +871,7 @@ class TestCANCELHandler:
         )
         protocol.request_received(cancel, addr)
         assert "cancel-cleanup-1" not in protocol._answered_calls
-        assert "cancel-cleanup-1" not in protocol._request_addrs
+        assert "cancel-cleanup-1" not in protocol._pending_invites
         assert "cancel-cleanup-1" not in protocol._to_tags
 
     def test_cancel__no_pending_invite_skips_487(self):
@@ -1056,8 +1056,8 @@ class TestSIPProtocol:
             )
             self._sent: list[tuple] = []
 
-        def send(self, message, addr=None):
-            self._sent.append((message, addr))
+        def send(self, message):
+            self._sent.append((message, None))
 
     async def test_connection_made__stores_transport(self):
         """Store the transport when a connection is established."""
@@ -1082,11 +1082,11 @@ class TestSIPProtocol:
         transport.write.reset_mock()  # clear any calls made during connection_made
         response = Response(status_code=200, reason="OK")
         addr = ("192.0.2.1", 5061)
-        protocol.send(response, addr)
+        protocol.send(response)
         protocol.transport.write.assert_called_once_with(bytes(response))
 
-    async def test_request_received__invite__stores_addr_and_calls_call_received(self):
-        """Dispatch an INVITE to call_received and store the addr by Call-ID."""
+    async def test_request_received__invite__tracks_pending_call(self):
+        """Dispatch an INVITE to call_received and track the Call-ID as pending."""
         received = []
 
         class MySIP(SIP):
@@ -1100,7 +1100,7 @@ class TestSIPProtocol:
         protocol.request_received(request, addr)
         assert len(received) == 1
         assert received[0] is request
-        assert protocol._request_addrs.get(request.headers["Call-ID"]) == addr
+        assert request.headers["Call-ID"] in protocol._pending_invites
 
     async def test_call_received__noop_by_default(self):
         """call_received is a no-op in the base class."""
@@ -1122,13 +1122,12 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         await protocol._answer(request, Call)
         assert len(protocol._sent) == 1
-        response, addr = protocol._sent[0]
+        response, _ = protocol._sent[0]
         assert response.status_code == 200
         assert response.reason == "OK"
-        assert addr == ("192.0.2.1", 5060)
 
     async def test_answer__sdp_contains_opus_audio_line(self):
         """Include an audio media line in the SDP body of the 200 OK."""
@@ -1144,7 +1143,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         await protocol._answer(request, Call)
         response, _ = protocol._sent[0]
         assert b"m=audio" in bytes(response.body)
@@ -1164,7 +1163,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         await protocol._answer(request, Call)
         response, _ = protocol._sent[0]
         assert response.headers["Via"] == "SIP/2.0/UDP pc33.atlanta.com"
@@ -1194,7 +1193,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         await protocol._answer(request, MyCall)
         assert created == ["sip:bob@biloxi.com"]
 
@@ -1219,7 +1218,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         try:
             await protocol._answer(request, DatagramCapture)
             response, _ = protocol._sent[0]
@@ -1265,7 +1264,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         try:
             await protocol._answer(request, DatagramCapture)
             response, _ = protocol._sent[0]
@@ -1305,7 +1304,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         await protocol._answer(request, Call)
         response, _ = protocol._sent[0]
         serialized = bytes(response)
@@ -1343,7 +1342,7 @@ class TestSIPProtocol:
             },
             body=sdp_body1,
         )
-        protocol._request_addrs["call-1@test"] = ("1.2.3.4", 5060)
+        protocol._pending_invites.add("call-1@test")
         await protocol._answer(invite1, _MinimalCall)
         rtp_proto_1 = protocol._rtp_protocol
         rtp_transport_1 = protocol._rtp_transport
@@ -1363,7 +1362,7 @@ class TestSIPProtocol:
             },
             body=sdp_body2,
         )
-        protocol._request_addrs["call-2@test"] = ("5.6.7.8", 5060)
+        protocol._pending_invites.add("call-2@test")
         await protocol._answer(invite2, _MinimalCall)
 
         assert protocol._rtp_protocol is rtp_proto_1
@@ -1386,7 +1385,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         try:
             await protocol._answer(request, Call)
             assert None in mux.calls
@@ -1423,7 +1422,7 @@ class TestSIPProtocol:
         protocol._rtp_protocol = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         with caplog.at_level(logging.INFO, logger="voip.sip"):
             await protocol._answer(request, Call)
         assert any("call_answered" in r.message for r in caplog.records)
@@ -1432,20 +1431,19 @@ class TestSIPProtocol:
         """Send a 486 Busy Here response when no status code is given."""
         protocol = self._CapturingSIP()
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         protocol.reject(request)
         assert len(protocol._sent) == 1
-        response, addr = protocol._sent[0]
+        response, _ = protocol._sent[0]
         assert isinstance(response, Response)
         assert response.status_code == 486
         assert response.reason == "Busy Here"
-        assert addr == ("192.0.2.1", 5060)
 
     def test_reject__custom_status(self):
         """Send the specified status code and reason."""
         protocol = self._CapturingSIP()
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         protocol.reject(request, status_code=603, reason="Decline")
         response, _ = protocol._sent[0]
         assert response.status_code == 603
@@ -1455,7 +1453,7 @@ class TestSIPProtocol:
         """Copy Via, To, From, Call-ID, and CSeq headers into the response."""
         protocol = self._CapturingSIP()
         request = make_invite()
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         protocol.reject(request)
         response, _ = protocol._sent[0]
         assert response.headers["Via"] == "SIP/2.0/UDP pc33.atlanta.com"
@@ -1469,7 +1467,7 @@ class TestSIPProtocol:
         """Exclude non-dialog headers from the reject response."""
         protocol = self._CapturingSIP()
         request = make_invite({extra_header: "value"})
-        protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+        protocol._pending_invites.add(request.headers["Call-ID"])
         protocol.reject(request)
         response, _ = protocol._sent[0]
         assert extra_header not in response.headers
@@ -1481,7 +1479,7 @@ class TestSIPProtocol:
         with caplog.at_level(logging.INFO, logger="voip.sip"):
             protocol = self._CapturingSIP()
             request = make_invite()
-            protocol._request_addrs[request.headers["Call-ID"]] = ("192.0.2.1", 5060)
+            protocol._pending_invites.add(request.headers["Call-ID"])
             protocol.reject(request)
         assert any("call_rejected" in r.message for r in caplog.records)
 
@@ -1523,7 +1521,7 @@ class TestSIPProtocol:
         protocol.connection_made(MagicMock())
         request = make_invite()
         addr = ("192.0.2.1", 5060)
-        protocol._request_addrs[request.headers["Call-ID"]] = addr
+        protocol._pending_invites.add(request.headers["Call-ID"])
         protocol.call_received(request)
 
         await asyncio.sleep(0.01)

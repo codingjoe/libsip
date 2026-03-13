@@ -22,26 +22,31 @@ class ConsoleMessageProcessor:
     """Protocol mixin that prints messages to stdout."""
 
     def request_received(self, request: messages.Request, addr: tuple[str, int]):
-        self.pprint(request, addr)
+        self.pprint(request)
         super().request_received(request, addr)
 
     def response_received(self, response: messages.Response, addr: tuple[str, int]):
-        self.pprint(response, addr)
+        self.pprint(response)
         super().response_received(response, addr)
 
-    def send(self, message, addr: tuple[str, int]) -> None:
+    def send(self, message) -> None:
         """Send a message and print it to stdout."""
-        self.pprint(message, addr)
-        super().send(message, addr)
+        self.pprint(message)
+        super().send(message)
 
-    @staticmethod
-    def pprint(msg, addr):
+    def pprint(self, msg):
         """Pretty print the message."""
-        host = f"[{addr[0]}]" if ":" in addr[0] else addr[0]
-        host = click.style(host, fg="green", bold=True)
-        port = click.style(str(addr[1]), fg="yellow", bold=True)
+        transport = getattr(self, "transport", None)
+        addr = transport.get_extra_info("peername") if transport else None
+        if addr:
+            host = f"[{addr[0]}]" if ":" in addr[0] else addr[0]
+            host = click.style(host, fg="green", bold=True)
+            port = click.style(str(addr[1]), fg="yellow", bold=True)
+            prefix = f"{host}:{port} - - [{time.asctime()}]"
+        else:
+            prefix = f"[unknown] - - [{time.asctime()}]"
         pretty_msg = highlight(str(msg), SIPLexer(), formatters.TerminalFormatter())
-        click.echo(f"{host}:{port} - - [{time.asctime()}] {pretty_msg}")
+        click.echo(f"{prefix} {pretty_msg}")
 
 
 @click.group()

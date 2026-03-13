@@ -97,8 +97,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
     #: RFC 3261 §11 – methods supported by this UA (used in Allow header).
     ALLOW: typing.ClassVar[str] = "INVITE, ACK, BYE, CANCEL, OPTIONS"
 
-    _request_addrs: dict[str, tuple[str, int]] = dataclasses.field(
-        init=False, default_factory=dict
+    _pending_invites: set[str] = dataclasses.field(
+        init=False, default_factory=set
     )
     _answered_calls: collections.OrderedDict[str, None] = dataclasses.field(
         init=False, default_factory=collections.OrderedDict
@@ -199,12 +199,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
             case Response() as response:
                 self.response_received(response, addr)
 
-    def send(self, message: Response | Request, addr: tuple[str, int] | None = None) -> None:
-        """Serialize and send a SIP message over the TLS/TCP connection.
-
-        The *addr* argument is accepted for API compatibility but is ignored;
-        all traffic flows on the single persistent TLS/TCP connection.
-        """
+    def send(self, message: Response | Request) -> None:
+        """Serialize and send a SIP message over the TLS/TCP connection."""
         logger.debug("Sending %r", message)
         if self.transport is not None:
             self.transport.write(bytes(message))
@@ -233,6 +229,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
         """Dispatch a received SIP request to the appropriate handler."""
         call_id = request.headers.get("Call-ID", "")
+        peer_ip = addr[0] if addr else None
         match request.method:
             case "INVITE":
                 caller = CallerID(request.headers.get("From", ""))
@@ -241,11 +238,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         {
                             "event": "incoming_call",
                             "caller": repr(caller),
-                            "ip": addr[0],
+                            "ip": peer_ip,
                             "call_id": call_id,
                         }
                     ),
-                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
+                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
                 )
                 if call_id in self._answered_calls:
                     logger.debug(
@@ -255,7 +252,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 # Mark immediately (before async answering) so retransmissions
                 # that arrive while RTP setup is in progress are suppressed.
                 self._mark_call_answered(call_id)
-                self._request_addrs[call_id] = addr
+                self._pending_invites.add(call_id)
                 self._to_tags[call_id] = secrets.token_hex(8)
                 self.call_received(request)
             case "ACK":
@@ -268,11 +265,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         {
                             "event": "call_ended",
                             "caller": repr(caller),
-                            "ip": addr[0],
+                            "ip": peer_ip,
                             "call_id": call_id,
                         }
                     ),
-                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
+                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
                 )
                 self.send(
                     Response(
@@ -287,7 +284,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
                             call_id,
                         ),
                     ),
-                    addr,
                 )
                 self._to_tags.pop(call_id, None)
                 self._cleanup_rtp_call(call_id)
@@ -299,11 +295,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         {
                             "event": "call_cancelled",
                             "caller": repr(caller),
-                            "ip": addr[0],
+                            "ip": peer_ip,
                             "call_id": call_id,
                         }
                     ),
-                    extra={"caller": repr(caller), "ip": addr[0], "call_id": call_id},
+                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
                 )
                 self.send(
                     Response(
@@ -315,10 +311,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
                             if key in ("Via", "To", "From", "Call-ID", "CSeq")
                         },
                     ),
-                    addr,
                 )
-                invite_addr = self._request_addrs.pop(call_id, None)
-                if invite_addr is not None:
+                if call_id in self._pending_invites:
+                    self._pending_invites.discard(call_id)
                     self.send(
                         Response(
                             status_code=Status["Request Terminated"],
@@ -332,7 +327,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
                                 call_id,
                             ),
                         ),
-                        invite_addr,
                     )
                 self._answered_calls.pop(call_id, None)
                 self._to_tags.pop(call_id, None)
@@ -343,7 +337,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     f"Unsupported SIP request method: {request.method}"
                 )
 
-    def response_received(self, response: Response, addr: tuple[str, int]) -> None:
+    def response_received(self, response: Response, addr: tuple[str, int] | None) -> None:
         """Handle REGISTER responses including digest auth challenges (RFC 3261 §22).
 
         Only processes responses when registration parameters are configured.
@@ -478,21 +472,22 @@ class SessionInitiationProtocol(asyncio.Protocol):
     async def _answer(self, request: Request, call_class: type[Call]) -> None:
         """Perform the asynchronous part of answering: set up RTP, send 200 OK."""
         call_id = request.headers.get("Call-ID", "")
-        addr = self._request_addrs.pop(call_id, None)
-        if addr is None:
-            logger.error("No address found for INVITE with Call-ID %r", call_id)
+        if call_id not in self._pending_invites:
+            logger.error("No pending INVITE found for Call-ID %r", call_id)
             return
+        self._pending_invites.discard(call_id)
+        peer = self.transport.get_extra_info("peername") if self.transport else None
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
             json.dumps(
                 {
                     "event": "call_answered",
                     "caller": repr(caller),
-                    "ip": addr[0] if addr else None,
+                    "ip": peer[0] if peer else None,
                     "call_id": call_id,
                 }
             ),
-            extra={"caller": repr(caller), "ip": addr[0] if addr else None, "call_id": call_id},
+            extra={"caller": repr(caller), "ip": peer[0] if peer else None, "call_id": call_id},
         )
         remote_audio = next(
             (
@@ -592,7 +587,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     ],
                 ),
             ),
-            addr,
         )
         self._mark_call_answered(call_id)
         self._to_tags.pop(call_id, None)
@@ -615,9 +609,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
             request: The SIP INVITE request (from :meth:`call_received`).
         """
         call_id = request.headers.get("Call-ID", "")
-        address = self._request_addrs.get(call_id)
-        if address is None:
-            logger.error("No address found for INVITE with Call-ID %r", call_id)
+        if call_id not in self._pending_invites:
+            logger.error("No pending INVITE found for Call-ID %r", call_id)
             return
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
@@ -639,7 +632,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     call_id,
                 ),
             ),
-            address,
         )
 
     def reject(
@@ -656,17 +648,18 @@ class SessionInitiationProtocol(asyncio.Protocol):
             reason: SIP response reason phrase.
         """
         call_id = request.headers.get("Call-ID", "")
-        addr = self._request_addrs.pop(call_id, None)
-        if addr is None:
-            logger.error("No address found for INVITE with Call-ID %r", call_id)
+        if call_id not in self._pending_invites:
+            logger.error("No pending INVITE found for Call-ID %r", call_id)
             return
+        self._pending_invites.discard(call_id)
+        peer = self.transport.get_extra_info("peername") if self.transport else None
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
             json.dumps(
                 {
                     "event": "call_rejected",
                     "caller": repr(caller),
-                    "ip": addr[0],
+                    "ip": peer[0] if peer else None,
                     "call_id": call_id,
                     "status": status_code,
                     "reason": reason,
@@ -674,7 +667,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             ),
             extra={
                 "caller": repr(caller),
-                "ip": addr[0],
+                "ip": peer[0] if peer else None,
                 "call_id": call_id,
                 "status": status_code,
             },
@@ -692,7 +685,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     call_id,
                 ),
             ),
-            addr,
         )
         self._to_tags.pop(call_id, None)
 
