@@ -134,9 +134,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     _rtp_transport: asyncio.DatagramTransport | None = dataclasses.field(
         init=False, default=None
     )
-    _initialize_task: asyncio.Task | None = dataclasses.field(
-        init=False, default=None
-    )
+    _initialize_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
