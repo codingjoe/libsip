@@ -127,7 +127,7 @@ class TestTranscribeCLI:
 
         async def fake_connection(factory, *, host, port, ssl):
             protocol = factory()
-            captured["server_addr"] = protocol.server_address
+            captured["server_addr"] = protocol.outbound_proxy
             raise KeyboardInterrupt
 
         with (
@@ -159,7 +159,7 @@ class TestTranscribeCLI:
 
         async def fake_connection(factory, *, host, port, ssl):
             protocol = factory()
-            captured["server_addr"] = protocol.server_address
+            captured["server_addr"] = protocol.outbound_proxy
             raise KeyboardInterrupt
 
         with (

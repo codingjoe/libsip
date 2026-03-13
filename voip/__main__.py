@@ -102,7 +102,11 @@ def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
     required=True,
     metavar="HOST[:PORT]",
     callback=_parse_server,
-    help="SIP server address (TLS, default port 5061).",
+    help=(
+        "SIP outbound proxy / registrar address (TLS, default port 5061). "
+        "This is the server this UA connects to. "
+        "The registrar domain is derived from --aor."
+    ),
 )
 @click.option(
     "--aor",
@@ -110,7 +114,11 @@ def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
     required=False,
     default=None,
     metavar="SIP_AOR",
-    help="SIP Address of Record (defaults to sips:{username}@{server_host}).",
+    help=(
+        "SIP Address of Record — the identity to register (RFC 3261 §10). "
+        "The registrar domain is derived from this value. "
+        "Defaults to sips:{username}@{server_host}."
+    ),
 )
 @click.option("--username", envvar="SIP_USERNAME", required=True, help="SIP username.")
 @click.option("--password", envvar="SIP_PASSWORD", help="SIP password.")
@@ -187,7 +195,7 @@ def transcribe(
                 ssl_context.verify_mode = ssl.CERT_NONE
         await loop.create_connection(
             lambda: TranscribeSession(
-                server_address=server_addr,
+                outbound_proxy=server_addr,
                 aor=aor,
                 username=username,
                 password=password,
