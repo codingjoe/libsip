@@ -394,7 +394,9 @@ class TestAgentCall:
         mock_response.message.content = "I am an AI assistant."
         with (
             patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
-            patch.object(call, "_send_speech", new_callable=AsyncMock) as mock_send_speech,
+            patch.object(
+                call, "_send_speech", new_callable=AsyncMock
+            ) as mock_send_speech,
         ):
             mock_client = MagicMock()
             mock_client.chat = AsyncMock(return_value=mock_response)
@@ -403,7 +405,10 @@ class TestAgentCall:
 
         mock_send_speech.assert_awaited_once_with("I am an AI assistant.")
         assert {"role": "user", "content": "hello"} in call._messages
-        assert {"role": "assistant", "content": "I am an AI assistant."} in call._messages
+        assert {
+            "role": "assistant",
+            "content": "I am an AI assistant.",
+        } in call._messages
 
     async def test_respond__passes_full_history_to_ollama(self):
         """_respond passes the full message history (including system prompt) to Ollama."""

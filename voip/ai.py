@@ -21,7 +21,7 @@ import ollama
 from faster_whisper import WhisperModel
 from pocket_tts import TTSModel
 
-from voip.audio import AudioCall, SAMPLE_RATE
+from voip.audio import SAMPLE_RATE, AudioCall
 from voip.rtp import RTPPayloadType
 
 __all__ = ["AgentCall", "WhisperCall"]
@@ -214,7 +214,9 @@ class AgentCall(WhisperCall):
             for chunk in self._tts_instance.generate_audio_stream(
                 self._voice_state, text
             ):
-                asyncio.run_coroutine_threadsafe(queue.put(chunk.numpy()), loop).result()
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(chunk.numpy()), loop
+                ).result()
             asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
 
         future = loop.run_in_executor(None, _generate)
