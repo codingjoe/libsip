@@ -189,7 +189,7 @@ _parse_server = _parse_hostport
 def transcribe(
     ctx, aor, model, password, username, proxy, stun_server, no_tls, no_verify_tls
 ):
-    """Register with a SIP carrier and transcribe incoming calls via Whisper.
+    r"""Register with a SIP carrier and transcribe incoming calls via Whisper.
 
     AOR is a SIP Address of Record URI identifying the account to register,
     e.g. ``sips:alice@carrier.example.com`` or ``sip:alice@carrier.example.com:5060``.
