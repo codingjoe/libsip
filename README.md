@@ -40,7 +40,6 @@ Answer calls and transcribe them live from the terminal:
 voip sip transcribe sips:alice@sip.example.com --password secret
 ```
 
-
 ### Python API
 
 Subclass `WhisperCall` and override `transcription_received` to handle results.

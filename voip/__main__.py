@@ -91,12 +91,12 @@ def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
     """
     scheme, _, rest = value.partition(":")
     if not scheme or not rest:
-        raise click.BadParameter(f"Invalid SIP URI: {value!r}. Expected sip[s]:user@host[:port].")
+        raise click.BadParameter(
+            f"Invalid SIP URI: {value!r}. Expected sip[s]:user@host[:port]."
+        )
     user_part, _, hostport = rest.partition("@")
     if not hostport:
-        raise click.BadParameter(
-            f"Invalid SIP URI: {value!r}. Missing user@host part."
-        )
+        raise click.BadParameter(f"Invalid SIP URI: {value!r}. Missing user@host part.")
     host, _, port_str = hostport.partition(":")
     if not host:
         raise click.BadParameter(f"Invalid SIP URI: {value!r}. Missing host.")
@@ -104,7 +104,9 @@ def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
     return scheme, user_part, host, port
 
 
-def _parse_hostport(ctx, param, value: str, default_port: int = 5061) -> tuple[str, int]:
+def _parse_hostport(
+    ctx, param, value: str, default_port: int = 5061
+) -> tuple[str, int]:
     """Parse ``HOST[:PORT]`` into a ``(host, port)`` tuple."""
     host, _, port_str = value.rpartition(":")
     if not host:
@@ -184,7 +186,9 @@ _parse_server = _parse_hostport
     help="Disable TLS certificate verification (insecure; for testing only).",
 )
 @click.pass_context
-def transcribe(ctx, aor, model, password, username, proxy, stun_server, no_tls, no_verify_tls):
+def transcribe(
+    ctx, aor, model, password, username, proxy, stun_server, no_tls, no_verify_tls
+):
     """Register with a SIP carrier and transcribe incoming calls via Whisper.
 
     AOR is a SIP Address of Record URI identifying the account to register,

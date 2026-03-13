@@ -31,13 +31,23 @@ class TestParseAOR:
         """Parse scheme, user and host from a sips URI without port."""
         from voip.__main__ import _parse_aor
 
-        assert _parse_aor("sips:alice@example.com") == ("sips", "alice", "example.com", None)
+        assert _parse_aor("sips:alice@example.com") == (
+            "sips",
+            "alice",
+            "example.com",
+            None,
+        )
 
     def test_parse_aor__sip_with_port(self):
         """Parse scheme, user, host and port from a sip URI with port."""
         from voip.__main__ import _parse_aor
 
-        assert _parse_aor("sip:alice@example.com:5060") == ("sip", "alice", "example.com", 5060)
+        assert _parse_aor("sip:alice@example.com:5060") == (
+            "sip",
+            "alice",
+            "example.com",
+            5060,
+        )
 
     def test_parse_aor__sips_with_port(self):
         """Parse all components including an explicit port."""
@@ -53,7 +63,6 @@ class TestParseAOR:
     def test_parse_aor__invalid_no_at(self):
         """Raise BadParameter when user@host part is missing."""
         import click
-
         from voip.__main__ import _parse_aor
 
         with pytest.raises(click.BadParameter):
@@ -62,7 +71,6 @@ class TestParseAOR:
     def test_parse_aor__invalid_no_scheme(self):
         """Raise BadParameter when scheme is missing."""
         import click
-
         from voip.__main__ import _parse_aor
 
         with pytest.raises(click.BadParameter):
@@ -74,7 +82,10 @@ class TestParseHostport:
         """Return default port 5061 when no port is specified."""
         from voip.__main__ import _parse_hostport
 
-        assert _parse_hostport(None, None, "sip.example.com") == ("sip.example.com", 5061)
+        assert _parse_hostport(None, None, "sip.example.com") == (
+            "sip.example.com",
+            5061,
+        )
 
     def test_parse_hostport__with_port(self):
         """Parse host and port from HOST:PORT format."""
@@ -155,7 +166,12 @@ class TestTranscribeCLI:
             mock_loop.return_value.create_connection = fake_connection
             make_runner().invoke(
                 voip,
-                ["sip", "transcribe", "sips:alice@sip.example.com", "--password=secret"],
+                [
+                    "sip",
+                    "transcribe",
+                    "sips:alice@sip.example.com",
+                    "--password=secret",
+                ],
                 catch_exceptions=False,
             )
         assert captured.get("host") == "sip.example.com"
@@ -181,7 +197,12 @@ class TestTranscribeCLI:
             mock_loop.return_value.create_connection = fake_connection
             make_runner().invoke(
                 voip,
-                ["sip", "transcribe", "sip:alice@example.com:5060", "--password=secret"],
+                [
+                    "sip",
+                    "transcribe",
+                    "sip:alice@example.com:5060",
+                    "--password=secret",
+                ],
                 catch_exceptions=False,
             )
         assert captured.get("ssl") is None
