@@ -207,7 +207,7 @@ def transcribe(
     """
     from voip.sip.protocol import SIP
 
-    from .audio import WhisperCall  # noqa: PLC0415
+    from .ai import WhisperCall  # noqa: PLC0415
 
     try:
         scheme, aor_user, aor_host, aor_port = _parse_aor(aor)

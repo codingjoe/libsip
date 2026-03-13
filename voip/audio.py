@@ -1,11 +1,12 @@
-"""Audio call handler and Whisper-based transcription for RTP streams.
+"""Audio call handler for RTP streams.
 
 This module provides :class:`AudioCall`, which buffers RTP packets, negotiates
 codecs, and decodes raw audio payloads (Opus, G.722, PCMA, PCMU) to float32
-PCM via PyAV.  :class:`WhisperCall` extends it to transcribe decoded audio
-with OpenAI Whisper, keeping transcription concerns separate from codec work.
+PCM via PyAV.
 
 Requires the ``audio`` extra: ``pip install voip[audio]``.
+AI-powered subclasses (Whisper transcription, Ollama agent) live in
+:mod:`voip.ai` and require the ``ai`` extra.
 """
 
 from __future__ import annotations
@@ -21,13 +22,12 @@ from typing import ClassVar
 
 import av
 import numpy as np
-from faster_whisper import WhisperModel
 
 from voip.call import Call
 from voip.rtp import RTPPacket, RTPPayloadType
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
 
-__all__ = ["AudioCall", "WhisperCall"]
+__all__ = ["AudioCall"]
 
 #: Native sample rate expected by Whisper models.
 SAMPLE_RATE = 16000
@@ -367,93 +367,3 @@ class AudioCall(Call):
                 (or one RTP packet when ``chunk_duration == 0``).
         """
 
-
-@dataclasses.dataclass
-class WhisperCall(AudioCall):
-    """RTP call handler that transcribes audio with OpenAI Whisper.
-
-    Audio is decoded by :class:`AudioCall` and delivered as float32 PCM to
-    :meth:`audio_received`, which schedules an async transcription job.
-    Override :meth:`transcription_received` to handle the resulting text::
-
-        class MySession(SessionInitiationProtocol):
-            def call_received(self, request: Request) -> None:
-                self.answer(request=request, call_class=WhisperCall)
-
-    To share one model instance across multiple calls (recommended to avoid
-    loading it multiple times) pass a pre-loaded :class:`~faster_whisper.WhisperModel`
-    as the *model* argument::
-
-        shared_model = WhisperModel("base")
-
-        class MyCall(WhisperCall):
-            model = shared_model
-    """
-
-    #: Audio buffered (in seconds) before each transcription is triggered.
-    chunk_duration: ClassVar[int] = 5
-
-    #: Whisper model.  Either a model name string (e.g. ``"base"``,
-    #: ``"small"``, ``"large-v3"``) that will be loaded on first use, or a
-    #: pre-loaded :class:`~faster_whisper.WhisperModel` instance.  Pass a
-    #: shared instance to avoid loading the model separately for each call.
-    model: str | WhisperModel = dataclasses.field(default="kyutai/stt-1b-en_fr-trfs")
-    #: Loaded Whisper model instance (not part of ``__init__``).
-    _whisper_model: WhisperModel = dataclasses.field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if isinstance(self.model, str):
-            logger.debug("Loading Whisper model %r", self.model)
-            self._whisper_model = WhisperModel(self.model)
-        else:
-            self._whisper_model = self.model
-
-    def audio_received(self, audio: np.ndarray) -> None:
-        """Schedule async transcription for a decoded audio chunk.
-
-        Args:
-            audio: Float32 mono PCM array at :data:`SAMPLE_RATE` Hz.
-        """
-        logger.debug(
-            "Audio received: %d samples (%.1f s)", len(audio), len(audio) / SAMPLE_RATE
-        )
-        asyncio.create_task(self._transcribe(audio))
-
-    async def _transcribe(self, audio: np.ndarray) -> None:
-        """Transcribe decoded audio and deliver the text."""
-        loop = asyncio.get_running_loop()
-        logger.debug(
-            "Transcribing %d samples (%.1f s)",
-            len(audio),
-            len(audio) / SAMPLE_RATE,
-        )
-        try:
-            text = await loop.run_in_executor(None, self._run_transcription, audio)
-            self.transcription_received(text.strip())
-        except asyncio.CancelledError:
-            logger.debug("Transcription task was cancelled", exc_info=True)
-            raise
-        except Exception:
-            logger.exception("Error while transcribing audio chunk")
-
-    def _run_transcription(self, audio: np.ndarray) -> str:
-        """Transcribe a float32 PCM array using the Whisper model.
-
-        Args:
-            audio: Float32 mono PCM array at :data:`SAMPLE_RATE` Hz.
-
-        Returns:
-            Concatenated transcription text from all segments.
-        """
-        segments, _ = self._whisper_model.transcribe(audio)
-        result = "".join(segment.text for segment in segments)
-        logger.debug("Transcription result: %r", result)
-        return result
-
-    def transcription_received(self, text: str) -> None:
-        """Handle a transcription result.  Override in subclasses.
-
-        Args:
-            text: Transcribed text for this audio chunk.
-        """

@@ -2,7 +2,8 @@
 
 This module provides the :class:`Call` base dataclass that represents an
 individual call leg managed by the RTP multiplexer.  Audio-specific
-subclasses live in :mod:`voip.audio`.
+subclasses live in :mod:`voip.audio`; AI-powered subclasses live in
+:mod:`voip.ai`.
 
 Relationship to the rest of the stack::
 
@@ -18,7 +19,9 @@ Relationship to the rest of the stack::
             │
          AudioCall  (audio.py)  (audio buffering + codec decode)
             │
-         WhisperCall (audio.py) (speech-to-text via Whisper)
+         WhisperCall (ai.py)    (speech-to-text via Whisper)
+            │
+         AgentCall   (ai.py)    (Ollama LLM + Pocket TTS response)
 """
 
 from __future__ import annotations
