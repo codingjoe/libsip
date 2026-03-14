@@ -40,7 +40,7 @@ Pass it as `call_class` when answering an incoming call:
 ```python
 import asyncio
 import ssl
-from voip.audio import WhisperCall
+from voip.ai import WhisperCall
 from voip.sip.protocol import SIP
 
 
