@@ -31,13 +31,20 @@ from typing import TYPE_CHECKING
 
 from voip.rtp import RealtimeTransportProtocol
 from voip.sdp.types import MediaDescription
-from voip.sip.types import CallerID
 from voip.srtp import SRTPSession
 
 if TYPE_CHECKING:
     from voip.sip.protocol import SessionInitiationProtocol
+    from voip.sip.types import CallerID
 
 __all__ = ["Call"]
+
+
+def _default_caller_id() -> CallerID:
+    """Lazy import to avoid a circular dependency between voip.call and voip.sip."""
+    from voip.sip.types import CallerID as _CallerID
+
+    return _CallerID("")
 
 
 @dataclasses.dataclass
@@ -65,7 +72,7 @@ class Call:
     rtp: RealtimeTransportProtocol
     sip: SessionInitiationProtocol
     #: Caller identifier as received in the SIP From header.
-    caller: CallerID = dataclasses.field(default_factory=lambda: CallerID(""))
+    caller: CallerID = dataclasses.field(default_factory=_default_caller_id)
     #: Negotiated SDP media description for this call leg.
     media: MediaDescription | None = None
     #: SRTP session for encrypting and decrypting media (set by the SIP layer).

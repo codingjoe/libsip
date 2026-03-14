@@ -12,8 +12,11 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import os
 import secrets
 import struct
+import time
+import wave
 from typing import Any, ClassVar
 
 import numpy as np
@@ -23,6 +26,7 @@ from pocket_tts import TTSModel
 
 from voip.audio import SAMPLE_RATE, AudioCall
 from voip.rtp import RTPPayloadType
+from voip.sdp.types import RTPPayloadFormat
 
 __all__ = ["AgentCall", "WhisperCall"]
 
@@ -149,6 +153,11 @@ class AgentCall(WhisperCall):
     _PCMU_SAMPLE_RATE: ClassVar[int] = 8000
     #: RTP payload samples per packet (20 ms at 8 kHz).
     _RTP_CHUNK_SAMPLES: ClassVar[int] = 160
+    #: Prefer PCMU so outbound audio codec always matches what we send.
+    PREFERRED_CODECS: ClassVar[list[RTPPayloadFormat]] = [
+        RTPPayloadFormat(payload_type=RTPPayloadType.PCMU),
+        RTPPayloadFormat(payload_type=RTPPayloadType.PCMA),
+    ]
 
     #: Ollama model name for generating replies.
     ollama_model: str = dataclasses.field(default="llama3")
@@ -157,6 +166,10 @@ class AgentCall(WhisperCall):
     #: Pre-loaded Pocket TTS model.  Pass a shared instance to avoid
     #: loading the model separately for each call.
     tts_model: TTSModel | None = dataclasses.field(default=None)
+    #: Directory for debug WAV files.  When set, each synthesised response
+    #: is saved to ``<debug_audio_dir>/agent_<timestamp>.wav`` at 8 kHz mono
+    #: int16 PCM so you can verify TTS output independently of RTP encoding.
+    debug_audio_dir: str | None = dataclasses.field(default=None)
 
     _tts_instance: TTSModel = dataclasses.field(init=False, repr=False)
     _voice_state: Any = dataclasses.field(init=False, repr=False)
@@ -203,12 +216,15 @@ class AgentCall(WhisperCall):
         Yields audio chunks from
         :meth:`~pocket_tts.TTSModel.generate_audio_stream` as soon as they
         are decoded, enabling low-latency real-time delivery to the caller.
+        When :attr:`debug_audio_dir` is set the full 8 kHz PCM is also saved
+        to a WAV file for offline inspection.
 
         Args:
             text: Text to synthesise and transmit.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[np.ndarray | None] = asyncio.Queue()
+        debug_chunks: list[np.ndarray] = []
 
         def _generate() -> None:
             for chunk in self._tts_instance.generate_audio_stream(
@@ -220,19 +236,26 @@ class AgentCall(WhisperCall):
             asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
 
         future = loop.run_in_executor(None, _generate)
-        while (chunk := await queue.get()) is not None:
-            self._send_rtp_audio(chunk)
+        while (tts_chunk := await queue.get()) is not None:
+            pcm_8k = self._resample(tts_chunk, self._tts_instance.sample_rate)
+            if self.debug_audio_dir is not None:
+                debug_chunks.append(pcm_8k)
+            self._send_rtp_audio(pcm_8k)
         await future
 
+        if debug_chunks:
+            full_audio = np.concatenate(debug_chunks)
+            await loop.run_in_executor(None, self._save_debug_wav, full_audio)
+
     def _send_rtp_audio(self, audio: np.ndarray) -> None:
-        """Encode *audio* as PCMU and transmit to the caller's RTP address.
+        """Encode *audio* (float32, 8 kHz) as PCMU and transmit to the caller via RTP.
 
         Looks up the caller's remote RTP address from the shared
         :class:`~voip.rtp.RealtimeTransportProtocol` call registry and
         transmits the encoded audio as 20 ms RTP packets.
 
         Args:
-            audio: Float32 mono PCM chunk from Pocket TTS.
+            audio: Float32 mono PCM at :attr:`_PCMU_SAMPLE_RATE` Hz.
         """
         remote_addr = next(
             (addr for addr, call in self.rtp.calls.items() if call is self),
@@ -241,10 +264,32 @@ class AgentCall(WhisperCall):
         if remote_addr is None:
             logger.warning("No remote RTP address for this call; dropping audio")
             return
-        samples = self._resample(audio, self._tts_instance.sample_rate)
-        for i in range(0, len(samples), self._RTP_CHUNK_SAMPLES):
-            payload = self._encode_pcmu(samples[i : i + self._RTP_CHUNK_SAMPLES])
+        for i in range(0, len(audio), self._RTP_CHUNK_SAMPLES):
+            payload = self._encode_pcmu(audio[i : i + self._RTP_CHUNK_SAMPLES])
             self.send_datagram(self._build_rtp_packet(payload), remote_addr)
+
+    def _save_debug_wav(self, audio: np.ndarray) -> None:
+        """Save *audio* as a 16-bit mono WAV file in :attr:`debug_audio_dir`.
+
+        The filename includes a timestamp and process-unique suffix so that
+        successive responses in the same call do not overwrite each other.
+
+        Args:
+            audio: Float32 mono PCM at :attr:`_PCMU_SAMPLE_RATE` Hz.
+        """
+        os.makedirs(self.debug_audio_dir, exist_ok=True)  # type: ignore[arg-type]
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(
+            self.debug_audio_dir,  # type: ignore[arg-type]
+            f"agent_{timestamp}_{id(audio)}.wav",
+        )
+        pcm_int16 = np.clip(np.round(audio * 32768.0), -32768, 32767).astype(np.int16)
+        with wave.open(filename, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self._PCMU_SAMPLE_RATE)
+            wf.writeframes(pcm_int16.tobytes())
+        logger.debug("Saved debug audio to %s", filename)
 
     @classmethod
     def _resample(cls, audio: np.ndarray, src_rate: int) -> np.ndarray:
@@ -270,7 +315,10 @@ class AgentCall(WhisperCall):
 
     @staticmethod
     def _encode_pcmu(samples: np.ndarray) -> bytes:
-        """Encode float32 PCM samples to G.711 µ-law (PCMU) bytes.
+        """Encode float32 PCM samples to G.711 µ-law (PCMU) bytes per ITU-T G.711.
+
+        The algorithm compresses 16-bit linear PCM using logarithmic µ-law
+        companding and inverts all output bits as required by G.711 §A.2.
 
         Args:
             samples: Float32 mono PCM array in the range ``[-1, 1]``.
@@ -278,9 +326,24 @@ class AgentCall(WhisperCall):
         Returns:
             µ-law encoded bytes, one byte per input sample.
         """
-        x = np.clip(samples, -1.0, 1.0)
-        x_mu = np.sign(x) * np.log1p(255.0 * np.abs(x)) / np.log1p(255.0)
-        return np.floor((x_mu + 1.0) / 2.0 * 255.0 + 0.5).astype(np.uint8).tobytes()
+        BIAS = 0x84  # 132 — G.711 µ-law bias constant
+        CLIP = 32635  # maximum biased magnitude (14-bit saturate)
+        # Scale float32 to 16-bit signed linear PCM
+        pcm = np.clip(np.round(samples * 32768.0), -32768, 32767).astype(np.int32)
+        # Sign bit: 0x80 for positive/zero, 0x00 for negative
+        sign = np.where(pcm >= 0, 0x80, 0x00).astype(np.uint8)
+        # Biased magnitude, clipped to fit in the encoding table
+        biased = np.minimum(np.abs(pcm) + BIAS, CLIP)
+        # Segment (chord): floor(log2(biased)) − 7, clamped to [0, 7]
+        exp = np.clip(
+            np.floor(np.log2(np.maximum(biased, 1))).astype(np.int32) - 7, 0, 7
+        )
+        # 4-bit quantisation step within the segment
+        mantissa = ((biased >> (exp + 3)) & 0x0F).astype(np.uint8)
+        # Compose codeword and invert all bits (G.711 §A.2 requirement)
+        return (~(sign | (exp.astype(np.uint8) << 4) | mantissa)).astype(
+            np.uint8
+        ).tobytes()
 
     def _build_rtp_packet(self, payload: bytes) -> bytes:
         """Wrap *payload* in a minimal RTP header (RFC 3550 §5.1).

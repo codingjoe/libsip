@@ -463,7 +463,7 @@ class TestAgentCall:
             await call._respond("hello")
 
     async def test_send_speech__streams_chunks_to_send_rtp_audio(self):
-        """_send_speech iterates generate_audio_stream and passes each chunk to _send_rtp_audio."""
+        """_send_speech resamples each TTS chunk and passes it to _send_rtp_audio."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         arr1 = np.zeros(160, dtype=np.float32)
@@ -472,7 +472,8 @@ class TestAgentCall:
         chunk1.numpy.return_value = arr1
         chunk2.numpy.return_value = arr2
         tts_mock.generate_audio_stream.return_value = iter([chunk1, chunk2])
-        tts_mock.sample_rate = 24000
+        # Same as _PCMU_SAMPLE_RATE so _resample returns the same object (identity check)
+        tts_mock.sample_rate = 8000
 
         call = make_agent_call(MagicMock(), tts_mock)
         received: list[np.ndarray] = []
@@ -565,3 +566,63 @@ class TestAgentCall:
         call._build_rtp_packet(b"\x00" * 160)
         assert call._rtp_seq == 2
         assert call._rtp_ts == 320
+
+    def test_preferred_codecs__pcmu_is_first(self):
+        """AgentCall prefers PCMU so the negotiated codec matches outbound encoding."""
+        assert AgentCall.PREFERRED_CODECS[0].payload_type == 0  # PCMU
+
+    def test_encode_pcmu__silence_is_0x7f(self):
+        """Silence (0.0) must encode to 0x7F (127) per ITU-T G.711."""
+        result = AgentCall._encode_pcmu(np.zeros(1, dtype=np.float32))
+        assert result[0] == 0x7F
+
+    def test_encode_pcmu__max_positive_is_0x00(self):
+        """Maximum positive amplitude must encode to 0x00 per ITU-T G.711."""
+        result = AgentCall._encode_pcmu(np.array([1.0], dtype=np.float32))
+        assert result[0] == 0x00
+
+    def test_encode_pcmu__max_negative_is_0x80(self):
+        """Maximum negative amplitude must encode to 0x80 per ITU-T G.711."""
+        result = AgentCall._encode_pcmu(np.array([-1.0], dtype=np.float32))
+        assert result[0] == 0x80
+
+    async def test_send_speech__saves_debug_wav_when_dir_set(self, tmp_path):
+        """_send_speech saves a WAV file to debug_audio_dir after streaming."""
+        import wave as wave_module
+
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        arr = np.zeros(800, dtype=np.float32)  # 100 ms at 8 kHz
+        chunk = MagicMock()
+        chunk.numpy.return_value = arr
+        tts_mock.generate_audio_stream.return_value = iter([chunk])
+        tts_mock.sample_rate = 8000
+
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.debug_audio_dir = str(tmp_path)
+        with patch.object(call, "_send_rtp_audio"):
+            await call._send_speech("hello")
+
+        wav_files = list(tmp_path.glob("agent_*.wav"))
+        assert len(wav_files) == 1
+        with wave_module.open(str(wav_files[0]), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 8000
+
+    async def test_send_speech__no_debug_wav_when_dir_not_set(self, tmp_path):
+        """_send_speech does not write any files when debug_audio_dir is None."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        arr = np.zeros(160, dtype=np.float32)
+        chunk = MagicMock()
+        chunk.numpy.return_value = arr
+        tts_mock.generate_audio_stream.return_value = iter([chunk])
+        tts_mock.sample_rate = 8000
+
+        call = make_agent_call(MagicMock(), tts_mock)
+        assert call.debug_audio_dir is None
+        with patch.object(call, "_send_rtp_audio"):
+            await call._send_speech("hello")
+        # No files written
+        assert list(tmp_path.iterdir()) == []
