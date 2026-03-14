@@ -206,7 +206,8 @@ class AgentCall(TranscribeCall):
 
     _SYSTEM_PROMPT: ClassVar[str] = (
         "You are a helpful voice assistant on a phone call. "
-        "Keep your answers very brief and conversational. YOU MUST NOT USE EMOJIS."
+        "Keep your answers very brief and conversational."
+        "YOU MUST NOT USE EMOJIS OR OTHER NON-VERBAL CHARACTERS IN YOUR RESPONSES."
     )
     #: PCMU target sample rate (G.711 µ-law, RFC 3551).
     _PCMU_SAMPLE_RATE: ClassVar[int] = 8000
@@ -313,7 +314,6 @@ class AgentCall(TranscribeCall):
         )
         self._pending_text.clear()
         try:
-            print(self._messages)
             response = await ollama.AsyncClient().chat(
                 model=self.ollama_model,
                 messages=self._messages,

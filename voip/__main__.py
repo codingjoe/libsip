@@ -310,7 +310,7 @@ def transcribe(ctx, model):
 )
 @click.option(
     "--ollama-model",
-    default="lfm2.5-thinking",
+    default="ministral-3",
     envvar="OLLAMA_MODEL",
     show_default=True,
     help="Ollama language model name.",
