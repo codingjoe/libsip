@@ -6,8 +6,8 @@ import dataclasses
 
 from voip.sdp.messages import SessionDescription
 
-from .types import CallerID
 from ..types import ByteSerializableObject
+from .types import CallerID
 
 __all__ = ["Request", "Response", "Message"]
 
