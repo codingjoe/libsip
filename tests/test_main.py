@@ -21,7 +21,7 @@ _WHISPER_STUBS = {
     "ollama": MagicMock(),
     "pocket_tts": MagicMock(),
     "voip.audio": MagicMock(),
-    "voip.ai": MagicMock(WhisperCall=MagicMock, AgentCall=MagicMock),
+    "voip.ai": MagicMock(TranscribeCall=MagicMock, AgentCall=MagicMock),
 }
 
 

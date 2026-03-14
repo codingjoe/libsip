@@ -456,13 +456,14 @@ class AgentCall(TranscribeCall):
         Returns:
             A-law encoded bytes, one byte per input sample.
         """
-        A = 87.6  # G.711 A-law compression parameter
+        a_law = 87.6  # G.711 A-law compression parameter
         pcm = np.clip(np.abs(samples), 0, 1.0)
-        low = pcm < (1.0 / A)
+        low = pcm < (1.0 / a_law)
         compressed = np.where(
             low,
-            A * pcm / (1.0 + np.log(A)),
-            (1.0 + np.log(np.maximum(A * pcm, 1e-10))) / (1.0 + np.log(A)),
+            a_law * pcm / (1.0 + np.log(a_law)),
+            (1.0 + np.log(np.maximum(a_law * pcm, 1e-10))) / (1.0 + np.log(a_law)),
+            # 1e-10 prevents log(0) when pcm is exactly 0.0 in the high range
         )
         # Map to 7-bit integer value
         quantized = np.clip(np.round(compressed * 127), 0, 127).astype(np.uint8)
