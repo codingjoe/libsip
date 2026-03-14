@@ -15,7 +15,8 @@ import enum
 import logging
 import secrets
 import struct
-from typing import Any, ClassVar, Iterator
+from collections.abc import Iterator
+from typing import Any, ClassVar
 
 import av
 import numpy as np
@@ -195,10 +196,9 @@ class AgentCall(TranscribeCall):
         AgentCall(rtp=..., sip=..., tts_model=shared_tts)
     """
 
-    _SYSTEM_PROMPT: ClassVar[str] = (
-        "You are a helpful voice assistant on a phone call. "
+    system_prompt: str = (
+        "You are a person on a phone call. "
         "Keep your answers very brief and conversational."
-        "YOU MUST NOT USE EMOJIS OR OTHER NON-VERBAL CHARACTERS IN YOUR RESPONSES."
     )
     #: Preferred codecs in priority order (highest first).
     PREFERRED_CODECS: ClassVar[list[RTPPayloadFormat]] = [
@@ -242,7 +242,13 @@ class AgentCall(TranscribeCall):
         super().__post_init__()
         self._tts_instance = self.tts_model or TTSModel.load_model()
         self._voice_state = self._tts_instance.get_state_for_audio_prompt(self.voice)
-        self._messages = [{"role": "system", "content": self._SYSTEM_PROMPT}]
+        self._messages = [
+            {
+                "role": "system",
+                "content": self.system_prompt
+                + "\n\nYOU MUST NEVER USE NON-VERBAL CHARACTERS IN YOUR RESPONSES!",
+            }
+        ]
         self._rtp_ssrc = secrets.randbits(32)
         self._pending_text = []
         self._response_task = None
@@ -272,8 +278,6 @@ class AgentCall(TranscribeCall):
         Args:
             text: Transcribed text (already stripped).
         """
-        if not text:
-            return
         self._pending_text.append(text)
         if self._response_task is not None and not self._response_task.done():
             self._response_task.cancel()
@@ -294,7 +298,7 @@ class AgentCall(TranscribeCall):
                 model=self.ollama_model,
                 messages=self._messages,
             )
-            reply = response.message.content
+            reply = response.message.content.encode("ascii", "ignore").decode()
             self._messages.append({"role": "assistant", "content": reply})
             logger.info("Agent reply: %r", reply)
             await self._send_speech(reply)

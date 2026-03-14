@@ -322,8 +322,14 @@ def transcribe(ctx, model):
     show_default=True,
     help="Pocket TTS voice name or path to a conditioning audio file.",
 )
+@click.option(
+    "--system-prompt",
+    default=None,
+    envvar="LLM_SYSTEM_PROMPT",
+    help=("System prompt for the language model."),
+)
 @click.pass_context
-def agent(ctx, model, ollama_model, voice):
+def agent(ctx, model, ollama_model, voice, system_prompt):
     r"""Register with a SIP carrier and handle calls with an AI voice agent.
 
     Incoming speech is transcribed with Whisper, processed by an Ollama
@@ -348,7 +354,12 @@ def agent(ctx, model, ollama_model, voice):
     proxy_addr = obj["proxy_addr"]
     verbose = obj.get("verbose", 0)
 
-    _model, _ollama_model, _voice = model, ollama_model, voice
+    _model, _ollama_model, _voice, _system_prompt = (
+        model,
+        ollama_model,
+        voice,
+        system_prompt,
+    )
 
     @dataclasses.dataclass(kw_only=True)
     class AgentCallWithOutput(AgentCall):
@@ -357,6 +368,7 @@ def agent(ctx, model, ollama_model, voice):
         model: str = dataclasses.field(default=_model)
         ollama_model: str = dataclasses.field(default=_ollama_model)
         voice: str = dataclasses.field(default=_voice)
+        system_prompt: str = dataclasses.field(default=_system_prompt)
 
         def transcription_received(self, text: str) -> None:
             click.echo(click.style(f"User:  {text}", fg="blue", bold=True))

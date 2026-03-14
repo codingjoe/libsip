@@ -14,6 +14,6 @@ The base `Call` class handles the association between a SIP dialog and the RTP m
 
 ## AI Calls
 
-::: voip.ai.WhisperCall
+::: voip.ai.TranscribeCall
 
 ::: voip.ai.AgentCall
