@@ -108,8 +108,11 @@ class ConsoleMessageProcessor:
 
 @click.group()
 @click.option("-v", "--verbose", count=True, help="Increase verbosity.")
-def voip(verbose: int = 0):
+@click.pass_context
+def voip(ctx, verbose: int = 0):
     """VoIP CLI."""
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
     logging.basicConfig(
         level=max(10, 10 * (4 - verbose)),
         format="%(levelname)s: [%(asctime)s] (%(name)s) %(message)s",

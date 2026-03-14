@@ -177,6 +177,7 @@ class AgentCall(WhisperCall):
     _rtp_seq: int = dataclasses.field(init=False, repr=False, default=0)
     _rtp_ts: int = dataclasses.field(init=False, repr=False, default=0)
     _rtp_ssrc: int = dataclasses.field(init=False, repr=False)
+    _response_lock: asyncio.Lock = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -184,6 +185,7 @@ class AgentCall(WhisperCall):
         self._voice_state = self._tts_instance.get_state_for_audio_prompt(self.voice)
         self._messages = [{"role": "system", "content": self._SYSTEM_PROMPT}]
         self._rtp_ssrc = secrets.randbits(32)
+        self._response_lock = asyncio.Lock()
 
     def transcription_received(self, text: str) -> None:
         """Schedule an async Ollama→TTS→RTP response for *text*.
@@ -195,20 +197,21 @@ class AgentCall(WhisperCall):
 
     async def _respond(self, text: str) -> None:
         """Fetch an Ollama reply for *text* and send as speech via RTP."""
-        try:
-            self._messages.append({"role": "user", "content": text})
-            response = await ollama.AsyncClient().chat(
-                model=self.ollama_model,
-                messages=self._messages,
-            )
-            reply = response.message.content
-            self._messages.append({"role": "assistant", "content": reply})
-            logger.info("Agent reply: %r", reply)
-            await self._send_speech(reply)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Error while generating agent response")
+        async with self._response_lock:
+            try:
+                self._messages.append({"role": "user", "content": text})
+                response = await ollama.AsyncClient().chat(
+                    model=self.ollama_model,
+                    messages=self._messages,
+                )
+                reply = response.message.content
+                self._messages.append({"role": "assistant", "content": reply})
+                logger.info("Agent reply: %r", reply)
+                await self._send_speech(reply)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Error while generating agent response")
 
     async def _send_speech(self, text: str) -> None:
         """Stream synthesised speech from Pocket TTS and send via RTP.

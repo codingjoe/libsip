@@ -25,7 +25,7 @@ Async VoIP Python library for the AI age.
 Answer calls and transcribe them live from the terminal:
 
 ```console
-SIP_PASSWORD=******** uvx voip sip sips:alice@sip.example.com agent
+SIP_PASSWORD=******** uvx voip sip sips:alice@sip.example.com transcribe
 ```
 
 You can also talk to a local agent (needs [Ollama]):

@@ -7,10 +7,9 @@ import dataclasses
 from voip.sdp.messages import SessionDescription
 
 from .types import CallerID
+from ..types import ByteSerializableObject
 
 __all__ = ["Request", "Response", "Message"]
-
-from ..types import ByteSerializableObject
 
 #: Headers whose values are parsed as `CallerID` objects.
 _CALLER_HEADERS = frozenset({"From", "To"})
