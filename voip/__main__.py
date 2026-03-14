@@ -230,7 +230,7 @@ async def _connect_sip(
 @sip.command()
 @click.option(
     "--model",
-    default="base",
+    default="large-v3-turbo",
     envvar="WHISPER_MODEL",
     show_default=True,
     help="Whisper model size.",
@@ -300,7 +300,7 @@ def transcribe(ctx, model):
 @sip.command()
 @click.option(
     "--model",
-    default="base",
+    default="large-v3-turbo",
     envvar="WHISPER_MODEL",
     show_default=True,
     help="Whisper model size.",
