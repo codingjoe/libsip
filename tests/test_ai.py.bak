@@ -91,6 +91,30 @@ class TestWhisperCall:
         wm_cls.assert_not_called()
         assert call._whisper_model is model_instance
 
+    def test_class_attrs__chunk_duration(self):
+        """chunk_duration is 0 so every RTP packet is decoded immediately for VAD."""
+        assert TranscribeCall.chunk_duration == 0
+
+    def test_init__packet_threshold__opus(self):
+        """_packet_threshold is 1 for Opus with chunk_duration=0 (per-packet emit)."""
+        call = make_whisper_call(MagicMock(), media=OPUS_MEDIA)
+        assert call._packet_threshold == 1
+
+    def test_init__packet_threshold__g722(self):
+        """_packet_threshold is 1 for G.722 with chunk_duration=0 (per-packet emit)."""
+        call = make_whisper_call(MagicMock(), media=G722_MEDIA)
+        assert call._packet_threshold == 1
+
+    def test_init__packet_threshold__pcma(self):
+        """_packet_threshold is 1 for PCMA with chunk_duration=0 (per-packet emit)."""
+        call = make_whisper_call(MagicMock(), media=PCMA_MEDIA)
+        assert call._packet_threshold == 1
+
+    def test_init__packet_threshold__pcmu(self):
+        """_packet_threshold is 1 for PCMU with chunk_duration=0 (per-packet emit)."""
+        call = make_whisper_call(MagicMock(), media=PCMU_MEDIA)
+        assert call._packet_threshold == 1
+
     def test_init__stores_media(self):
         """Media is stored and accessible as self.media."""
         call = make_whisper_call(MagicMock())
@@ -107,43 +131,54 @@ class TestWhisperCall:
         assert call.payload_type == RTPPayloadType.PCMA
 
     def test_audio_received__initializes_vad_state(self):
-        """WhisperCall starts with an empty speech buffer and no timer."""
+        """WhisperCall starts with an empty speech buffer and not-speaking state."""
         call = make_whisper_call(MagicMock())
         assert call._speech_buffer == []
+        assert not call._in_speech
         assert call._transcription_handle is None
 
-    def test_audio_received__silence_audio_accumulates_in_buffer(self):
-        """Silence audio (below speech_threshold) is still buffered for transcription."""
+    def test_audio_received__silence_audio_does_not_accumulate(self):
+        """Silence audio (below speech_threshold) is not added to the speech buffer."""
         call = make_whisper_call(MagicMock())
-        with patch("voip.ai.asyncio.get_event_loop"):
-            call.audio_received(audio=np.zeros(320, dtype=np.float32), rms=0.0)
-        assert len(call._speech_buffer) == 1
+        call.audio_received(np.zeros(320, dtype=np.float32))  # RMS=0 < 0.01
+        assert call._speech_buffer == []
+        assert not call._in_speech
 
     def test_audio_received__speech_audio_accumulates_in_buffer(self):
         """Audio above speech_threshold is added to _speech_buffer."""
         call = make_whisper_call(MagicMock())
-        speech = np.ones(320, dtype=np.float32) * 0.6
-        call.audio_received(audio=speech, rms=0.6)
+        speech = np.ones(320, dtype=np.float32) * 0.5  # RMS=0.5 > 0.01
+        call.audio_received(speech)
         assert len(call._speech_buffer) == 1
+        assert call._in_speech
 
-    def test_audio_received__silence_arms_transcription_timer(self):
-        """Silence arms the transcription debounce timer."""
+    def test_audio_received__silence_after_speech_arms_transcription_timer(self):
+        """Silence after speech arms the transcription debounce timer."""
         call = make_whisper_call(MagicMock())
+        call.audio_received(np.ones(320, dtype=np.float32) * 0.5)  # speech
         with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
             handle = MagicMock()
             mock_loop.return_value.call_later.return_value = handle
-            call.audio_received(audio=np.zeros(320, dtype=np.float32), rms=0.0)
+            call.audio_received(np.zeros(320, dtype=np.float32))  # silence
         mock_loop.return_value.call_later.assert_called_once_with(
             call.silence_gap, call._flush_speech_buffer
         )
         assert call._transcription_handle is handle
 
+    def test_audio_received__silence_without_prior_speech_does_not_arm_timer(self):
+        """Silence at call start (no prior speech) does not arm the timer."""
+        call = make_whisper_call(MagicMock())
+        with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
+            call.audio_received(np.zeros(320, dtype=np.float32))
+        mock_loop.return_value.call_later.assert_not_called()
+
     def test_audio_received__silence_does_not_rearm_when_timer_running(self):
         """A second silence packet does not create a second timer."""
         call = make_whisper_call(MagicMock())
+        call._in_speech = True
         call._transcription_handle = MagicMock()
         with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
-            call.audio_received(audio=np.zeros(320, dtype=np.float32), rms=0.0)
+            call.audio_received(np.zeros(320, dtype=np.float32))
         mock_loop.return_value.call_later.assert_not_called()
 
     def test_audio_received__speech_cancels_pending_timer(self):
@@ -151,16 +186,15 @@ class TestWhisperCall:
         call = make_whisper_call(MagicMock())
         handle = MagicMock()
         call._transcription_handle = handle
-        call.audio_received(audio=np.ones(320, dtype=np.float32) * 0.6, rms=0.6)
+        call.audio_received(np.ones(320, dtype=np.float32) * 0.5)
         handle.cancel.assert_called_once()
         assert call._transcription_handle is None
 
-    def test_audio_received__empty_array_accumulates_in_buffer(self):
-        """Zero-length audio arrays are accepted into the speech buffer."""
+    def test_audio_received__empty_array_is_ignored(self):
+        """Zero-length audio arrays are silently skipped."""
         call = make_whisper_call(MagicMock())
-        with patch("voip.ai.asyncio.get_event_loop"):
-            call.audio_received(audio=np.zeros(0, dtype=np.float32), rms=0.0)
-        assert len(call._speech_buffer) == 1
+        call.audio_received(np.zeros(0, dtype=np.float32))
+        assert call._speech_buffer == []
 
     async def test_flush_speech_buffer__transcribes_accumulated_audio(self):
         """_flush_speech_buffer concatenates speech and schedules transcription."""
@@ -175,14 +209,14 @@ class TestWhisperCall:
                 transcriptions.append(text)
 
         call = make_whisper_call(model_mock, Capture)
-        chunk = np.ones(320, dtype=np.float32) * 0.6
+        chunk = np.ones(320, dtype=np.float32) * 0.5
         call._speech_buffer = [chunk]
-        # Set silence_gap=0 so the minimum-length check passes with one chunk.
-        call.silence_gap = 0
+        call._in_speech = True
         call._flush_speech_buffer()
         await asyncio.sleep(0.1)
         assert transcriptions == ["hello"]
         assert call._speech_buffer == []
+        assert not call._in_speech
 
     def test_flush_speech_buffer__no_op_when_buffer_empty(self):
         """_flush_speech_buffer does nothing when the speech buffer is empty."""
@@ -192,12 +226,14 @@ class TestWhisperCall:
         mock_ct.assert_not_called()
 
     def test_flush_speech_buffer__resets_state(self):
-        """_flush_speech_buffer clears _transcription_handle and the speech buffer."""
+        """_flush_speech_buffer clears _transcription_handle and _in_speech."""
         call = make_whisper_call(MagicMock())
+        call._in_speech = True
         call._transcription_handle = MagicMock()
         call._speech_buffer = [np.zeros(1, dtype=np.float32)]
         with patch("voip.ai.asyncio.create_task"):
             call._flush_speech_buffer()
+        assert not call._in_speech
         assert call._transcription_handle is None
 
     async def test_transcribe__strips_whitespace(self):
@@ -264,11 +300,11 @@ class TestWhisperCall:
         assert result.dtype == np.float32
 
     def test_decode_via_av__raises_on_av_error(self):
-        """Propagate the underlying error when PyAV raises during decoding."""
+        """Raise RuntimeError when PyAV raises AVError."""
         call = make_whisper_call(MagicMock())
         with (
             patch("voip.audio.av") as mock_av,
-            pytest.raises(RuntimeError, match="av error"),
+            pytest.raises(RuntimeError, match="Audio decoding failed"),
         ):
             mock_av.AVError = RuntimeError
             mock_av.audio.resampler.AudioResampler.return_value = MagicMock()
@@ -282,7 +318,7 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_raw(b"pkt")
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "ogg"
 
@@ -293,7 +329,7 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_raw(b"pkt")
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "alaw"
 
@@ -304,7 +340,7 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_raw(b"pkt")
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "mulaw"
 
@@ -315,9 +351,16 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_raw(b"pkt")
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_format") == "g722"
+
+    def test_decode_raw__unknown__raises(self):
+        """Raise NotImplementedError for unsupported encoding names."""
+        unknown_media = _make_media("99")
+        call = make_whisper_call(MagicMock(), media=unknown_media)
+        with pytest.raises(NotImplementedError, match="Unsupported"):
+            call._decode_raw([b"pkt"])
 
     def test_decode_raw__uses_sample_rate_from_media(self):
         """Pass the sample rate from the MediaDescription to _decode_via_av."""
@@ -327,19 +370,17 @@ class TestWhisperCall:
         with patch.object(
             call, "_decode_via_av", return_value=np.zeros(16000, dtype=np.float32)
         ) as mock_decode:
-            call._decode_raw(b"pkt")
+            call._decode_raw([b"pkt"])
         kwargs = mock_decode.call_args[1]
         assert kwargs.get("input_sample_rate") == 16000
 
-    async def test_transcribe__raises_on_general_error(self):
-        """Exceptions from transcription propagate to the caller."""
+    async def test_transcribe__logs_exception_on_general_error(self):
+        """Non-CancelledError exceptions are logged without re-raising."""
         call = make_whisper_call(MagicMock())
-        with (
-            patch.object(
-                call, "_run_transcription", side_effect=RuntimeError("model error")
-            ),
-            pytest.raises(RuntimeError, match="model error"),
+        with patch.object(
+            call, "_run_transcription", side_effect=RuntimeError("model error")
         ):
+            # Must not raise — exception is swallowed and logged
             await call._transcribe(np.zeros(16000, dtype=np.float32))
 
     async def test_transcribe__cancelled_error_is_re_raised(self):
@@ -369,6 +410,17 @@ class TestWhisperCall:
         call = make_whisper_call(model_mock, Capture)
         await call._transcribe(np.zeros(16000, dtype=np.float32))
         assert transcriptions == []
+
+    @pytest.mark.asyncio
+    async def test_audio_received__logs_debug(self, caplog):
+        """Log a debug message for each received audio frame."""
+        import logging
+
+        call = make_whisper_call(MagicMock())
+        with caplog.at_level(logging.DEBUG, logger="voip.ai"):
+            call.audio_received(np.zeros(1, dtype=np.float32))
+            await asyncio.sleep(0)  # let the task run so coroutine is not left dangling
+        assert any("Audio received" in r.message for r in caplog.records)
 
 
 class TestAgentCall:
@@ -422,39 +474,60 @@ class TestAgentCall:
         tts_mock.get_state_for_audio_prompt.assert_called_once_with("alba")
         assert call._voice_state is voice_state
 
-    def test_init__opus_media__sets_rtp_fields(self):
-        """Opus media sets 48 kHz sample rate, 960-sample chunks, and 960 ts-increment."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=OPUS_MEDIA)
-        assert call._rtp_sample_rate == 48000
-        assert call._rtp_chunk_samples == 960
-        assert call._rtp_ts_increment == 960
-
-    def test_init__g722_media__sets_rtp_fields(self):
-        """G.722 media sets 16 kHz audio but uses 8 kHz RTP clock (160 ts-increment)."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=G722_MEDIA)
-        assert call._rtp_sample_rate == 16000
-        assert call._rtp_chunk_samples == 320
-        assert call._rtp_ts_increment == 160
-
-    def test_init__pcmu_media__sets_rtp_fields(self):
-        """PCMU media sets 8 kHz sample rate, 160-sample chunks and ts-increment."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
-        assert call._rtp_sample_rate == 8000
-        assert call._rtp_chunk_samples == 160
-        assert call._rtp_ts_increment == 160
-
-    def test_init__initializes_pending_state(self):
-        """AgentCall starts with empty pending text and no response task."""
+    def test_transcription_received__ignores_empty_text(self):
+        """transcription_received does not buffer empty text."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
+        call.transcription_received("")
         assert call._pending_text == []
+
+    def test_transcription_received__buffers_non_empty_text_when_timer_active(self):
+        """transcription_received buffers text when the silence timer is running."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._silence_handle = MagicMock()
+        with patch.object(call, "_trigger_response") as mock_trigger:
+            call.transcription_received("hello")
+        assert call._pending_text == ["hello"]
+        mock_trigger.assert_not_called()
+
+    def test_transcription_received__triggers_response_when_timer_already_fired(self):
+        """transcription_received immediately triggers a response when the debounce timer has already fired.
+
+        This fixes the race condition where Whisper inference finishes after the
+        silence debounce timer has already checked _pending_text and found it empty.
+        """
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._silence_handle = None
+        assert call._state is AgentState.LISTENING
+        with patch.object(call, "_trigger_response") as mock_trigger:
+            call.transcription_received("hello world")
+        mock_trigger.assert_called_once()
+
+    def test_transcription_received__does_not_trigger_when_thinking(self):
+        """transcription_received does not trigger if state is not LISTENING."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.THINKING
+        call._silence_handle = None
+        with patch.object(call, "_trigger_response") as mock_trigger:
+            call.transcription_received("hello")
+        mock_trigger.assert_not_called()
+        assert call._pending_text == ["hello"]
+
+    def test_init__state_is_listening(self):
+        """Initial state is LISTENING."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        assert call._state is AgentState.LISTENING
+        assert call._pending_text == []
+        assert call._silence_handle is None
         assert call._response_task is None
 
     def test_init__initializes_chat_history_with_system_prompt(self):
@@ -466,52 +539,11 @@ class TestAgentCall:
         assert call._messages[0]["role"] == "system"
         assert "phone" in call._messages[0]["content"].lower()
 
-    def test_transcription_received__ignores_empty_text(self):
-        """transcription_received does not buffer empty text."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock)
-        call.transcription_received("")
-        assert call._pending_text == []
-
-    def test_transcription_received__buffers_non_empty_text(self):
-        """transcription_received buffers text and creates a response task."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock)
-        with patch("voip.ai.asyncio.create_task") as mock_ct:
-            call.transcription_received("hello")
-        assert call._pending_text == ["hello"]
-        mock_ct.assert_called_once()
-
-    def test_transcription_received__schedules_response_task(self):
-        """transcription_received creates and stores a response task."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock)
-        with patch("voip.ai.asyncio.create_task") as mock_ct:
-            call.transcription_received("hello world")
-        mock_ct.assert_called_once()
-        assert call._response_task is mock_ct.return_value
-
-    def test_transcription_received__cancels_running_task_before_creating_new(self):
-        """transcription_received cancels any existing response task."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock)
-        old_task = MagicMock()
-        old_task.done.return_value = False
-        call._response_task = old_task
-        with patch("voip.ai.asyncio.create_task"):
-            call.transcription_received("hello")
-        old_task.cancel.assert_called_once()
-
     async def test_respond__calls_ollama_and_sends_speech(self):
         """_respond fetches an Ollama reply, records it in history, and sends speech."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
-        call._pending_text = ["hello"]
         mock_response = MagicMock()
         mock_response.message.content = "I am an AI assistant."
         with (
@@ -523,7 +555,7 @@ class TestAgentCall:
             mock_client = MagicMock()
             mock_client.chat = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
-            await call._respond()
+            await call._respond("hello")
 
         mock_send_speech.assert_awaited_once_with("I am an AI assistant.")
         assert {"role": "user", "content": "hello"} in call._messages
@@ -537,7 +569,6 @@ class TestAgentCall:
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
-        call._pending_text = ["hello"]
         mock_response = MagicMock()
         mock_response.message.content = "reply"
         with (
@@ -547,7 +578,7 @@ class TestAgentCall:
             mock_client = MagicMock()
             mock_client.chat = AsyncMock(return_value=mock_response)
             mock_client_cls.return_value = mock_client
-            await call._respond()
+            await call._respond("hello")
         _, kwargs = mock_client.chat.call_args
         messages = kwargs.get("messages") or mock_client.chat.call_args[0][0]
         # First message is the system prompt
@@ -561,7 +592,6 @@ class TestAgentCall:
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
-        call._pending_text = ["hello"]
         with (
             patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
             caplog.at_level(logging.ERROR, logger="voip.ai"),
@@ -569,7 +599,7 @@ class TestAgentCall:
             mock_client = MagicMock()
             mock_client.chat = AsyncMock(side_effect=RuntimeError("ollama error"))
             mock_client_cls.return_value = mock_client
-            await call._respond()
+            await call._respond("hello")
         assert any("agent response" in r.message for r in caplog.records)
 
     async def test_respond__re_raises_cancelled_error(self):
@@ -577,7 +607,6 @@ class TestAgentCall:
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
-        call._pending_text = ["hello"]
         initial_history_len = len(call._messages)
         with (
             patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
@@ -586,9 +615,10 @@ class TestAgentCall:
             mock_client = MagicMock()
             mock_client.chat = AsyncMock(side_effect=asyncio.CancelledError())
             mock_client_cls.return_value = mock_client
-            await call._respond()
+            await call._respond("hello")
         # Partial user turn must be rolled back to keep history consistent
         assert len(call._messages) == initial_history_len
+        assert call._state is AgentState.LISTENING
 
     async def test_send_speech__streams_chunks_to_send_rtp_audio(self):
         """_send_speech resamples each TTS chunk and passes it to _send_rtp_audio."""
@@ -600,10 +630,10 @@ class TestAgentCall:
         chunk1.numpy.return_value = arr1
         chunk2.numpy.return_value = arr2
         tts_mock.generate_audio_stream.return_value = iter([chunk1, chunk2])
-        # Match PCMU _rtp_sample_rate so _resample returns the same array (identity check)
+        # Same as _PCMU_SAMPLE_RATE so _resample returns the same object (identity check)
         tts_mock.sample_rate = 8000
 
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
+        call = make_agent_call(MagicMock(), tts_mock)
         received: list[np.ndarray] = []
 
         async def _capture(audio: np.ndarray) -> None:
@@ -620,7 +650,8 @@ class TestAgentCall:
         """_send_rtp_audio sends RTP packets to the caller's registered address."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
+        tts_mock.sample_rate = 8000  # same as PCMU — no resampling needed
+        call = make_agent_call(MagicMock(), tts_mock)
 
         remote_addr = ("10.0.0.1", 5004)
         call.rtp.calls = {remote_addr: call}
@@ -639,6 +670,7 @@ class TestAgentCall:
 
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        tts_mock.sample_rate = 8000
         call = make_agent_call(MagicMock(), tts_mock)
         call.rtp.calls = {}
 
@@ -653,13 +685,13 @@ class TestAgentCall:
     def test_resample__downsamples_from_24khz_to_8khz(self):
         """_resample reduces 24 000 samples at 24 kHz to 8 000 samples at 8 kHz."""
         audio = np.zeros(24000, dtype=np.float32)
-        result = AgentCall._resample(audio, 24000, 8000)
+        result = AgentCall._resample(audio, 24000)
         assert len(result) == 8000
 
     def test_resample__passthrough_when_rate_matches(self):
-        """_resample returns the original array unchanged when rates are equal."""
+        """_resample returns the original array unchanged when already at 8 kHz."""
         audio = np.zeros(8000, dtype=np.float32)
-        result = AgentCall._resample(audio, 8000, 8000)
+        result = AgentCall._resample(audio, 8000)
         assert result is audio
 
     def test_encode_pcmu__returns_one_byte_per_sample(self):
@@ -675,86 +707,6 @@ class TestAgentCall:
         result = AgentCall._encode_pcmu(samples)
         assert result[0] in (127, 128)
 
-    def test_encode_pcma__returns_one_byte_per_sample(self):
-        """_encode_pcma returns a bytes object with one byte per input sample."""
-        result = AgentCall._encode_pcma(np.zeros(160, dtype=np.float32))
-        assert isinstance(result, bytes)
-        assert len(result) == 160
-
-    def test_encode_pcma__silence_encodes_consistently(self):
-        """Zero-amplitude samples all encode to the same A-law codeword."""
-        result = AgentCall._encode_pcma(np.zeros(10, dtype=np.float32))
-        assert all(b == result[0] for b in result)
-
-    def test_encode_via_av__g722_returns_bytes(self):
-        """_encode_via_av produces non-empty bytes for G.722."""
-        result = AgentCall._encode_via_av(
-            np.zeros(320, dtype=np.float32), "g722", 16000
-        )
-        assert isinstance(result, bytes)
-        assert len(result) > 0
-
-    def test_encode_via_av__opus_returns_bytes(self):
-        """_encode_via_av produces non-empty bytes for Opus (libopus)."""
-        result = AgentCall._encode_via_av(
-            np.zeros(960, dtype=np.float32), "libopus", 48000
-        )
-        assert isinstance(result, bytes)
-        assert len(result) > 0
-
-    def test_encode_audio__dispatches_to_pcmu(self):
-        """_encode_audio delegates to _encode_pcmu for PCMU media."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
-        samples = np.zeros(160, dtype=np.float32)
-        with patch.object(
-            AgentCall, "_encode_pcmu", return_value=b"x" * 160
-        ) as mock_enc:
-            call._encode_audio(samples)
-        mock_enc.assert_called_once_with(samples)
-
-    def test_encode_audio__dispatches_to_pcma(self):
-        """_encode_audio delegates to _encode_pcma for PCMA media."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMA_MEDIA)
-        samples = np.zeros(160, dtype=np.float32)
-        with patch.object(
-            AgentCall, "_encode_pcma", return_value=b"x" * 160
-        ) as mock_enc:
-            call._encode_audio(samples)
-        mock_enc.assert_called_once_with(samples)
-
-    def test_encode_audio__dispatches_to_g722(self):
-        """_encode_audio delegates to _encode_via_av with g722 for G.722 media."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=G722_MEDIA)
-        samples = np.zeros(320, dtype=np.float32)
-        with patch.object(AgentCall, "_encode_via_av", return_value=b"x") as mock_enc:
-            call._encode_audio(samples)
-        mock_enc.assert_called_once_with(samples, "g722", 16000)
-
-    def test_encode_audio__dispatches_to_opus(self):
-        """_encode_audio delegates to _encode_via_av with libopus for Opus media."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=OPUS_MEDIA)
-        samples = np.zeros(960, dtype=np.float32)
-        with patch.object(AgentCall, "_encode_via_av", return_value=b"x") as mock_enc:
-            call._encode_audio(samples)
-        mock_enc.assert_called_once_with(samples, "libopus", 48000)
-
-    def test_encode_audio__raises_for_unsupported_codec(self):
-        """_encode_audio raises NotImplementedError for unrecognised encoding names."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
-        call._encoding_name = "h264"
-        with pytest.raises(NotImplementedError, match="Unsupported outbound codec"):
-            call._encode_audio(np.zeros(160, dtype=np.float32))
-
     def test_build_rtp_packet__has_twelve_byte_header(self):
         """_build_rtp_packet prepends a 12-byte RTP header to the payload."""
         tts_mock = MagicMock()
@@ -769,7 +721,7 @@ class TestAgentCall:
         """Each _build_rtp_packet call increments seq by 1 and ts by chunk size."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
+        call = make_agent_call(MagicMock(), tts_mock)
         call._build_rtp_packet(b"\x00" * 160)
         assert call._rtp_seq == 1
         assert call._rtp_ts == 160
@@ -777,17 +729,9 @@ class TestAgentCall:
         assert call._rtp_seq == 2
         assert call._rtp_ts == 320
 
-    def test_build_rtp_packet__uses_negotiated_payload_type(self):
-        """_build_rtp_packet uses the negotiated payload type in the RTP header."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMA_MEDIA)
-        packet = call._build_rtp_packet(b"\x00" * 160)
-        assert packet[1] == RTPPayloadType.PCMA
-
-    def test_preferred_codecs__opus_is_first(self):
-        """AgentCall prefers Opus as the highest-priority outbound codec."""
-        assert AgentCall.PREFERRED_CODECS[0].payload_type == RTPPayloadType.OPUS
+    def test_preferred_codecs__pcmu_is_first(self):
+        """AgentCall prefers PCMU so the negotiated codec matches outbound encoding."""
+        assert AgentCall.PREFERRED_CODECS[0].payload_type == 0  # PCMU
 
     def test_encode_pcmu__silence_is_0x7f(self):
         """Silence (0.0) must encode to 0x7F (127) per ITU-T G.711."""
@@ -804,15 +748,57 @@ class TestAgentCall:
         result = AgentCall._encode_pcmu(np.array([-1.0], dtype=np.float32))
         assert result[0] == 0x80
 
-    async def test_send_rtp_audio__paces_packets_at_20ms_intervals(self):
-        """_send_rtp_audio sleeps _rtp_packet_duration seconds between each packet."""
+    async def test_send_speech__saves_debug_wav_when_dir_set(self, tmp_path):
+        """_send_speech saves a WAV file to debug_audio_dir after streaming."""
+        import wave as wave_module
+
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
+        arr = np.zeros(800, dtype=np.float32)  # 100 ms at 8 kHz
+        chunk = MagicMock()
+        chunk.numpy.return_value = arr
+        tts_mock.generate_audio_stream.return_value = iter([chunk])
+        tts_mock.sample_rate = 8000
+
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.debug_audio_dir = str(tmp_path)
+        with patch.object(call, "_send_rtp_audio", new_callable=AsyncMock):
+            await call._send_speech("hello")
+
+        wav_files = list(tmp_path.glob("agent_*.wav"))
+        assert len(wav_files) == 1
+        with wave_module.open(str(wav_files[0]), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 8000
+
+    async def test_send_speech__no_debug_wav_when_dir_not_set(self, tmp_path):
+        """_send_speech does not write any files when debug_audio_dir is None."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        arr = np.zeros(160, dtype=np.float32)
+        chunk = MagicMock()
+        chunk.numpy.return_value = arr
+        tts_mock.generate_audio_stream.return_value = iter([chunk])
+        tts_mock.sample_rate = 8000
+
+        call = make_agent_call(MagicMock(), tts_mock)
+        assert call.debug_audio_dir is None
+        with patch.object(call, "_send_rtp_audio", new_callable=AsyncMock):
+            await call._send_speech("hello")
+        # No files written
+        assert list(tmp_path.iterdir()) == []
+
+    async def test_send_rtp_audio__paces_packets_at_20ms_intervals(self):
+        """_send_rtp_audio sleeps _RTP_PACKET_DURATION seconds between each packet."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        tts_mock.sample_rate = 8000
+        call = make_agent_call(MagicMock(), tts_mock)
         remote_addr = ("10.0.0.2", 5006)
         call.rtp.calls = {remote_addr: call}
 
-        # Two 20 ms packets at 8 kHz (320 samples total at chunk_samples=160)
+        # Two 20 ms packets (320 samples total)
         audio = np.zeros(320, dtype=np.float32)
         sleep_calls: list[float] = []
         original_sleep = asyncio.sleep
@@ -828,7 +814,7 @@ class TestAgentCall:
             await call._send_rtp_audio(audio)
 
         assert len(sleep_calls) == 2
-        assert all(s == call._rtp_packet_duration for s in sleep_calls)
+        assert all(s == AgentCall._RTP_PACKET_DURATION for s in sleep_calls)
 
 
 class TestAgentState:
@@ -844,7 +830,7 @@ class TestAgentState:
 
 
 class TestAgentCallVAD:
-    """Tests for the VAD energy estimation in AgentCall."""
+    """Tests for the VAD state machine in AgentCall."""
 
     def test_estimate_payload_rms__silent_bytes_return_zero(self):
         """Constant bytes (silence-like signal) give near-zero std-dev RMS."""
@@ -859,3 +845,270 @@ class TestAgentCallVAD:
         payload = bytes([0, 255] * 80)
         rms = AgentCall._estimate_payload_rms(payload)
         assert rms > 0.5
+
+    def test_on_speech__cancels_silence_handle(self):
+        """_on_speech cancels the pending silence debounce timer."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        handle = MagicMock()
+        call._silence_handle = handle
+        call._on_speech()
+        handle.cancel.assert_called_once()
+        assert call._silence_handle is None
+
+    def test_on_speech__in_thinking_cancels_response_task(self):
+        """_on_speech cancels the response task when THINKING."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.THINKING
+        task = MagicMock()
+        task.done.return_value = False
+        call._response_task = task
+        call._on_speech()
+        task.cancel.assert_called_once()
+        assert call._state is AgentState.LISTENING
+        assert call._response_task is None
+
+    def test_on_speech__in_speaking_cancels_response_task(self):
+        """_on_speech cancels the response task when SPEAKING."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.SPEAKING
+        task = MagicMock()
+        task.done.return_value = False
+        call._response_task = task
+        call._on_speech()
+        task.cancel.assert_called_once()
+        assert call._state is AgentState.LISTENING
+
+    def test_on_speech__in_speaking_clears_pending_text(self):
+        """_on_speech clears buffered transcriptions when interrupting."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.SPEAKING
+        call._pending_text = ["hello", "world"]
+        task = MagicMock()
+        task.done.return_value = False
+        call._response_task = task
+        call._on_speech()
+        assert call._pending_text == []
+
+    def test_on_speech__in_listening_does_nothing_to_state(self):
+        """_on_speech in LISTENING state does not change state."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        assert call._state is AgentState.LISTENING
+        call._on_speech()
+        assert call._state is AgentState.LISTENING
+
+    def test_on_silence__arms_debounce_timer_when_listening(self):
+        """_on_silence schedules a call_later when LISTENING with no timer."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        handle = MagicMock()
+        with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
+            mock_loop.return_value.call_later.return_value = handle
+            call._on_silence()
+        mock_loop.return_value.call_later.assert_called_once_with(
+            call.silence_duration, call._trigger_response
+        )
+        assert call._silence_handle is handle
+
+    def test_on_silence__does_not_rearm_when_timer_already_running(self):
+        """_on_silence does not create a second timer when one is running."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._silence_handle = MagicMock()  # timer already set
+        with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
+            call._on_silence()
+        mock_loop.return_value.call_later.assert_not_called()
+
+    def test_on_silence__ignored_when_not_listening(self):
+        """_on_silence does nothing when agent is THINKING or SPEAKING."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.THINKING
+        with patch("voip.ai.asyncio.get_event_loop") as mock_loop:
+            call._on_silence()
+        mock_loop.return_value.call_later.assert_not_called()
+
+    def test_trigger_response__does_nothing_when_no_pending_text(self):
+        """_trigger_response is a no-op when _pending_text is empty."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        with patch("voip.ai.asyncio.create_task") as mock_ct:
+            call._trigger_response()
+        mock_ct.assert_not_called()
+        assert call._state is AgentState.LISTENING
+
+    def test_trigger_response__combines_pending_text_and_schedules_task(self):
+        """_trigger_response joins pending text and creates the response task."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._pending_text = ["hello", "world"]
+        with patch("voip.ai.asyncio.create_task") as mock_ct:
+            call._trigger_response()
+        mock_ct.assert_called_once()
+        assert call._state is AgentState.THINKING
+        assert call._pending_text == []
+
+    def test_datagram_received__speech_payload_calls_on_speech(self):
+        """datagram_received calls _on_speech for high-energy payloads."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        # Build a minimal RTP packet with a high-energy payload
+        high_energy_payload = bytes([0, 255] * 80)  # alternating → high std
+        import struct
+
+        header = struct.pack(">BBHII", 0x80, 0, 0, 0, 0x12345678)
+        rtp_packet = header + high_energy_payload
+        with (
+            patch.object(call, "_on_speech") as mock_speech,
+            patch.object(call, "_on_silence") as mock_silence,
+            # Bypass the parent's audio buffering so we can test in isolation
+            patch("voip.audio.AudioCall.datagram_received"),
+        ):
+            call.datagram_received(rtp_packet, ("1.2.3.4", 5004))
+        mock_speech.assert_called_once()
+        mock_silence.assert_not_called()
+
+    def test_datagram_received__silent_payload_calls_on_silence(self):
+        """datagram_received calls _on_silence for low-energy payloads."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        # All-same bytes → zero std → silence
+        silence_payload = bytes([127] * 160)
+        import struct
+
+        header = struct.pack(">BBHII", 0x80, 0, 0, 0, 0x12345678)
+        rtp_packet = header + silence_payload
+        with (
+            patch.object(call, "_on_speech") as mock_speech,
+            patch.object(call, "_on_silence") as mock_silence,
+            patch("voip.audio.AudioCall.datagram_received"),
+        ):
+            call.datagram_received(rtp_packet, ("1.2.3.4", 5004))
+        mock_silence.assert_called_once()
+        mock_speech.assert_not_called()
+
+    def test_datagram_received__invalid_rtp_is_silently_ignored(self):
+        """datagram_received silently ignores datagrams that are not valid RTP."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        with (
+            patch.object(call, "_on_speech") as mock_speech,
+            patch.object(call, "_on_silence") as mock_silence,
+            patch("voip.audio.AudioCall.datagram_received"),
+        ):
+            call.datagram_received(b"not_rtp", ("1.2.3.4", 5004))
+        mock_speech.assert_not_called()
+        mock_silence.assert_not_called()
+
+    def test_datagram_received__empty_payload_is_silently_ignored(self):
+        """datagram_received ignores RTP packets with no payload."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        import struct
+
+        # Build an RTP header with zero-length payload
+        header = struct.pack(">BBHII", 0x80, 0, 0, 0, 0x12345678)
+        rtp_packet = header  # no payload
+        with (
+            patch.object(call, "_on_speech") as mock_speech,
+            patch.object(call, "_on_silence") as mock_silence,
+            patch("voip.audio.AudioCall.datagram_received"),
+        ):
+            call.datagram_received(rtp_packet, ("1.2.3.4", 5004))
+        mock_speech.assert_not_called()
+        mock_silence.assert_not_called()
+
+    async def test_respond__resets_state_to_listening_after_completion(self):
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.THINKING
+        mock_response = MagicMock()
+        mock_response.message.content = "done"
+        with (
+            patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
+            patch.object(call, "_send_speech", new_callable=AsyncMock),
+        ):
+            mock_client = MagicMock()
+            mock_client.chat = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+            await call._respond("hello")
+        assert call._state is AgentState.LISTENING
+
+    async def test_respond__sets_state_to_speaking_before_tts(self):
+        """_respond sets state to SPEAKING before calling _send_speech."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        observed_states: list[AgentState] = []
+        mock_response = MagicMock()
+        mock_response.message.content = "hello"
+
+        async def _capture_state(text: str) -> None:
+            observed_states.append(call._state)
+
+        with (
+            patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
+            patch.object(call, "_send_speech", side_effect=_capture_state),
+        ):
+            mock_client = MagicMock()
+            mock_client.chat = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+            await call._respond("hi")
+        assert AgentState.SPEAKING in observed_states
+
+    def test_on_speech__in_thinking_resets_whisper_transcription_state(self):
+        """_on_speech in THINKING cancels transcription timer and clears speech buffer."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.THINKING
+        # Simulate WhisperCall mid-utterance state
+        call._in_speech = True
+        call._speech_buffer = [np.zeros(320, dtype=np.float32)]
+        handle = MagicMock()
+        call._transcription_handle = handle
+        task = MagicMock()
+        task.done.return_value = False
+        call._response_task = task
+        call._on_speech()
+        handle.cancel.assert_called_once()
+        assert call._transcription_handle is None
+        assert call._speech_buffer == []
+        assert not call._in_speech
+
+    def test_on_speech__in_speaking_resets_whisper_transcription_state(self):
+        """_on_speech in SPEAKING cancels transcription timer and clears speech buffer."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call._state = AgentState.SPEAKING
+        call._in_speech = True
+        call._speech_buffer = [np.zeros(320, dtype=np.float32)]
+        handle = MagicMock()
+        call._transcription_handle = handle
+        task = MagicMock()
+        task.done.return_value = False
+        call._response_task = task
+        call._on_speech()
+        handle.cancel.assert_called_once()
+        assert call._speech_buffer == []
+        assert not call._in_speech
