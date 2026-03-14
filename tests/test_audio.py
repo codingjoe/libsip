@@ -35,37 +35,35 @@ G722_MEDIA = _make_media("9", "9 G722/8000")
 class TestBuildOggOpus:
     def test_build_ogg_opus__starts_with_ogg_magic(self):
         """The resulting container starts with the Ogg capture pattern 'OggS'."""
-        assert _build_ogg_opus([b"packet"]).startswith(b"OggS")
+        assert _build_ogg_opus(b"packet").startswith(b"OggS")
 
     def test_build_ogg_opus__contains_opus_head(self):
         """The resulting container includes the OpusHead identification header."""
-        assert b"OpusHead" in _build_ogg_opus([b"packet"])
+        assert b"OpusHead" in _build_ogg_opus(b"packet")
 
     def test_build_ogg_opus__contains_opus_tags(self):
         """The resulting container includes the OpusTags comment header."""
-        assert b"OpusTags" in _build_ogg_opus([b"packet"])
+        assert b"OpusTags" in _build_ogg_opus(b"packet")
 
     def test_build_ogg_opus__non_empty_for_single_packet(self):
         """Produce a non-empty Ogg container for a single Opus packet."""
-        assert len(_build_ogg_opus([b"x" * 100])) > 100
+        assert len(_build_ogg_opus(b"x" * 100)) > 100
 
-    def test_build_ogg_opus__empty_packets_list(self):
-        """Produce a valid Ogg container even with an empty packet list."""
-        result = _build_ogg_opus([])
+    def test_build_ogg_opus__empty_payload(self):
+        """Produce a valid Ogg container even when the payload is empty bytes."""
+        result = _build_ogg_opus(b"")
         assert b"OggS" in result
 
     def test_build_ogg_opus__large_packet_uses_255_lacing(self):
         """Produce a valid Ogg container when a packet exceeds 254 bytes (lacing spans 255)."""
-        large_packet = b"x" * 256
-        result = _build_ogg_opus([large_packet])
+        result = _build_ogg_opus(b"x" * 256)
         assert b"OggS" in result
         assert len(result) > 256
 
-    def test_build_ogg_opus__multiple_pages(self):
-        """Produce multiple Ogg pages when more than 50 packets are provided."""
-        packets = [b"x" * 10] * 55
-        result = _build_ogg_opus(packets)
-        assert result.count(b"OggS") > 3
+    def test_build_ogg_opus__produces_three_pages(self):
+        """Produce exactly three Ogg pages: BOS, tags, and data."""
+        result = _build_ogg_opus(b"x" * 10)
+        assert result.count(b"OggS") == 3
 
 
 def make_audio_call(**kwargs) -> AudioCall:
@@ -73,6 +71,7 @@ def make_audio_call(**kwargs) -> AudioCall:
     defaults: dict = {
         "rtp": MagicMock(spec=RealtimeTransportProtocol),
         "sip": MagicMock(),
+        "media": PCMA_MEDIA,
     }
     defaults.update(kwargs)
     return AudioCall(**defaults)
@@ -90,14 +89,13 @@ class TestAudioCall:
 
     def test_audio_received__noop_by_default(self):
         """audio_received is a no-op in the base AudioCall class."""
-        sentinel = object()
-        make_audio_call().audio_received(sentinel)  # must not raise
+        make_audio_call().audio_received(audio=np.array([]), rms=0.0)  # must not raise
 
     def test_rtp_and_sip_stored_as_fields(self):
         """Rtp and sip back-references are stored as dataclass fields."""
         mock_rtp = MagicMock(spec=RealtimeTransportProtocol)
         mock_sip = MagicMock()
-        call = AudioCall(rtp=mock_rtp, sip=mock_sip)
+        call = AudioCall(rtp=mock_rtp, sip=mock_sip, media=PCMA_MEDIA)
         assert call.rtp is mock_rtp
         assert call.sip is mock_sip
 
@@ -132,7 +130,7 @@ class TestAudioCall:
         assert call.sample_rate == 8000
 
     def test_init__default_sample_rate_without_media(self):
-        """Default sample_rate is 8000 Hz when no MediaDescription is given."""
+        """Default sample_rate is 8000 Hz for G.711 codecs."""
         assert make_audio_call().sample_rate == 8000
 
     def test_init__derives_payload_type_from_media(self):
@@ -149,8 +147,8 @@ class TestAudioCall:
         assert call.payload_type == 8
 
     def test_init__default_payload_type_without_media(self):
-        """Default payload_type is 0 when no MediaDescription is given."""
-        assert make_audio_call().payload_type == 0
+        """Default payload_type is 8 (PCMA) when using the default test media."""
+        assert make_audio_call().payload_type == 8
 
     def test_init__logs_codec_info(self, caplog):
         """Log codec name, sample rate and payload type at INFO level on init."""
@@ -170,72 +168,25 @@ class TestAudioCall:
             make_audio_call(media=media)
         assert any("PCMA" in r.message and "8000" in r.message for r in caplog.records)
 
-    def test_chunk_duration__default_is_zero(self):
-        """chunk_duration defaults to 0 (per-packet mode)."""
-        assert AudioCall.chunk_duration == 0
-
     @pytest.mark.asyncio
     async def test_datagram_received__forwards_audio_payload(self):
         """datagram_received parses the RTP packet and calls audio_received after decode."""
         import struct  # noqa: PLC0415
 
-        DECODED = object()  # sentinel: returned by mocked _decode_raw
         received: list = []
 
         class ConcreteCall(AudioCall):
-            def _decode_raw(self, packet: list[bytes]):
-                return DECODED  # skip real av decode in unit tests
+            def _decode_raw(self, packet: bytes) -> np.ndarray:
+                return np.array([1.0], dtype=np.float32)  # non-empty sentinel array
 
-            def audio_received(self, audio) -> None:
+            def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
                 received.append(audio)
 
-        rtp_packet = struct.pack(">BBHII", 0x80, 111 & 0x7F, 1, 0, 0) + b"audio"
-        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock())
+        rtp_packet = struct.pack(">BBHII", 0x80, 8 & 0x7F, 1, 0, 0) + b"audio"
+        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
         call.datagram_received(rtp_packet, ("127.0.0.1", 5004))
         await asyncio.sleep(0.05)  # let the executor task run
-        assert received == [DECODED]
-
-    @pytest.mark.asyncio
-    async def test_datagram_received__chunk_duration__buffers_until_threshold(self):
-        """Buffer packets and emit audio_received only when the threshold is reached."""
-        import struct  # noqa: PLC0415
-
-        from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: PLC0415
-
-        received: list = []
-        media = MediaDescription(
-            media="audio",
-            port=0,
-            proto="RTP/AVP",
-            fmt=[
-                RTPPayloadFormat(payload_type=8, encoding_name="PCMA", sample_rate=8000)
-            ],
-        )
-
-        class ChunkedCall(AudioCall):
-            chunk_duration = 1  # 1 s @ 8 kHz / 160 samples = 50 packets
-
-            def _decode_raw(self, packet: list[bytes]):
-                return packet  # skip real av decode; pass raw list as "audio"
-
-            def audio_received(self, audio) -> None:
-                received.append(audio)
-
-        call = ChunkedCall(rtp=MagicMock(), sip=MagicMock(), media=media)
-        assert call._packet_threshold == 50
-        rtp_packet = struct.pack(">BBHII", 0x80, 8 & 0x7F, 1, 0, 0) + b"x"
-        for _ in range(49):
-            call.datagram_received(rtp_packet, ("127.0.0.1", 5004))
-        assert len(call._audio_buffer) == 49
-        assert received == []  # threshold not yet reached
-        call.datagram_received(
-            struct.pack(">BBHII", 0x80, 8 & 0x7F, 2, 0, 0) + b"last",
-            ("127.0.0.1", 5004),
-        )
-        assert len(call._audio_buffer) == 0  # buffer drained
-        await asyncio.sleep(0.05)  # let the executor task run
         assert len(received) == 1
-        assert len(received[0]) == 50
 
 
 class TestNegotiateCodec:
