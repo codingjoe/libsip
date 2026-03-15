@@ -27,7 +27,7 @@ __all__ = ["RTPCodec"]
 
 
 class RTPCodec:
-    """Base class for RTP audio codecs that decode and encode via PyAV.
+    """Base class for RTP audio codecs that provide PyAV-backed helpers.
 
     Concrete implementations: [`Opus`][voip.codecs.Opus],
     [`G722`][voip.codecs.G722], [`PCMA`][voip.codecs.PCMA],
@@ -41,6 +41,11 @@ class RTPCodec:
     [`decode`][voip.codecs.base.RTPCodec.decode],
     [`encode`][voip.codecs.base.RTPCodec.encode], and
     [`packetize`][voip.codecs.base.RTPCodec.packetize].
+
+    Subclasses may use the shared PyAV-backed helpers or implement
+    [`decode`][voip.codecs.base.RTPCodec.decode] and
+    [`encode`][voip.codecs.base.RTPCodec.encode] using alternative backends
+    such as NumPy.
 
     Subclasses that produce variable-length output across frames (e.g. G.722
     ADPCM) should override `packetize` to encode the whole buffer at once and
