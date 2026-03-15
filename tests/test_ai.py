@@ -16,6 +16,7 @@ from voip.ai import AgentCall, AgentState, TranscribeCall  # noqa: E402
 from voip.audio import AudioCall  # noqa: E402
 from voip.rtp import RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
+from voip.sip.types import CallerID  # noqa: E402
 
 
 def _make_media(fmt: str, rtpmap: str | None = None) -> MediaDescription:
@@ -45,7 +46,7 @@ def make_whisper_call(
         return cls(
             rtp=MagicMock(),
             sip=MagicMock(),
-            caller="sip:bob@biloxi.com",
+            caller=CallerID("sip:bob@biloxi.com"),
             media=med,
         )
 
@@ -67,7 +68,7 @@ def make_agent_call(
         return cls(
             rtp=MagicMock(),
             sip=MagicMock(),
-            caller="sip:bob@biloxi.com",
+            caller=CallerID("sip:bob@biloxi.com"),
             media=med,
         )
 
@@ -87,6 +88,7 @@ class TestWhisperCall:
                 sip=MagicMock(),
                 media=OPUS_MEDIA,
                 model=model_instance,
+                caller=CallerID(""),
             )
         wm_cls.assert_not_called()
         assert call._whisper_model is model_instance
@@ -407,7 +409,9 @@ class TestAgentCall:
             patch("voip.ai.TTSModel") as tts_cls,
         ):
             tts_cls.load_model.return_value = tts_mock
-            call = AgentCall(rtp=MagicMock(), sip=MagicMock(), media=OPUS_MEDIA)
+            call = AgentCall(
+                rtp=MagicMock(), sip=MagicMock(), media=OPUS_MEDIA, caller=CallerID("")
+            )
         tts_cls.load_model.assert_called_once()
         assert call._tts_instance is tts_mock
 
@@ -424,6 +428,7 @@ class TestAgentCall:
                 sip=MagicMock(),
                 media=OPUS_MEDIA,
                 tts_model=tts_mock,
+                caller=CallerID(""),
             )
         tts_cls.load_model.assert_not_called()
         assert call._tts_instance is tts_mock
@@ -439,7 +444,11 @@ class TestAgentCall:
         ):
             tts_cls.load_model.return_value = tts_mock
             call = AgentCall(
-                rtp=MagicMock(), sip=MagicMock(), media=OPUS_MEDIA, voice="alba"
+                rtp=MagicMock(),
+                sip=MagicMock(),
+                media=OPUS_MEDIA,
+                voice="alba",
+                caller=CallerID(""),
             )
         tts_mock.get_state_for_audio_prompt.assert_called_once_with("alba")
         assert call._voice_state is voice_state

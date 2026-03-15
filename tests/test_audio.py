@@ -13,6 +13,7 @@ av = pytest.importorskip("av")
 from voip.audio import AudioCall, _build_ogg_opus  # noqa: E402
 from voip.rtp import RealtimeTransportProtocol, RTPPayloadType  # noqa: E402
 from voip.sdp.types import MediaDescription, RTPPayloadFormat  # noqa: E402
+from voip.sip.types import CallerID  # noqa: E402
 
 
 def _make_media(fmt: str, rtpmap: str | None = None) -> MediaDescription:
@@ -72,6 +73,7 @@ def make_audio_call(**kwargs) -> AudioCall:
         "rtp": MagicMock(spec=RealtimeTransportProtocol),
         "sip": MagicMock(),
         "media": PCMA_MEDIA,
+        "caller": CallerID(""),
     }
     defaults.update(kwargs)
     return AudioCall(**defaults)
@@ -95,7 +97,9 @@ class TestAudioCall:
         """Rtp and sip back-references are stored as dataclass fields."""
         mock_rtp = MagicMock(spec=RealtimeTransportProtocol)
         mock_sip = MagicMock()
-        call = AudioCall(rtp=mock_rtp, sip=mock_sip, media=PCMA_MEDIA)
+        call = AudioCall(
+            rtp=mock_rtp, sip=mock_sip, media=PCMA_MEDIA, caller=CallerID("")
+        )
         assert call.rtp is mock_rtp
         assert call.sip is mock_sip
 
@@ -185,7 +189,9 @@ class TestAudioCall:
         packet = RTPPacket(
             payload_type=8, sequence_number=1, timestamp=0, ssrc=0, payload=b"audio"
         )
-        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
+        call = ConcreteCall(
+            rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA, caller=CallerID("")
+        )
         call.packet_received(packet, ("127.0.0.1", 5004))
         await asyncio.sleep(0.05)
         assert len(received) == 1
@@ -204,7 +210,9 @@ class TestAudioCall:
         packet = RTPPacket(
             payload_type=8, sequence_number=1, timestamp=0, ssrc=0, payload=b""
         )
-        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
+        call = ConcreteCall(
+            rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA, caller=CallerID("")
+        )
         call.packet_received(packet, ("127.0.0.1", 5004))
         await asyncio.sleep(0.05)
         assert len(received) == 0

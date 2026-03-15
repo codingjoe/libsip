@@ -21,6 +21,7 @@ def make_call(**kwargs) -> RTPCall:
         "rtp": MagicMock(spec=RealtimeTransportProtocol),
         "sip": MagicMock(),
         "media": make_media(),
+        "caller": CallerID(""),
     }
     defaults.update(kwargs)
     return RTPCall(**defaults)
@@ -52,7 +53,9 @@ class TestRTPCall:
         """Rtp and sip back-references are stored on the instance."""
         mock_rtp = MagicMock(spec=RealtimeTransportProtocol)
         mock_sip = MagicMock()
-        call = RTPCall(rtp=mock_rtp, sip=mock_sip, media=make_media())
+        call = RTPCall(
+            rtp=mock_rtp, sip=mock_sip, media=make_media(), caller=CallerID("")
+        )
         assert call.rtp is mock_rtp
         assert call.sip is mock_sip
 

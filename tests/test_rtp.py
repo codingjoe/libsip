@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from voip.rtp import RTP, RealtimeTransportProtocol, RTPCall, RTPPacket, RTPPayloadType
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
+from voip.sip.types import CallerID
 
 
 def make_media() -> MediaDescription:
@@ -149,7 +150,9 @@ class TestRealtimeTransportProtocol:
                 routed.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = RecordCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         remote_addr = ("127.0.0.1", 5004)
         mux.register_call(remote_addr, handler)
         rtp_packet = make_rtp_packet(payload=b"audio")
@@ -174,7 +177,9 @@ class TestRealtimeTransportProtocol:
 
         mux = RealtimeTransportProtocol()
         mux.connection_made(MagicMock(spec=asyncio.DatagramTransport))
-        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = RecordCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         mux.register_call(None, handler)
         stun_bytes = b"\x01\x01" + b"\x00" * 18  # first byte = 1 (STUN range [0,3])
         mux.datagram_received(stun_bytes, ("127.0.0.1", 5004))
@@ -248,8 +253,12 @@ class TestRealtimeTransportProtocol:
 
         mux = RealtimeTransportProtocol()
         specific_addr = ("1.2.3.4", 5004)
-        wildcard_handler = WildcardCall(rtp=mux, sip=MagicMock(), media=make_media())
-        specific_handler = SpecificCall(rtp=mux, sip=MagicMock(), media=make_media())
+        wildcard_handler = WildcardCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
+        specific_handler = SpecificCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         mux.register_call(None, wildcard_handler)
         mux.register_call(specific_addr, specific_handler)
 
@@ -269,7 +278,9 @@ class TestRealtimeTransportProtocol:
                 received.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = WildcardCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = WildcardCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         mux.register_call(None, handler)
 
         rtp_packet = make_rtp_packet(payload=b"unmatched")
@@ -287,7 +298,9 @@ class TestRealtimeTransportProtocol:
                 received.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = RecordCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         remote_addr = ("5.6.7.8", 5004)
         mux.register_call(remote_addr, handler)
         mux.unregister_call(remote_addr)
@@ -301,7 +314,9 @@ class TestRealtimeTransportProtocol:
         import logging  # noqa: PLC0415
 
         mux = RealtimeTransportProtocol()
-        handler = RTPCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = RTPCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         with caplog.at_level(logging.INFO, logger="voip.rtp"):
             mux.register_call(("1.2.3.4", 5004), handler)
         assert any("rtp_call_registered" in r.message for r in caplog.records)
@@ -312,7 +327,9 @@ class TestRealtimeTransportProtocol:
         import logging  # noqa: PLC0415
 
         mux = RealtimeTransportProtocol()
-        handler = RTPCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = RTPCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         addr = ("1.2.3.4", 5004)
         mux.register_call(addr, handler)
         with caplog.at_level(logging.INFO, logger="voip.rtp"):
@@ -329,7 +346,9 @@ class TestRealtimeTransportProtocol:
                 received.append((packet, addr))
 
         mux = RealtimeTransportProtocol()
-        handler = CapturingCall(rtp=mux, sip=MagicMock(), media=make_media())
+        handler = CapturingCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
         mux.register_call(None, handler)
         packet = make_rtp_packet()
         mux.packet_received(packet, ("1.2.3.4", 5004))
@@ -371,7 +390,11 @@ class TestSRTPIntegration:
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
         handler = SRTPCapture(
-            rtp=mux, sip=MagicMock(), media=make_media(), srtp=session
+            rtp=mux,
+            sip=MagicMock(),
+            media=make_media(),
+            srtp=session,
+            caller=CallerID(""),
         )
         mux.register_call(None, handler)
 
@@ -399,7 +422,11 @@ class TestSRTPIntegration:
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
         handler = SRTPCapture(
-            rtp=mux, sip=MagicMock(), media=make_media(), srtp=session
+            rtp=mux,
+            sip=MagicMock(),
+            media=make_media(),
+            srtp=session,
+            caller=CallerID(""),
         )
         mux.register_call(None, handler)
 
