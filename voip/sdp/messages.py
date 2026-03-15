@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Generator
 
+from voip.types import ByteSerializableObject
+
 from .types import (
     Attribute,
     Bandwidth,
@@ -43,7 +45,7 @@ FIELD_BY_LETTER: dict[str, Field] = {field.letter: field for field in FIELD_MAP}
 
 
 @dataclasses.dataclass
-class SessionDescription:
+class SessionDescription(ByteSerializableObject):
     """Session Description Protocol message [RFC 4566].
 
     Holds all session-level and media-level fields in their canonical order.
@@ -68,7 +70,6 @@ class SessionDescription:
 
     @classmethod
     def parse(cls, data: bytes | str) -> SessionDescription:
-        """Parse a SDP message from bytes or str."""
         text = data.decode() if isinstance(data, bytes) else data
         sdp = cls()
         current_media: MediaDescription | None = None
@@ -87,7 +88,7 @@ class SessionDescription:
             return current_media
         field = FIELD_BY_LETTER[letter]
         parsed = field.parse(value)
-        if letter == "m":
+        if isinstance(parsed, MediaDescription):
             self.media.append(parsed)
             return parsed
         if (

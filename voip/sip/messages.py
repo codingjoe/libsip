@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import abc
 import dataclasses
 
 from voip.sdp.messages import SessionDescription
@@ -16,7 +17,7 @@ _CALLER_HEADERS = frozenset({"From", "To"})
 
 
 @dataclasses.dataclass(kw_only=True)
-class Message(ByteSerializableObject):
+class Message(ByteSerializableObject, abc.ABC):
     """
     A SIP message [RFC 3261 §7].
 
@@ -29,7 +30,6 @@ class Message(ByteSerializableObject):
 
     @classmethod
     def parse(cls, data: bytes) -> Request | Response:
-        """Parse a SIP message from raw bytes."""
         header_section, _, body = data.partition(b"\r\n\r\n")
         lines = header_section.decode().split("\r\n")
         first_line, *header_lines = lines
@@ -80,6 +80,7 @@ class Message(ByteSerializableObject):
         )
         return f"{self._first_line()}\r\n{header_lines}\r\n".encode() + raw_body
 
+    @abc.abstractmethod
     def _first_line(self) -> str: ...
 
 
