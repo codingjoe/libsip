@@ -177,8 +177,8 @@ class TestWhisperCall:
                 transcriptions.append(text)
 
         call = make_whisper_call(model_mock, Capture)
-        chunk = np.ones(320, dtype=np.float32) * 0.6
-        call._speech_buffer = [chunk]
+        chunk = np.ones(320, dtype=np.float32)
+        call._speech_buffer = [chunk] * 60
         # Set silence_gap=0 so the minimum-length check passes with one chunk.
         call.silence_gap = 0
         call._flush_speech_buffer()
