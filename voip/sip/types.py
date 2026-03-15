@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import re
 
-__all__ = ["CallerID", "Status"]
+__all__ = ["CallerID", "DigestAlgorithm", "DigestQoP", "Status"]
 
 
 class CallerID(str):

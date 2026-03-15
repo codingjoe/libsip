@@ -261,32 +261,13 @@ class AudioCall(RTPCall):
         if packet.payload:
             asyncio.create_task(self._emit_audio(packet))
 
-    @staticmethod
-    def _estimate_payload_rms(payload: bytes) -> float:
-        """Estimate normalised RMS energy from a raw G.711 RTP payload.
-
-        G.711 codecs (PCMU/PCMA) encode silence as a fixed codeword, so speech
-        energy manifests as byte variance around that codeword.  Standard
-        deviation over the byte values, divided by 128, gives a normalised
-        proxy for RMS in the range ``[0, 1]`` that is suitable for thresholding.
-
-        Args:
-            payload: Raw RTP payload bytes from a G.711-encoded packet.
-
-        Returns:
-            Normalised energy estimate in ``[0, 1]``.
-        """
-        samples = np.frombuffer(payload, dtype=np.uint8).astype(np.float32)
-        return float(np.std(samples) / 128.0)
-
     async def _emit_audio(self, packet: RTPPacket) -> None:
         """Decode *raw_packets* and call :meth:`audio_received` with the result."""
         loop = asyncio.get_running_loop()
         audio = await loop.run_in_executor(None, self._decode_raw, packet.payload)
         if audio.size > 0:
-            self.audio_received(
-                audio=audio, rms=self._estimate_payload_rms(packet.payload)
-            )
+            rms = float(np.sqrt(np.mean(audio**2)))
+            self.audio_received(audio=audio, rms=rms)
 
     def _decode_raw(self, packet: bytes) -> np.ndarray:
         """Decode raw RTP payloads to a float32 PCM array at :data:`SAMPLE_RATE` Hz.

@@ -167,6 +167,24 @@ class TestRealtimeTransportProtocol:
         # No handler registered; must not raise.
         mux.datagram_received(make_rtp_packet(payload=b"ignored"), ("9.9.9.9", 5004))
 
+    @pytest.mark.asyncio
+    async def test_datagram_received__malformed_packet__dropped(self):
+        """Malformed RTP datagrams (too short) are discarded without crashing."""
+        routed: list[RTPPacket] = []
+
+        class RecordCall(RTPCall):
+            def packet_received(self, packet: RTPPacket, addr):
+                routed.append(packet)
+
+        mux = RealtimeTransportProtocol()
+        handler = RecordCall(
+            rtp=mux, sip=MagicMock(), media=make_media(), caller=CallerID("")
+        )
+        mux.register_call(("127.0.0.1", 5004), handler)
+        # 5 bytes is shorter than the 12-byte minimum RTP header — must not raise.
+        mux.datagram_received(b"\x80\x00\x00\x01\x00", ("127.0.0.1", 5004))
+        assert routed == []
+
     async def test_datagram_received__stun_packet__not_forwarded(self):
         """A STUN packet (first byte < 4) must not reach any Call handler."""
         routed: list[RTPPacket] = []

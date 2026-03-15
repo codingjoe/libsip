@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from voip.sip.protocol import SessionInitiationProtocol
     from voip.sip.types import CallerID
 
-__all__ = ["RTP", "RTPCall", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
+__all__ = ["Call", "RTP", "RTPCall", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,14 @@ class RealtimeTransportProtocol(STUNProtocol):
                     )
                     return
                 data = decrypted
-            handler.packet_received(RTPPacket.parse(data), addr)
+            try:
+                handler.packet_received(RTPPacket.parse(data), addr)
+            except ValueError:
+                logger.warning(
+                    "Malformed RTP packet from %s:%s, discarding",
+                    addr[0],
+                    addr[1],
+                )
         else:
             logger.debug(
                 "No call handler registered for %s:%s, dropping RTP packet",
@@ -280,3 +287,5 @@ class RealtimeTransportProtocol(STUNProtocol):
 
 
 RTP = RealtimeTransportProtocol
+#: Backward-compatible alias for :class:`RTPCall`.
+Call = RTPCall

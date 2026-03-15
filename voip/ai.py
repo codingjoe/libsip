@@ -20,7 +20,7 @@ import ollama
 from faster_whisper import WhisperModel
 from pocket_tts import TTSModel
 
-from voip.audio import AudioCall
+from voip.audio import SAMPLE_RATE, AudioCall
 from voip.rtp import RTPPayloadType
 from voip.sdp.types import RTPPayloadFormat
 
@@ -32,11 +32,12 @@ logger = logging.getLogger(__name__)
 class AgentState(enum.Enum):
     """Conversation state for :class:`AgentCall`.
 
-    The state machine drives conversation flow: audio is collected while the
-    human speaks, the LLM is queried when silence is detected, and the
-    synthesised reply is streamed while the agent speaks.  Inbound speech
-    during `THINKING` or `SPEAKING` cancels the current response and returns
-    control to the human.
+    The state machine represents the current phase of the conversation.
+    Audio is collected while the human speaks (`LISTENING`), the LLM is
+    queried when silence is detected (`THINKING`), and the synthesised reply
+    is streamed while the agent speaks (`SPEAKING`).  When a new transcription
+    arrives while the agent is already responding, the current `_respond` task
+    is cancelled and a new one is started with the latest text.
     """
 
     #: Human speaking; agent collects audio and buffers transcriptions.
@@ -142,7 +143,7 @@ class TranscribeCall(AudioCall):
         Resets speech state so the next utterance starts with a clean buffer.
         """
         self._transcription_handle = None
-        if len(self._speech_buffer) < self._sample_rate // 50 * self.silence_gap:
+        if sum(len(c) for c in self._speech_buffer) < SAMPLE_RATE * self.silence_gap:
             self._speech_buffer.clear()
             return
         audio = np.concatenate(self._speech_buffer)

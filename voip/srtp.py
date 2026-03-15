@@ -8,7 +8,7 @@ which is itself protected by TLS.
 Requires the `cryptography` package (included in any installation).
 
 [RFC 3711]: https://datatracker.ietf.org/doc/html/rfc3711
-[RFC 4568]: https://datatracker.ietf.org/doc/html/rfc456
+[RFC 4568]: https://datatracker.ietf.org/doc/html/rfc4568
 """
 
 from __future__ import annotations
