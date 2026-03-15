@@ -1,12 +1,12 @@
-# Call Handling
+# Call legs
 
-The [voip.rtp] module provides [RTPCall], the base class for all call leg handlers.
+[RTPCall][voip.rtp.RTPCall] is the base class for all call leg handlers.
 
 ## Audio Handling
 
 ::: voip.audio.AudioCall
 
-## AI Calls
+## AI / Agentic Calls
 
 ::: voip.ai.TranscribeCall
 
