@@ -85,3 +85,31 @@ class TestRegistry:
                 sys.modules.pop(k, None)
             sys.modules.update(saved)
             importlib.reload(target)
+
+    def test_all__excludes_pyav_names_when_av_unavailable(self):
+        """__all__ excludes G722, Opus, and PyAVCodec when av is not importable."""
+        keys_to_remove = [
+            k
+            for k in list(sys.modules)
+            if k
+            in {
+                "av",
+                "voip.codecs",
+                "voip.codecs.av",
+                "voip.codecs.g722",
+                "voip.codecs.opus",
+            }
+        ]
+        saved = {k: sys.modules.pop(k) for k in keys_to_remove}
+        sys.modules["av"] = None  # causes ImportError on `import av`
+
+        try:
+            import voip.codecs as fresh  # noqa: PLC0415
+
+            for name in ("G722", "Opus", "PyAVCodec"):
+                assert name not in fresh.__all__, f"{name!r} must not be in __all__ without av"
+        finally:
+            for k in list(sys.modules):
+                if k in {"av", "voip.codecs", "voip.codecs.av", "voip.codecs.g722", "voip.codecs.opus"}:
+                    sys.modules.pop(k, None)
+            sys.modules.update(saved)

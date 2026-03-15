@@ -65,12 +65,17 @@ class TestPCMADecode:
         assert pos[0] > 0
         assert neg[0] < 0
 
-    def test_decode__ignores_input_rate_hz(self):
-        """Decode ignores input_rate_hz: A-law is always at 8 kHz."""
+    def test_decode__uses_input_rate_hz_as_source_rate(self):
+        """input_rate_hz is treated as the source sample rate for resampling."""
         payload = PCMA.encode(np.zeros(160, dtype=np.float32))
-        result_default = PCMA.decode(payload, 8000, input_rate_hz=None)
-        result_override = PCMA.decode(payload, 8000, input_rate_hz=16000)
-        np.testing.assert_array_equal(result_default, result_override)
+        # 160 samples interpreted at 16 kHz, resampled to 8 kHz → 80 output samples.
+        result = PCMA.decode(payload, 8000, input_rate_hz=16000)
+        assert len(result) == 80
+
+    def test_decode__max_amplitude_codeword(self):
+        """A-law codeword 0xAA (max positive) decodes to exactly 0.984375 per ITU-T G.711."""
+        decoded = PCMA.decode(bytes([0xAA]), 8000)
+        assert abs(decoded[0] - 0.984375) < 1e-6
 
     def test_decode__real_decode_returns_float32(self):
         """Decode produces a float32 array from real A-law encoded input."""
@@ -94,6 +99,14 @@ class TestPCMAEncode:
         pos = PCMA.encode(np.array([0.5], dtype=np.float32))
         neg = PCMA.encode(np.array([-0.5], dtype=np.float32))
         assert pos != neg
+
+    def test_encode__silence_codeword(self):
+        """Silence (0.0) must encode to 0xD5 per ITU-T G.711 A-law."""
+        assert PCMA.encode(np.zeros(1, dtype=np.float32))[0] == 0xD5
+
+    def test_encode__max_amplitude_codeword(self):
+        """Maximum positive amplitude (1.0) must encode to 0xAA per ITU-T G.711."""
+        assert PCMA.encode(np.array([1.0], dtype=np.float32))[0] == 0xAA
 
 
 class TestPCMUConstants:
@@ -148,12 +161,17 @@ class TestPCMUDecode:
         decoded = PCMU.decode(bytes([0x80]), 8000)
         assert decoded[0] < -0.9
 
-    def test_decode__ignores_input_rate_hz(self):
-        """Decode ignores input_rate_hz: mu-law is always at 8 kHz."""
+    def test_decode__uses_input_rate_hz_as_source_rate(self):
+        """input_rate_hz is treated as the source sample rate for resampling."""
         payload = PCMU.encode(np.zeros(160, dtype=np.float32))
-        result_default = PCMU.decode(payload, 8000, input_rate_hz=None)
-        result_override = PCMU.decode(payload, 8000, input_rate_hz=16000)
-        np.testing.assert_array_equal(result_default, result_override)
+        # 160 samples interpreted at 16 kHz, resampled to 8 kHz → 80 output samples.
+        result = PCMU.decode(payload, 8000, input_rate_hz=16000)
+        assert len(result) == 80
+
+    def test_decode__silence_codeword(self):
+        """µ-law codeword 0x7F (silence) decodes to exactly 0.0 per ITU-T G.711."""
+        decoded = PCMU.decode(bytes([0x7F]), 8000)
+        assert decoded[0] == pytest.approx(0.0, abs=1e-7)
 
     def test_decode__real_decode_returns_float32(self):
         """Decode produces a float32 array from real mu-law encoded input."""

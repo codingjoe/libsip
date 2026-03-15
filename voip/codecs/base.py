@@ -97,7 +97,9 @@ class RTPCodec:
         """
         if source_rate_hz == destination_rate_hz:
             return audio
-        n_out = round(len(audio) * destination_rate_hz / source_rate_hz)
+        if len(audio) == 0:
+            return np.empty(0, dtype=np.float32)
+        n_out = max(1, round(len(audio) * destination_rate_hz / source_rate_hz))
         return np.interp(
             np.linspace(0, len(audio) - 1, n_out),
             np.arange(len(audio)),

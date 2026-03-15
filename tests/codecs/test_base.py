@@ -31,10 +31,17 @@ class TestResample:
         result = RTPCodec.resample(audio, 16000, 8000)
         assert len(result) == 160
 
-    def test_resample__returns_float32(self):
-        """Resample always returns a float32 array."""
-        audio = np.ones(100, dtype=np.float64)
-        result = RTPCodec.resample(audio, 8000, 16000)
+    def test_resample__empty_input_returns_empty(self):
+        """Resampling an empty array returns an empty float32 array."""
+        result = RTPCodec.resample(np.empty(0, dtype=np.float32), 8000, 16000)
+        assert result.dtype == np.float32
+        assert len(result) == 0
+
+    def test_resample__single_sample_heavy_downsample_returns_at_least_one(self):
+        """Resampling a single sample always yields at least one output sample."""
+        audio = np.array([0.5], dtype=np.float32)
+        result = RTPCodec.resample(audio, 8000, 100)
+        assert len(result) >= 1
         assert result.dtype == np.float32
 
 
