@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 import ollama
@@ -20,11 +20,6 @@ from faster_whisper import WhisperModel
 from pocket_tts import TTSModel
 
 from voip.audio import VoiceActivityCall
-from voip.codecs import RTPCodec
-from voip.codecs.g722 import G722
-from voip.codecs.opus import Opus
-from voip.codecs.pcma import PCMA
-from voip.codecs.pcmu import PCMU
 
 __all__ = ["TranscribeCall", "AgentCall"]
 
@@ -159,8 +154,6 @@ class AgentCall(TranscribeCall):
         "You are a person on a phone call. "
         "Keep your answers very brief and conversational."
     )
-    #: Preferred codecs in priority order (highest first).
-    PREFERRED_CODECS: ClassVar[list[type[RTPCodec]]] = [Opus, G722, PCMU, PCMA]
 
     #: Ollama model name for generating replies.
     ollama_model: str = dataclasses.field(default="llama3")
