@@ -5,7 +5,7 @@ watch:
   - voip
 nav:
   - Home:
-      - Usage: usage.md
+      - Quickstart: index.md
       - Cookbook: cookbook.md
   - Features:
       - Feature Roadmap: feature_roadmap.md

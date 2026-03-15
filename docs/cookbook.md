@@ -1,37 +1,6 @@
 # Cookbook
 
-## CLI
-
-### Live Transcription
-
-Answer incoming calls and print transcriptions to the terminal using the
-built-in CLI — no Python code required:
-
-```console
-SIP_PASSWORD=secret uvx 'voip[cli]' sip sips:alice@sip.example.com transcribe
-```
-
-### AI Voice Agent
-
-Talk to a locally running [Ollama](https://ollama.com/) language model over
-the phone:
-
-```console
-SIP_PASSWORD=secret uvx 'voip[cli]' sip sips:alice@sip.example.com agent
-```
-
-Pass `--ollama-model` and `--voice` to customise the model and TTS voice:
-
-```console
-SIP_PASSWORD=secret uvx 'voip[cli]' sip sips:alice@sip.example.com agent \
-  --ollama-model llama3 --voice azelma
-```
-
-______________________________________________________________________
-
-## Python API
-
-### Call Transcription
+## Call Transcription
 
 Subclass \[`TranscribeCall`\][voip.ai.TranscribeCall] and override
 \[`transcription_received`\][voip.ai.TranscribeCall.transcription_received] to
@@ -73,7 +42,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Sharing a Whisper Model Across Calls
+## Sharing a Whisper Model Across Calls
 
 Loading the model is expensive. Pass a pre-loaded
 [`WhisperModel`](https://github.com/SYSTRAN/faster-whisper) instance as a
@@ -91,7 +60,7 @@ class MyCall(TranscribeCall):
     model = shared_model
 ```
 
-### AI Call Agent
+## AI Call Agent
 
 \[`AgentCall`\][voip.ai.AgentCall] extends transcription with an
 [Ollama](https://ollama.com/) LLM response loop and
@@ -139,7 +108,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Raw Audio Access
+## Raw Audio Access
 
 Subclass \[`AudioCall`\][voip.audio.AudioCall] and override
 \[`audio_received`\][voip.audio.AudioCall.audio_received] to receive decoded
@@ -164,7 +133,7 @@ class RecordCall(AudioCall):
         sf.write(path, np.concatenate(self._frames), SAMPLE_RATE)
 ```
 
-### Sending Audio to the Caller
+## Sending Audio to the Caller
 
 Use \[`_send_rtp_audio`\][voip.audio.AudioCall.\_send_rtp_audio] inside any
 \[`AudioCall`\][voip.audio.AudioCall] subclass to stream float32 PCM back to
@@ -184,7 +153,7 @@ class GreetingCall(AudioCall):
         await self._send_rtp_audio(resampled)
 ```
 
-### Low-Level RTP Packet Handling
+## Low-Level RTP Packet Handling
 
 For protocols other than audio, subclass \[`RTPCall`\][voip.rtp.RTPCall]
 directly and override \[`packet_received`\]\[voip.rtp.RTPCall.packet_received\]:
@@ -199,7 +168,7 @@ class EchoCall(RTPCall):
         self.send_packet(packet, addr)
 ```
 
-### Outbound Proxy
+## Outbound Proxy
 
 Some SIP carriers use a dedicated proxy address that differs from the AOR
 domain. Pass `outbound_proxy` to route all signalling through it:
@@ -215,7 +184,7 @@ session = SIP(
 )
 ```
 
-### Disabling STUN
+## Disabling STUN
 
 When the application runs on a public-facing host with no NAT, skip the STUN
 discovery round-trip by setting `rtp_stun_server_address=None`:
