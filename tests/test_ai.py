@@ -275,6 +275,28 @@ class TestWhisperCall:
             mock_av.open.side_effect = RuntimeError("av error")
             call._decode_via_av(b"bad_data", input_format="ogg", input_sample_rate=None)
 
+    def test_decode_via_av__resampler_flush_yields_frames(self):
+        """Include frames flushed from the resampler after the last input frame."""
+        call = make_whisper_call(MagicMock())
+        pcm_array = np.zeros(16000, dtype=np.float32)
+        flush_frame = MagicMock()
+        flush_frame.to_ndarray.return_value = pcm_array
+        with patch("voip.audio.av") as mock_av:
+            mock_resampler = MagicMock()
+            # In-container frames yield nothing; the final flush yields one frame.
+            mock_resampler.resample.side_effect = [[], [flush_frame]]
+            mock_av.audio.resampler.AudioResampler.return_value = mock_resampler
+            mock_container = MagicMock()
+            mock_container.__enter__ = lambda s: s
+            mock_container.__exit__ = MagicMock(return_value=False)
+            mock_container.decode.return_value = [MagicMock()]
+            mock_av.open.return_value = mock_container
+            result = call._decode_via_av(
+                b"fake", input_format="ogg", input_sample_rate=None
+            )
+        assert result.dtype == np.float32
+        assert len(result) == len(pcm_array)
+
     def test_decode_raw__opus__wraps_in_ogg(self):
         """Decode Opus packets by wrapping them in an Ogg container before calling PyAV."""
         call = make_whisper_call(MagicMock(), media=OPUS_MEDIA)
@@ -796,35 +818,35 @@ class TestAgentCall:
         assert mock_enc.call_count == 2
         assert len(packets) == 2
 
-    def test_build_rtp_packet__has_twelve_byte_header(self):
-        """_build_rtp_packet prepends a 12-byte RTP header to the payload."""
+    def test_next_rtp_packet__has_twelve_byte_header(self):
+        """_next_rtp_packet produces a packet whose build() has a 12-byte RTP header."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
         payload = b"\x00" * 160
-        packet = call._build_rtp_packet(payload)
-        assert len(packet) == 12 + len(payload)
-        assert packet[0] == 0x80  # V=2, P=0, X=0, CC=0
+        data = call._next_rtp_packet(payload).build()
+        assert len(data) == 12 + len(payload)
+        assert data[0] == 0x80  # V=2, P=0, X=0, CC=0
 
-    def test_build_rtp_packet__increments_seq_and_ts_each_call(self):
-        """Each _build_rtp_packet call increments seq by 1 and ts by chunk size."""
+    def test_next_rtp_packet__increments_seq_and_ts_each_call(self):
+        """Each _next_rtp_packet call increments seq by 1 and ts by chunk size."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
-        call._build_rtp_packet(b"\x00" * 160)
+        call._next_rtp_packet(b"\x00" * 160)
         assert call._rtp_seq == 1
         assert call._rtp_ts == 160
-        call._build_rtp_packet(b"\x00" * 160)
+        call._next_rtp_packet(b"\x00" * 160)
         assert call._rtp_seq == 2
         assert call._rtp_ts == 320
 
-    def test_build_rtp_packet__uses_negotiated_payload_type(self):
-        """_build_rtp_packet uses the negotiated payload type in the RTP header."""
+    def test_next_rtp_packet__uses_negotiated_payload_type(self):
+        """_next_rtp_packet uses the negotiated payload type in the RTP header."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock, media=PCMA_MEDIA)
-        packet = call._build_rtp_packet(b"\x00" * 160)
-        assert packet[1] == RTPPayloadType.PCMA
+        packet = call._next_rtp_packet(b"\x00" * 160)
+        assert packet.build()[1] == RTPPayloadType.PCMA
 
     def test_preferred_codecs__opus_is_first(self):
         """AgentCall prefers Opus as the highest-priority outbound codec."""

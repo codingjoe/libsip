@@ -14,7 +14,6 @@ import dataclasses
 import enum
 import logging
 import secrets
-import struct
 from collections.abc import Iterator
 from typing import Any, ClassVar
 
@@ -25,7 +24,7 @@ from faster_whisper import WhisperModel
 from pocket_tts import TTSModel
 
 from voip.audio import AudioCall
-from voip.rtp import RTPPayloadType
+from voip.rtp import RTPPacket, RTPPayloadType
 from voip.sdp.types import RTPPayloadFormat
 
 __all__ = ["AgentCall", "AgentState", "TranscribeCall"]
@@ -271,17 +270,21 @@ class AgentCall(TranscribeCall):
     def transcription_received(self, text: str) -> None:
         """Buffer *text* for the next LLM query and schedule a response.
 
-        Empty strings are silently ignored.  When a response task is already
+        Empty strings are silently ignored. When a response task is already
         running it is cancelled first so the latest transcription takes
         priority.
 
         Args:
             text: Transcribed text (already stripped).
         """
-        self._pending_text.append(text)
-        if self._response_task is not None and not self._response_task.done():
-            self._response_task.cancel()
-        self._response_task = asyncio.create_task(self._respond())
+        match text:
+            case "":
+                return
+            case _:
+                self._pending_text.append(text)
+                if self._response_task is not None and not self._response_task.done():
+                    self._response_task.cancel()
+                self._response_task = asyncio.create_task(self._respond())
 
     async def _respond(self) -> None:
         """Fetch an Ollama reply for pending text and stream it as speech via RTP.
@@ -360,7 +363,7 @@ class AgentCall(TranscribeCall):
             logger.warning("No remote RTP address for this call; dropping audio")
             return
         for payload in self._packetize(audio):
-            self.send_datagram(self._build_rtp_packet(payload), remote_addr)
+            self.send_packet(self._next_rtp_packet(payload), remote_addr)
             await asyncio.sleep(self._rtp_packet_duration)
 
     def _packetize(self, audio: np.ndarray) -> Iterator[bytes]:
@@ -532,25 +535,22 @@ class AgentCall(TranscribeCall):
             for packet in segment
         )
 
-    def _build_rtp_packet(self, payload: bytes) -> bytes:
-        """Wrap *payload* in a minimal RTP header (RFC 3550 §5.1).
-
-        Increments the sequence number and timestamp after each packet.
+    def _next_rtp_packet(self, payload: bytes) -> RTPPacket:
+        """Create the next outbound RTP packet with incremented sequence and timestamp.
 
         Args:
             payload: Encoded audio payload bytes.
 
         Returns:
-            RTP packet bytes ready for transmission.
+            RTP packet ready for transmission.
         """
-        header = struct.pack(
-            ">BBHII",
-            0x80,  # V=2, P=0, X=0, CC=0
-            self._payload_type,
-            self._rtp_seq & 0xFFFF,
-            self._rtp_ts & 0xFFFFFFFF,
-            self._rtp_ssrc,
+        packet = RTPPacket(
+            payload_type=self._payload_type,
+            sequence_number=self._rtp_seq & 0xFFFF,
+            timestamp=self._rtp_ts & 0xFFFFFFFF,
+            ssrc=self._rtp_ssrc,
+            payload=payload,
         )
         self._rtp_seq += 1
         self._rtp_ts += self._rtp_ts_increment
-        return header + payload
+        return packet

@@ -1,12 +1,13 @@
 # Call Handling
 
-The `voip.call` module provides the base classes for handling individual call legs.
+The `voip.rtp` module provides `RTPCall`, the base class for all call leg handlers.
 
-## Call
+## RTPCall
 
-The base `Call` class handles the association between a SIP dialog and the RTP media stream.
+`RTPCall` is the entry point for implementing custom call logic. Override `packet_received`
+to process incoming media and use `send_packet` to transmit outbound media.
 
-::: voip.call.Call
+::: voip.rtp.RTPCall
 
 ## Audio Handling
 

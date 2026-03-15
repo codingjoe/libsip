@@ -11,15 +11,19 @@ import dataclasses
 import enum
 import json
 import logging
+import struct
 import typing
 from typing import TYPE_CHECKING
 
+from voip.sdp.types import MediaDescription
+from voip.srtp import SRTPSession
 from voip.stun import STUNProtocol
 
 if TYPE_CHECKING:
-    from voip.call import Call
+    from voip.sip.protocol import SessionInitiationProtocol
+    from voip.sip.types import CallerID
 
-__all__ = ["RTP", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
+__all__ = ["RTP", "RTPCall", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,141 @@ class RTPPacket:
             payload=data[12:],
         )
 
+    def build(self) -> bytes:
+        """Serialize this packet to raw RTP bytes (RFC 3550 §5.1).
+
+        Returns:
+            Raw RTP bytes ready for transmission.
+        """
+        return (
+            struct.pack(
+                ">BBHII",
+                0x80,  # V=2, P=0, X=0, CC=0
+                self.payload_type,
+                self.sequence_number & 0xFFFF,
+                self.timestamp & 0xFFFFFFFF,
+                self.ssrc,
+            )
+            + self.payload
+        )
+
+
+def _default_caller_id() -> CallerID:
+    """Return an empty `CallerID`, lazily imported to avoid circular imports."""
+    from voip.sip.types import CallerID as _CallerID  # noqa: PLC0415
+
+    return _CallerID("")
+
+
+@dataclasses.dataclass
+class RTPCall:
+    """One call leg managed by the RTP multiplexer.
+
+    Associates a SIP dialog with the `RealtimeTransportProtocol` media
+    stream. Subclass and override `packet_received` to process incoming
+    media, and use `send_packet` to transmit outbound media.
+
+    The `rtp` and `sip` back-references allow the handler to send data
+    back to the caller and to terminate the call via SIP BYE.
+
+    Subclass `voip.audio.AudioCall` for audio calls with codec
+    negotiation, buffering, and decoding.
+
+    Attributes:
+        rtp: Shared RTP multiplexer socket that delivers packets to this handler.
+        sip: SIP session that answered this call (used for BYE etc.).
+        caller: Caller identifier as received in the SIP From header.
+        media: Negotiated SDP media description for this call leg.
+        srtp: Optional SRTP session for encrypting and decrypting media.
+    """
+
+    rtp: RealtimeTransportProtocol
+    sip: SessionInitiationProtocol
+    #: Caller identifier as received in the SIP From header.
+    caller: CallerID = dataclasses.field(default_factory=_default_caller_id)
+    #: Negotiated SDP media description for this call leg.
+    media: MediaDescription | None = None
+    #: SRTP session for encrypting and decrypting media (set by the SIP layer).
+    srtp: SRTPSession | None = None
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Parse *data* as an RTP packet and dispatch to `packet_received`.
+
+        Silently drops malformed datagrams that cannot be parsed as RTP.
+
+        Args:
+            data: Raw RTP bytes.
+            addr: Remote ``(host, port)`` the datagram arrived from.
+        """
+        try:
+            self.packet_received(RTPPacket.parse(data), addr)
+        except ValueError:
+            pass
+
+    def packet_received(self, packet: RTPPacket, addr: tuple[str, int]) -> None:
+        """Handle a parsed RTP packet. Override in subclasses to process media.
+
+        Args:
+            packet: Parsed RTP packet.
+            addr: Remote ``(host, port)`` the packet arrived from.
+        """
+
+    def send_packet(self, packet: RTPPacket, addr: tuple[str, int]) -> None:
+        """Serialize *packet* and send it via the shared RTP socket.
+
+        Encrypts the packet with the call's SRTP session when one is set.
+
+        Args:
+            packet: RTP packet to send.
+            addr: Destination ``(host, port)``.
+        """
+        self.send_datagram(packet.build(), addr)
+
+    def send_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
+        """Send a datagram through the shared RTP socket.
+
+        Encrypts the datagram with the call's SRTP session when one is set.
+
+        Args:
+            data: Raw RTP bytes to send.
+            addr: Destination ``(host, port)``.
+        """
+        if self.srtp is not None:
+            data = self.srtp.encrypt(data)
+        self.rtp.send(data, addr)
+
+    async def hang_up(self) -> None:
+        """Terminate the call by sending a SIP BYE request.
+
+        Raises:
+            NotImplementedError: Not yet implemented; the call_id and remote
+                SIP address need to be stored per call to make this work.
+        """
+        raise NotImplementedError("hang_up is not yet implemented")
+
+    @classmethod
+    def negotiate_codec(cls, remote_media: MediaDescription) -> MediaDescription:
+        """Negotiate a media codec from the remote SDP offer.
+
+        Override in subclasses to implement codec selection. The SIP layer
+        calls this before sending a 200 OK; if the method raises the exception
+        propagates and the call is not answered.
+
+        Args:
+            remote_media: The SDP ``m=audio`` section from the remote INVITE.
+
+        Returns:
+            A `MediaDescription` with the chosen codec.
+
+        Raises:
+            NotImplementedError: When not overridden by a subclass.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement negotiate_codec. "
+            "Override this classmethod in a subclass (e.g. AudioCall) to "
+            "support codec negotiation."
+        )
+
 
 @dataclasses.dataclass(kw_only=True, slots=True)
 class RealtimeTransportProtocol(STUNProtocol):
@@ -84,7 +223,7 @@ class RealtimeTransportProtocol(STUNProtocol):
     """
 
     rtp_header_size: typing.ClassVar[int] = 12
-    calls: dict[tuple[str, int] | None, Call] = dataclasses.field(
+    calls: dict[tuple[str, int] | None, RTPCall] = dataclasses.field(
         init=False, default_factory=dict
     )
     public_address: asyncio.Future[tuple[str, int]] = dataclasses.field(
@@ -97,7 +236,7 @@ class RealtimeTransportProtocol(STUNProtocol):
     def register_call(
         self,
         addr: tuple[str, int] | None,
-        handler: Call,
+        handler: RTPCall,
     ) -> None:
         """Register *handler* for RTP traffic arriving from *addr*.
 

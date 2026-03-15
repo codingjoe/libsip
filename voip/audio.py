@@ -23,8 +23,7 @@ from typing import ClassVar
 import av
 import numpy as np
 
-from voip.call import Call
-from voip.rtp import RTPPacket, RTPPayloadType
+from voip.rtp import RTPCall, RTPPacket, RTPPayloadType
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
 
 __all__ = ["AudioCall"]
@@ -108,7 +107,7 @@ def _build_ogg_opus(packet: bytes) -> bytes:
 
 
 @dataclasses.dataclass
-class AudioCall(Call):
+class AudioCall(RTPCall):
     """RTP call handler with audio buffering, codec negotiation, and decoding."""
 
     #: Preferred codecs in priority order (highest first).
@@ -213,15 +212,17 @@ class AudioCall(Call):
             f"Supported: {[c.encoding_name for c in cls.PREFERRED_CODECS]!r}"
         )
 
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Buffer *data* as an RTP packet; emit when the chunk threshold is reached."""
-        try:
-            packet = RTPPacket.parse(data)
-        except ValueError:
-            return
-        else:
-            if packet.payload:
-                asyncio.create_task(self._emit_audio(packet))
+    def packet_received(self, packet: RTPPacket, addr: tuple[str, int]) -> None:
+        """Schedule audio decoding and delivery for *packet*.
+
+        Ignores packets with an empty payload.
+
+        Args:
+            packet: Parsed RTP packet.
+            addr: Remote ``(host, port)`` the packet arrived from.
+        """
+        if packet.payload:
+            asyncio.create_task(self._emit_audio(packet))
 
     @staticmethod
     def _estimate_payload_rms(payload: bytes) -> float:

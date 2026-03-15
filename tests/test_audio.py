@@ -188,6 +188,47 @@ class TestAudioCall:
         await asyncio.sleep(0.05)  # let the executor task run
         assert len(received) == 1
 
+    @pytest.mark.asyncio
+    async def test_packet_received__dispatches_audio_for_non_empty_payload(self):
+        """packet_received schedules audio decoding when the packet has a payload."""
+        from voip.rtp import RTPPacket  # noqa: PLC0415
+
+        received: list = []
+
+        class ConcreteCall(AudioCall):
+            def _decode_raw(self, packet: bytes) -> np.ndarray:
+                return np.array([1.0], dtype=np.float32)
+
+            def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
+                received.append(audio)
+
+        packet = RTPPacket(
+            payload_type=8, sequence_number=1, timestamp=0, ssrc=0, payload=b"audio"
+        )
+        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
+        call.packet_received(packet, ("127.0.0.1", 5004))
+        await asyncio.sleep(0.05)
+        assert len(received) == 1
+
+    @pytest.mark.asyncio
+    async def test_packet_received__ignores_empty_payload(self):
+        """packet_received does not schedule decoding when the payload is empty."""
+        from voip.rtp import RTPPacket  # noqa: PLC0415
+
+        received: list = []
+
+        class ConcreteCall(AudioCall):
+            def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
+                received.append(audio)
+
+        packet = RTPPacket(
+            payload_type=8, sequence_number=1, timestamp=0, ssrc=0, payload=b""
+        )
+        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
+        call.packet_received(packet, ("127.0.0.1", 5004))
+        await asyncio.sleep(0.05)
+        assert len(received) == 0
+
 
 class TestNegotiateCodec:
     def _make_media(self, fmts: list[str], rtpmaps: list[str] | None = None):
@@ -223,6 +264,13 @@ class TestNegotiateCodec:
         media = self._make_media(["0"])
         result = AudioCall.negotiate_codec(media)
         assert result.fmt[0].payload_type == 0
+
+    def test_negotiate_codec__matches_by_encoding_name_when_payload_type_differs(self):
+        """Select a codec by encoding name when its dynamic payload type differs from preferred."""
+        # Dynamic PT 99 is not in preferred PTs, but encoding name "opus" matches.
+        media = self._make_media(["99"], ["99 opus/48000/2"])
+        result = AudioCall.negotiate_codec(media)
+        assert result.fmt[0].encoding_name.lower() == "opus"
 
     def test_negotiate_codec__empty_fmt__raises(self):
         """Raise NotImplementedError when the remote side offers no audio formats."""

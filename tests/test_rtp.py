@@ -93,6 +93,31 @@ class TestRTPPacket:
         packet = RTPPacket.parse(raw)
         assert packet.payload_type == 111
 
+    def test_build__round_trips_through_parse(self):
+        """build() serializes a packet that parse() can recover identically."""
+        original = RTPPacket.parse(
+            make_rtp_packet(
+                payload_type=8,
+                sequence_number=42,
+                timestamp=96000,
+                ssrc=0xDEAD,
+                payload=b"hello",
+            )
+        )
+        rebuilt = RTPPacket.parse(original.build())
+        assert rebuilt.payload_type == original.payload_type
+        assert rebuilt.sequence_number == original.sequence_number
+        assert rebuilt.timestamp == original.timestamp
+        assert rebuilt.ssrc == original.ssrc
+        assert rebuilt.payload == original.payload
+
+    def test_build__starts_with_rtp_version_byte(self):
+        """build() always sets V=2 (0x80) as the first byte per RFC 3550."""
+        packet = RTPPacket(
+            payload_type=0, sequence_number=0, timestamp=0, ssrc=0, payload=b""
+        )
+        assert packet.build()[0] == 0x80
+
 
 class TestRealtimeTransportProtocol:
     def test_rtp_header_size__class_attribute(self):
