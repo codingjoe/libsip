@@ -52,7 +52,7 @@ repos:
     hooks:
       - id: ty
         name: ty
-        description: Python type checking
+        description: An extremely fast Python type checker and language server, written in Rust.
         entry: ty check
         language: python
         additional_dependencies: [ty, '.[cli]']
@@ -62,3 +62,4 @@ repos:
 ci:
   skip:
     - no-commit-to-branch
+    - ty
