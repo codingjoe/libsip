@@ -1283,14 +1283,15 @@ class TestSIPProtocol:
         assert created == ["sip:bob@biloxi.com"]
 
     async def test_answer__rtp_receives_audio(self):
-        """Deliver SRTP payloads to the call handler's datagram_received (decrypted)."""
+        """Deliver SRTP payloads to the call handler's packet_received (decrypted)."""
+        from voip.rtp import RTPPacket  # noqa: PLC0415
+
         received_payloads: list[bytes] = []
 
         @dataclasses.dataclass
-        class DatagramCapture(Call):
-            def datagram_received(self, data: bytes, addr) -> None:
-                # RTP fixed header is 12 bytes; extract raw payload.
-                received_payloads.append(data[12:])
+        class PacketCapture(Call):
+            def packet_received(self, packet: RTPPacket, addr) -> None:
+                received_payloads.append(packet.payload)
 
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
@@ -1305,7 +1306,7 @@ class TestSIPProtocol:
         request = make_invite()
         protocol._pending_invites.add(request.headers["Call-ID"])
         try:
-            await protocol._answer(request, DatagramCapture)
+            await protocol._answer(request, PacketCapture)
             response, _ = protocol._sent[0]
             sdp_line = next(
                 line
@@ -1330,13 +1331,15 @@ class TestSIPProtocol:
             rtp_transport.close()
 
     async def test_answer__rtp_receives_multiple_packets(self):
-        """Call datagram_received for each SRTP packet that arrives (decrypted)."""
+        """Call packet_received for each SRTP packet that arrives (decrypted)."""
+        from voip.rtp import RTPPacket  # noqa: PLC0415
+
         received_payloads: list[bytes] = []
 
         @dataclasses.dataclass
-        class DatagramCapture(Call):
-            def datagram_received(self, data: bytes, addr) -> None:
-                received_payloads.append(data[12:])
+        class PacketCapture(Call):
+            def packet_received(self, packet: RTPPacket, addr) -> None:
+                received_payloads.append(packet.payload)
 
         loop = asyncio.get_running_loop()
         protocol = self._CapturingSIP()
@@ -1351,7 +1354,7 @@ class TestSIPProtocol:
         request = make_invite()
         protocol._pending_invites.add(request.headers["Call-ID"])
         try:
-            await protocol._answer(request, DatagramCapture)
+            await protocol._answer(request, PacketCapture)
             response, _ = protocol._sent[0]
             sdp_line = next(
                 line
@@ -1827,7 +1830,7 @@ class TestRegistration:
         import re
 
         p = make_register_session()
-        p.local_address = ("192.0.2.10", 5061)
+        p.local_address = "192.0.2.10", 5061
         transport = make_mock_transport("192.0.2.10", 5061)
         p.transport = transport
         p._is_tls = True

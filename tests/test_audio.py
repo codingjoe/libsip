@@ -169,26 +169,6 @@ class TestAudioCall:
         assert any("PCMA" in r.message and "8000" in r.message for r in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_datagram_received__forwards_audio_payload(self):
-        """datagram_received parses the RTP packet and calls audio_received after decode."""
-        import struct  # noqa: PLC0415
-
-        received: list = []
-
-        class ConcreteCall(AudioCall):
-            def _decode_raw(self, packet: bytes) -> np.ndarray:
-                return np.array([1.0], dtype=np.float32)  # non-empty sentinel array
-
-            def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
-                received.append(audio)
-
-        rtp_packet = struct.pack(">BBHII", 0x80, 8 & 0x7F, 1, 0, 0) + b"audio"
-        call = ConcreteCall(rtp=MagicMock(), sip=MagicMock(), media=PCMA_MEDIA)
-        call.datagram_received(rtp_packet, ("127.0.0.1", 5004))
-        await asyncio.sleep(0.05)  # let the executor task run
-        assert len(received) == 1
-
-    @pytest.mark.asyncio
     async def test_packet_received__dispatches_audio_for_non_empty_payload(self):
         """packet_received schedules audio decoding when the packet has a payload."""
         from voip.rtp import RTPPacket  # noqa: PLC0415

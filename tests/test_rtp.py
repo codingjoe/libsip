@@ -10,6 +10,14 @@ from unittest.mock import MagicMock
 import pytest
 from voip.call import Call
 from voip.rtp import RTP, RealtimeTransportProtocol, RTPPacket, RTPPayloadType
+from voip.sdp.types import MediaDescription, RTPPayloadFormat
+
+
+def make_media() -> MediaDescription:
+    """Create a minimal MediaDescription for unit testing."""
+    return MediaDescription(
+        media="audio", port=0, proto="RTP/AVP", fmt=[RTPPayloadFormat(payload_type=8)]
+    )
 
 
 def make_rtp_packet(
@@ -135,19 +143,20 @@ class TestRealtimeTransportProtocol:
     @pytest.mark.asyncio
     async def test_datagram_received__routes_to_handler(self):
         """Non-STUN datagrams from registered addr are forwarded to the handler."""
-        routed: list[bytes] = []
+        routed: list[RTPPacket] = []
 
         class RecordCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                routed.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                routed.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = RecordCall(rtp=mux, sip=MagicMock())
+        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
         remote_addr = ("127.0.0.1", 5004)
         mux.register_call(remote_addr, handler)
         rtp_packet = make_rtp_packet(payload=b"audio")
         mux.datagram_received(rtp_packet, remote_addr)
-        assert routed == [rtp_packet]
+        assert len(routed) == 1
+        assert routed[0].payload == b"audio"
 
     @pytest.mark.asyncio
     async def test_datagram_received__no_handler__drops_packet(self):
@@ -158,15 +167,15 @@ class TestRealtimeTransportProtocol:
 
     async def test_datagram_received__stun_packet__not_forwarded(self):
         """A STUN packet (first byte < 4) must not reach any Call handler."""
-        routed: list[bytes] = []
+        routed: list[RTPPacket] = []
 
         class RecordCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                routed.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                routed.append(packet)
 
         mux = RealtimeTransportProtocol()
         mux.connection_made(MagicMock(spec=asyncio.DatagramTransport))
-        handler = RecordCall(rtp=mux, sip=MagicMock())
+        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
         mux.register_call(None, handler)
         stun_bytes = b"\x01\x01" + b"\x00" * 18  # first byte = 1 (STUN range [0,3])
         mux.datagram_received(stun_bytes, ("127.0.0.1", 5004))
@@ -227,57 +236,59 @@ class TestRealtimeTransportProtocol:
     @pytest.mark.asyncio
     async def test_register_call__routes_by_addr(self):
         """Packets from a registered remote addr are forwarded to the registered handler."""
-        received_wildcard: list[bytes] = []
-        received_call: list[bytes] = []
+        received_wildcard: list[RTPPacket] = []
+        received_call: list[RTPPacket] = []
 
         class WildcardCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                received_wildcard.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                received_wildcard.append(packet)
 
         class SpecificCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                received_call.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                received_call.append(packet)
 
         mux = RealtimeTransportProtocol()
         specific_addr = ("1.2.3.4", 5004)
-        wildcard_handler = WildcardCall(rtp=mux, sip=MagicMock())
-        specific_handler = SpecificCall(rtp=mux, sip=MagicMock())
+        wildcard_handler = WildcardCall(rtp=mux, sip=MagicMock(), media=make_media())
+        specific_handler = SpecificCall(rtp=mux, sip=MagicMock(), media=make_media())
         mux.register_call(None, wildcard_handler)
         mux.register_call(specific_addr, specific_handler)
 
         rtp_packet = make_rtp_packet(payload=b"call-audio")
         mux.datagram_received(rtp_packet, specific_addr)
-        assert received_call == [rtp_packet]
+        assert len(received_call) == 1
+        assert received_call[0].payload == b"call-audio"
         assert received_wildcard == []
 
     @pytest.mark.asyncio
     async def test_register_call__unmatched_addr_uses_wildcard_handler(self):
         """Packets from an unknown addr reach the None-key wildcard handler."""
-        received: list[bytes] = []
+        received: list[RTPPacket] = []
 
         class WildcardCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                received.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                received.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = WildcardCall(rtp=mux, sip=MagicMock())
+        handler = WildcardCall(rtp=mux, sip=MagicMock(), media=make_media())
         mux.register_call(None, handler)
 
         rtp_packet = make_rtp_packet(payload=b"unmatched")
         mux.datagram_received(rtp_packet, ("9.9.9.9", 9999))
-        assert received == [rtp_packet]
+        assert len(received) == 1
+        assert received[0].payload == b"unmatched"
 
     @pytest.mark.asyncio
     async def test_unregister_call__removes_handler(self):
         """After unregister_call, packets from that addr are no longer routed to handler."""
-        received: list[bytes] = []
+        received: list[RTPPacket] = []
 
         class RecordCall(Call):
-            def datagram_received(self, data: bytes, addr):
-                received.append(data)
+            def packet_received(self, packet: RTPPacket, addr):
+                received.append(packet)
 
         mux = RealtimeTransportProtocol()
-        handler = RecordCall(rtp=mux, sip=MagicMock())
+        handler = RecordCall(rtp=mux, sip=MagicMock(), media=make_media())
         remote_addr = ("5.6.7.8", 5004)
         mux.register_call(remote_addr, handler)
         mux.unregister_call(remote_addr)
@@ -291,7 +302,7 @@ class TestRealtimeTransportProtocol:
         import logging  # noqa: PLC0415
 
         mux = RealtimeTransportProtocol()
-        handler = Call(rtp=mux, sip=MagicMock())
+        handler = Call(rtp=mux, sip=MagicMock(), media=make_media())
         with caplog.at_level(logging.INFO, logger="voip.rtp"):
             mux.register_call(("1.2.3.4", 5004), handler)
         assert any("rtp_call_registered" in r.message for r in caplog.records)
@@ -302,7 +313,7 @@ class TestRealtimeTransportProtocol:
         import logging  # noqa: PLC0415
 
         mux = RealtimeTransportProtocol()
-        handler = Call(rtp=mux, sip=MagicMock())
+        handler = Call(rtp=mux, sip=MagicMock(), media=make_media())
         addr = ("1.2.3.4", 5004)
         mux.register_call(addr, handler)
         with caplog.at_level(logging.INFO, logger="voip.rtp"):
@@ -312,14 +323,14 @@ class TestRealtimeTransportProtocol:
     @pytest.mark.asyncio
     async def test_packet_received__dispatches_to_handler(self):
         """packet_received forwards the datagram to the registered handler."""
-        received: list[tuple[bytes, tuple]] = []
+        received: list[tuple[RTPPacket, tuple]] = []
 
         class CapturingCall(Call):
-            def datagram_received(self, data, addr):
-                received.append((data, addr))
+            def packet_received(self, packet: RTPPacket, addr):
+                received.append((packet, addr))
 
         mux = RealtimeTransportProtocol()
-        handler = CapturingCall(rtp=mux, sip=MagicMock())
+        handler = CapturingCall(rtp=mux, sip=MagicMock(), media=make_media())
         mux.register_call(None, handler)
         packet = make_rtp_packet()
         mux.packet_received(packet, ("1.2.3.4", 5004))
@@ -348,26 +359,29 @@ class TestSRTPIntegration:
 
     @pytest.mark.asyncio
     async def test_srtp_packet__decrypted_before_delivery(self):
-        """SRTP-encrypted packets are decrypted before being passed to datagram_received."""
+        """SRTP-encrypted packets are decrypted before being passed to packet_received."""
         from voip.srtp import SRTPSession  # noqa: PLC0415
 
-        received: list[bytes] = []
+        received: list[RTPPacket] = []
 
         @dataclasses.dataclass
         class SRTPCapture(Call):
-            def datagram_received(self, data: bytes, addr) -> None:
-                received.append(data)
+            def packet_received(self, packet: RTPPacket, addr) -> None:
+                received.append(packet)
 
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
-        handler = SRTPCapture(rtp=mux, sip=MagicMock(), srtp=session)
+        handler = SRTPCapture(
+            rtp=mux, sip=MagicMock(), media=make_media(), srtp=session
+        )
         mux.register_call(None, handler)
 
         rtp_packet = make_rtp_packet(payload=b"secret")
         srtp_packet = session.encrypt(rtp_packet)
         assert srtp_packet != rtp_packet
         mux.datagram_received(srtp_packet, ("1.2.3.4", 5004))
-        assert received == [rtp_packet]
+        assert len(received) == 1
+        assert received[0].payload == b"secret"
 
     @pytest.mark.asyncio
     async def test_srtp_invalid_auth_tag__discarded(self, caplog):
@@ -376,16 +390,18 @@ class TestSRTPIntegration:
 
         from voip.srtp import SRTPSession  # noqa: PLC0415
 
-        received: list[bytes] = []
+        received: list[RTPPacket] = []
 
         @dataclasses.dataclass
         class SRTPCapture(Call):
-            def datagram_received(self, data: bytes, addr) -> None:
-                received.append(data)
+            def packet_received(self, packet: RTPPacket, addr) -> None:
+                received.append(packet)
 
         mux = RealtimeTransportProtocol()
         session = SRTPSession.generate()
-        handler = SRTPCapture(rtp=mux, sip=MagicMock(), srtp=session)
+        handler = SRTPCapture(
+            rtp=mux, sip=MagicMock(), media=make_media(), srtp=session
+        )
         mux.register_call(None, handler)
 
         rtp_packet = make_rtp_packet(payload=b"tampered")

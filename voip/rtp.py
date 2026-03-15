@@ -122,26 +122,9 @@ class RTPCall:
 
     rtp: RealtimeTransportProtocol
     sip: SessionInitiationProtocol
-    #: Caller identifier as received in the SIP From header.
+    media: MediaDescription
     caller: CallerID = dataclasses.field(default_factory=_default_caller_id)
-    #: Negotiated SDP media description for this call leg.
-    media: MediaDescription | None = None
-    #: SRTP session for encrypting and decrypting media (set by the SIP layer).
     srtp: SRTPSession | None = None
-
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Parse *data* as an RTP packet and dispatch to `packet_received`.
-
-        Silently drops malformed datagrams that cannot be parsed as RTP.
-
-        Args:
-            data: Raw RTP bytes.
-            addr: Remote ``(host, port)`` the datagram arrived from.
-        """
-        try:
-            self.packet_received(RTPPacket.parse(data), addr)
-        except ValueError:
-            pass
 
     def packet_received(self, packet: RTPPacket, addr: tuple[str, int]) -> None:
         """Handle a parsed RTP packet. Override in subclasses to process media.
@@ -160,17 +143,7 @@ class RTPCall:
             packet: RTP packet to send.
             addr: Destination ``(host, port)``.
         """
-        self.send_datagram(packet.build(), addr)
-
-    def send_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Send a datagram through the shared RTP socket.
-
-        Encrypts the datagram with the call's SRTP session when one is set.
-
-        Args:
-            data: Raw RTP bytes to send.
-            addr: Destination ``(host, port)``.
-        """
+        data = packet.build()
         if self.srtp is not None:
             data = self.srtp.encrypt(data)
         self.rtp.send(data, addr)
@@ -307,7 +280,7 @@ class RealtimeTransportProtocol(STUNProtocol):
                     )
                     return
                 data = decrypted
-            handler.datagram_received(data, addr)
+            handler.packet_received(RTPPacket.parse(data), addr)
         else:
             logger.debug(
                 "No call handler registered for %s:%s, dropping RTP packet",
