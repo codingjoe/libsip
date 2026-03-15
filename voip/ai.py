@@ -36,10 +36,10 @@ class TranscribeCall(AudioCall):
     """RTP call handler that transcribes audio with faster-whisper.
 
     Audio is decoded by [`AudioCall`][voip.audio.AudioCall] on a per-packet
-    basis and delivered to [`audio_received`][voip.ai.TranscribeCall.audio_received],
+    basis and delivered to [`audio_received`][voip.audio.AudioCall.audio_received],
     which applies an energy-based voice activity detector (VAD).  Speech
     packets are accumulated until silence is sustained for
-    [`silence_gap`][voip.ai.TranscribeCall.silence_gap] seconds, then the
+    `silence_gap` seconds, then the
     entire utterance is sent to Whisper as one chunk.  This avoids cutting
     sentences in the middle and prevents background microphone noise from
     being passed to Whisper as spurious audio.

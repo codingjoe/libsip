@@ -31,6 +31,7 @@ plugins:
             heading_level: 3
           inventories:
             - https://docs.python.org/3/objects.inv
+            - https://numpy.org/doc/stable/objects.inv
 theme:
   name: material
   logo: images/icon.svg

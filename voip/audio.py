@@ -44,10 +44,10 @@ def generate_ssrc() -> int:
 class AudioCall(RTPCall):
     """RTP call handler with audio buffering, codec negotiation, decoding, and encoding.
 
-    Codec selection is driven by [`PREFERRED_CODECS`][voip.audio.AudioCall.PREFERRED_CODECS].
+    Codec selection is driven by `PREFERRED_CODECS`.
     Override that list in a subclass to change priority.  The selected codec
-    class is stored on [`codec`][voip.audio.AudioCall.codec] after
-    `__post_init__` and used for all encode/decode operations.
+    class is stored on `codec` after `__post_init__` and used for all
+    encode/decode operations.
     """
 
     #: Preferred codecs in priority order (highest priority first).
@@ -113,7 +113,7 @@ class AudioCall(RTPCall):
     def negotiate_codec(cls, remote_media: MediaDescription) -> MediaDescription:
         """Select the best codec from the remote SDP offer.
 
-        Iterates [`PREFERRED_CODECS`][voip.audio.AudioCall.PREFERRED_CODECS]
+        Iterates `PREFERRED_CODECS`
         in priority order, matching first by payload type number and then by
         encoding name for dynamic payload types.
 
@@ -125,8 +125,7 @@ class AudioCall(RTPCall):
             chosen codec.
 
         Raises:
-            NotImplementedError: When no offered codec is in
-                [`PREFERRED_CODECS`][voip.audio.AudioCall.PREFERRED_CODECS].
+            NotImplementedError: When no offered codec is in `PREFERRED_CODECS`.
         """
         if not remote_media.fmt:
             raise NotImplementedError("Remote SDP offer contains no audio formats")
@@ -187,9 +186,9 @@ class AudioCall(RTPCall):
             )
 
     def decode_payload(self, payload: bytes) -> np.ndarray:
-        """Decode an RTP payload to float32 PCM at [`RESAMPLING_RATE_HZ`][voip.audio.AudioCall.RESAMPLING_RATE_HZ].
+        """Decode an RTP payload to float32 PCM at `RESAMPLING_RATE_HZ`.
 
-        Delegates to the negotiated [`codec`][voip.audio.AudioCall.codec],
+        Delegates to the negotiated `codec`,
         passing the SDP-negotiated `sample_rate` as the input rate hint so
         that non-standard variants (e.g. wideband PCMA at 16 000 Hz) are
         handled correctly.
@@ -198,7 +197,7 @@ class AudioCall(RTPCall):
             payload: Raw RTP payload bytes.
 
         Returns:
-            Float32 mono PCM array at [`RESAMPLING_RATE_HZ`][voip.audio.AudioCall.RESAMPLING_RATE_HZ] Hz.
+            Float32 mono PCM array at `RESAMPLING_RATE_HZ` Hz.
         """
         return self.codec.decode(
             payload, self.RESAMPLING_RATE_HZ, input_rate_hz=self.sample_rate
@@ -208,7 +207,7 @@ class AudioCall(RTPCall):
         """Handle decoded audio.  Override in subclasses.
 
         Args:
-            audio: Float32 mono PCM array at [`RESAMPLING_RATE_HZ`][voip.audio.AudioCall.RESAMPLING_RATE_HZ] Hz.
+            audio: Float32 mono PCM array at `RESAMPLING_RATE_HZ` Hz.
             rms: Root mean square of the decoded PCM, as a proxy for signal
                 strength.
         """
@@ -219,8 +218,7 @@ class AudioCall(RTPCall):
         Looks up the caller's remote RTP address from the shared
         [`RealtimeTransportProtocol`][voip.rtp.RealtimeTransportProtocol] call
         registry and transmits encoded audio as 20 ms RTP packets, sleeping
-        [`RTP_PACKET_DURATION_SECS`][voip.audio.AudioCall.RTP_PACKET_DURATION_SECS]
-        between each packet.
+        `RTP_PACKET_DURATION_SECS` between each packet.
 
         Args:
             audio: Float32 mono PCM at `codec.sample_rate_hz` Hz.
