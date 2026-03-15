@@ -28,6 +28,13 @@ Answer calls and transcribe them live from the terminal:
 SIP_PASSWORD=******** uvx 'voip[cli]' sip sips:alice@sip.example.com transcribe
 ```
 
+A simple echo server can be started with:
+
+````console
+```console
+SIP_PASSWORD=******** uvx 'voip[cli]' sip sips:alice@sip.example.com echo
+````
+
 You can also talk to a local agent (needs [Ollama]):
 
 ```console
