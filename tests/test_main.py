@@ -113,6 +113,14 @@ class TestParseAOR:
         with pytest.raises(click.BadParameter):
             _parse_aor("sip:alice@[::1:5060")
 
+    def test_parse_aor__ipv6_empty_host_in_brackets(self):
+        """Raise BadParameter when brackets are present but the host is empty."""
+        import click
+        from voip.__main__ import _parse_aor
+
+        with pytest.raises(click.BadParameter):
+            _parse_aor("sip:alice@[]:5060")
+
 
 class TestParseHostport:
     def test_parse_hostport__without_port(self):

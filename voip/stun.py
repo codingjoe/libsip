@@ -40,13 +40,15 @@ def _parse_address(value: bytes, xor_key: bytes) -> tuple[str, int] | None:
 
     Args:
         value: Raw attribute value bytes (everything after the type/length TLV header).
-        xor_key: XOR key bytes — ``MAGIC_COOKIE (4 bytes) || transaction_id (12 bytes)``
+        xor_key: XOR key bytes — must be exactly 16 bytes
+            (``MAGIC_COOKIE (4 bytes) || transaction_id (12 bytes)``)
             for XOR-MAPPED-ADDRESS, or empty bytes for plain MAPPED-ADDRESS.
 
     Returns:
         ``(ip_address_string, port)`` on success, ``None`` when *value* is
         too short or the address family is unrecognised.
     """
+    assert not xor_key or len(xor_key) == 16, "xor_key must be 16 bytes or empty"  # noqa: S101
     if len(value) < 4:
         return None
     family = value[1]

@@ -68,6 +68,10 @@ def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
                 f"Invalid SIP URI: {value!r}. Unclosed bracket in IPv6 address."
             )
         host = hostport[1:bracket_end]
+        if not host:
+            raise click.BadParameter(
+                f"Invalid SIP URI: {value!r}. Empty host in IPv6 brackets."
+            )
         remainder = hostport[bracket_end + 1 :]
         port_str = remainder.removeprefix(":")
         port: int | None = int(port_str) if port_str else None
