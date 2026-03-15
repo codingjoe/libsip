@@ -408,7 +408,8 @@ def agent(ctx, model, ollama_model, voice, system_prompt):
         model: str = dataclasses.field(default=_model)
         ollama_model: str = dataclasses.field(default=_ollama_model)
         voice: str = dataclasses.field(default=_voice)
-        system_prompt: str = dataclasses.field(default=_system_prompt)
+        if _system_prompt is not None:
+            system_prompt: str = dataclasses.field(default=_system_prompt)
 
         def transcription_received(self, text: str) -> None:
             click.echo(click.style(f"User:  {text}", fg="blue", bold=True))
