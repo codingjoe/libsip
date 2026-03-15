@@ -50,7 +50,8 @@ class PCMU(RTPCodec):
             else cls.sample_rate_hz,
         )
 
-    def encode(self, samples: np.ndarray) -> bytes:
+    @classmethod
+    def encode(cls, samples: np.ndarray) -> bytes:
         BIAS = 0x84  # 132: G.711 mu-law bias constant
         CLIP = 32635  # maximum biased magnitude (14-bit saturate)
         pcm = np.clip(np.round(samples * 32768.0), -32768, 32767).astype(np.int32)

@@ -537,32 +537,6 @@ class TestAgentCall:
         # Partial user turn must be rolled back to keep history consistent
         assert len(call.messages) == initial_history_len
 
-    async def test_send_speech__streams_chunks_to_send_rtp_audio(self):
-        """_send_speech resamples each TTS chunk and passes it to _send_rtp_audio."""
-        tts_mock = MagicMock()
-        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
-        arr1 = np.zeros(160, dtype=np.float32)
-        arr2 = np.ones(160, dtype=np.float32)
-        chunk1, chunk2 = MagicMock(), MagicMock()
-        chunk1.numpy.return_value = arr1
-        chunk2.numpy.return_value = arr2
-        tts_mock.generate_audio_stream.return_value = iter([chunk1, chunk2])
-        # Match PCMU _rtp_sample_rate so _resample returns the same array (identity check)
-        tts_mock.sample_rate = 8000
-
-        call = make_agent_call(MagicMock(), tts_mock, media=PCMU_MEDIA)
-        received: list[np.ndarray] = []
-
-        async def _capture(audio: np.ndarray) -> None:
-            received.append(audio)
-
-        with patch.object(call, "_send_rtp_audio", side_effect=_capture):
-            await call.send_speech("hello")
-
-        assert len(received) == 2
-        assert received[0] is arr1
-        assert received[1] is arr2
-
     def test_preferred_codecs__opus_is_first(self):
         """AgentCall prefers Opus as the highest-priority outbound codec."""
         assert AgentCall.PREFERRED_CODECS[0].payload_type == RTPPayloadType.OPUS

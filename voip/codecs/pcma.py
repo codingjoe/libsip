@@ -50,7 +50,8 @@ class PCMA(RTPCodec):
             else cls.sample_rate_hz,
         )
 
-    def encode(self, samples: np.ndarray) -> bytes:
+    @classmethod
+    def encode(cls, samples: np.ndarray) -> bytes:
         a_law = 87.6  # G.711 A-law compression parameter
         pcm = np.clip(np.abs(samples), 0, 1.0)
         low = pcm < (1.0 / a_law)

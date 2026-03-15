@@ -26,7 +26,7 @@ class TestDecodePCM:
         pcm_array = np.zeros(16000, dtype=np.float32)
         flush_frame = MagicMock()
         flush_frame.to_ndarray.return_value = pcm_array
-        with patch("voip.codecs.av.av") as mock_av:
+        with patch("voip.codecs.base.av") as mock_av:
             mock_resampler = MagicMock()
             mock_resampler.resample.side_effect = [[], [flush_frame]]
             mock_av.audio.resampler.AudioResampler.return_value = mock_resampler
@@ -41,7 +41,7 @@ class TestDecodePCM:
 
     def test_decode_pcm__empty_result_when_no_frames(self):
         """decode_pcm returns an empty float32 array when no audio frames are decoded."""
-        with patch("voip.codecs.av.av") as mock_av:
+        with patch("voip.codecs.base.av") as mock_av:
             mock_resampler = MagicMock()
             mock_resampler.resample.return_value = []
             mock_av.audio.resampler.AudioResampler.return_value = mock_resampler
@@ -56,7 +56,7 @@ class TestDecodePCM:
 
     def test_decode_pcm__without_input_rate_passes_no_options(self):
         """decode_pcm passes no sample_rate option when input_rate_hz is None."""
-        with patch("voip.codecs.av.av") as mock_av:
+        with patch("voip.codecs.base.av") as mock_av:
             mock_resampler = MagicMock()
             mock_resampler.resample.return_value = []
             mock_av.audio.resampler.AudioResampler.return_value = mock_resampler
