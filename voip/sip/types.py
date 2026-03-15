@@ -14,8 +14,7 @@ class CallerID(str):
     form that shows only the last four characters of the user part and the
     carrier domain — useful for log messages.
 
-    Examples::
-
+    Examples:
         >>> str(CallerID('"015114455910" <sip:015114455910@telefonica.de>;tag=abc'))
         '"015114455910" <sip:015114455910@telefonica.de>;tag=abc'
         >>> repr(CallerID('"015114455910" <sip:015114455910@telefonica.de>;tag=abc'))

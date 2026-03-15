@@ -25,16 +25,26 @@ SIP_TLS_PORT = 5061
 
 
 def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
-    """Parse a SIP URI into ``(scheme, user, host, port)``.
+    """Parse a SIP URI into `(scheme, user, host, port)`.
 
-    The port is ``None`` when not present in the URI.
+    The port is `None` when not present in the URI.
 
-    Examples::
+    Examples:
+    ```
+    >>> _parse_aor("sip:alice@example.com")
+    ('sip', 'alice', 'example.com', None)
+    >>> _parse_aor("sips:+15551234567@carrier.com:5061")
+    ('sips', '+15551234567', 'carrier.com', 5061)
+    ```
 
-        >>> _parse_aor("sip:alice@example.com")
-        ('sip', 'alice', 'example.com', None)
-        >>> _parse_aor("sips:+15551234567@carrier.com:5061")
-        ('sips', '+15551234567', 'carrier.com', 5061)
+    Args:
+        value: SIP URI string.
+
+    Returns:
+        Tuple of (scheme, user, host, port).
+
+    Raises:
+        click.BadParameter: When the URI is malformed.
     """
     scheme, _, rest = value.partition(":")
     if not scheme or not rest:
@@ -54,7 +64,20 @@ def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
 def _parse_hostport(
     ctx, param, value: str, default_port: int = 5061
 ) -> tuple[str, int]:
-    """Parse ``HOST[:PORT]`` into a ``(host, port)`` tuple."""
+    """Parse `HOST[:PORT]` into a `(host, port)` tuple.
+
+    Args:
+        ctx: Click context.
+        param: Click parameter.
+        value: Hostport string.
+        default_port: Port to use when not specified.
+
+    Returns:
+        Tuple of (host, port).
+
+    Raises:
+        click.BadParameter: When port is invalid.
+    """
     host, _, port_str = value.rpartition(":")
     if not host:
         return value, default_port
@@ -65,7 +88,16 @@ def _parse_hostport(
 
 
 def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
-    """Parse the --stun-server option; return None when the value is 'none'."""
+    """Parse the --stun-server option; return None when the value is 'none'.
+
+    Args:
+        ctx: Click context.
+        param: Click parameter.
+        value: Stun server string or None.
+
+    Returns:
+        Tuple of (host, port) or None.
+    """
     if value is None or value.lower() == "none":
         return None
     return _parse_hostport(ctx, param, value, default_port=3478)
@@ -76,7 +108,7 @@ _parse_server = _parse_hostport
 
 
 class ConsoleMessageProcessor:
-    """Protocol mixin that prints messages to stdout."""
+    """Mixin that prints messages to stdout."""
 
     def request_received(self, request: messages.Request, addr: tuple[str, int]):
         self.pprint(request)
@@ -92,7 +124,11 @@ class ConsoleMessageProcessor:
         super().send(message)
 
     def pprint(self, msg):
-        """Pretty print the message."""
+        """Pretty print the message.
+
+        Args:
+            msg: Message to print.
+        """
         transport = getattr(self, "transport", None)
         addr = transport.get_extra_info("peername") if transport else None
         if addr:

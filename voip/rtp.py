@@ -45,21 +45,22 @@ class RTPPayloadType(enum.IntEnum):
 
 @dataclasses.dataclass
 class RTPPacket(ByteSerializableObject):
-    """A parsed RTP packet (RFC 3550 §5.1)."""
+    """
+    RTP data packet [RFC 3550 §5.1].
+
+    [RFC 3550 §5.1]: https://datatracker.ietf.org/doc/html/rfc3550#section-5.1
+    """
 
     payload_type: int
     sequence_number: int
     timestamp: int
     ssrc: int
     payload: bytes
-
-    #: Fixed RTP header size in bytes (RFC 3550 §5.1).
-    header_size: int = dataclasses.field(default=12, init=False, repr=False)
+    header_size: typing.ClassVar[int] = 12
 
     @classmethod
     def parse(cls, data: bytes) -> RTPPacket:
-        """Parse raw RTP bytes into an RTPPacket."""
-        if len(data) < 12:
+        if len(data) < cls.header_size:
             raise ValueError(f"RTP packet too short: {len(data)} bytes")
         payload_type = data[1] & 0x7F
         sequence_number = (data[2] << 8) | data[3]
@@ -70,15 +71,10 @@ class RTPPacket(ByteSerializableObject):
             sequence_number=sequence_number,
             timestamp=timestamp,
             ssrc=ssrc,
-            payload=data[12:],
+            payload=data[cls.header_size :],
         )
 
     def __bytes__(self) -> bytes:
-        """Serialize this packet to raw RTP bytes (RFC 3550 §5.1).
-
-        Returns:
-            Raw RTP bytes ready for transmission.
-        """
         return (
             struct.pack(
                 ">BBHII",
@@ -90,13 +86,6 @@ class RTPPacket(ByteSerializableObject):
             )
             + self.payload
         )
-
-
-def _default_caller_id() -> CallerID:
-    """Return an empty `CallerID`, lazily imported to avoid circular imports."""
-    from voip.sip.types import CallerID as _CallerID  # noqa: PLC0415
-
-    return _CallerID("")
 
 
 @dataclasses.dataclass
@@ -124,7 +113,7 @@ class RTPCall:
     rtp: RealtimeTransportProtocol
     sip: SessionInitiationProtocol
     media: MediaDescription
-    caller: CallerID = dataclasses.field(default_factory=_default_caller_id)
+    caller: CallerID
     srtp: SRTPSession | None = None
 
     def packet_received(self, packet: RTPPacket, addr: tuple[str, int]) -> None:

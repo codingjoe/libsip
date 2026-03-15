@@ -59,19 +59,24 @@ class TranscribeCall(AudioCall):
     background microphone noise from being passed to Whisper as spurious
     audio.
 
-    Override `transcription_received` to handle the resulting text::
+    Override `transcription_received` to handle the resulting text:
 
-        class MySession(SessionInitiationProtocol):
-            def call_received(self, request: Request) -> None:
-                self.answer(request=request, call_class=WhisperCall)
+    ```python
+    class MySession(SessionInitiationProtocol):
+        def call_received(self, request: Request) -> None:
+            self.answer(request=request, call_class=MyCall)
+    ```
 
     To share one model instance across multiple calls (recommended to avoid
-    loading it multiple times) pass a pre-loaded `WhisperModel`::
+    loading it multiple times) pass a pre-loaded `WhisperModel`:
 
-        shared_model = WhisperModel("base")
+    ```python
+    shared_model = WhisperModel("base")
 
-        class MyCall(WhisperCall):
-            model = shared_model
+    class MyCall(TranscribeCall):
+        model = shared_model
+    ```
+
     """
 
     model: str | WhisperModel = dataclasses.field(default="kyutai/stt-1b-en_fr-trfs")
@@ -186,10 +191,12 @@ class AgentCall(TranscribeCall):
     on a phone call.
 
     To share the TTS model across multiple calls pass a pre-loaded
-    :class:`~pocket_tts.TTSModel`::
+    `TTSModel`:
 
-        shared_tts = TTSModel.load_model()
-        AgentCall(rtp=..., sip=..., tts_model=shared_tts)
+    ```python
+    shared_tts = TTSModel.load_model()
+    AgentCall(rtp=..., sip=..., tts_model=shared_tts)
+    ```
     """
 
     system_prompt: str = (

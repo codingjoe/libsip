@@ -49,15 +49,16 @@ class RegistrationError(Exception):
 def _mask_caller(header: str) -> str:
     """Return a privacy-safe label from a SIP From/To header value.
 
-    Strips the ``tag=`` parameter, extracts the display name or SIP user part,
-    and replaces all but the last four characters with ``*``.
+    Strips the `tag=` parameter, extracts the display name or SIP user part,
+    and replaces all but the last four characters with `*`.
 
-    Examples::
-
-        >>> _mask_caller('"015114455910" <sip:015114455910@example.com>;tag=abc')
-        '********5910'
-        >>> _mask_caller('sip:alice@example.com')
-        '*lice'
+    Examples:
+    ```
+    >>> _mask_caller('"015114455910" <sip:015114455910@example.com>;tag=abc')
+    '********5910'
+    >>> _mask_caller('sip:alice@example.com')
+    '*lice'
+    ```
     """
     # Drop the tag and any subsequent parameters
     value = header.split(";")[0].strip()
@@ -98,21 +99,25 @@ class SessionInitiationProtocol(asyncio.Protocol):
     provides a dedicated proxy at ``proxy.carrier.com`` while the AOR domain
     (and thus the registrar Request-URI) is ``carrier.com``.
 
-    Subclass and override `call_received` to handle incoming calls::
+    Subclass and override `call_received` to handle incoming calls:
 
-        class MySession(SessionInitiationProtocol):
-            def call_received(self, request: Request) -> None:
-                self.answer(request=request, call_class=MyCall)
+    ```python
+    class MySession(SessionInitiationProtocol):
+        def call_received(self, request: Request) -> None:
+            self.answer(request=request, call_class=MyCall)
+    ```
 
-    To register with a carrier on startup, pass the registration parameters::
+    To register with a carrier on startup, pass the registration parameters:
 
-        session = SessionInitiationProtocol(
-            aor="sips:alice@example.com",
-            username="alice",
-            password="secret",
-            # Optional: connect via a separate outbound proxy
-            # outbound_proxy=("proxy.carrier.com", 5061),
-        )
+    ```python
+    session = SessionInitiationProtocol(
+        aor="sips:alice@example.com",
+        username="alice",
+        password="secret",
+        # Optional: connect via a separate outbound proxy
+        # outbound_proxy=("proxy.carrier.com", 5061),
+    )
+    ```
 
     [RFC 3261]: https://datatracker.ietf.org/doc/html/rfc3261
     [RFC 3261 §22]: https://datatracker.ietf.org/doc/html/rfc3261#section-22
@@ -444,10 +449,12 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def call_received(self, request: Request) -> None:
         """Handle an incoming call.
 
-        Override in subclasses to accept or reject the call::
+        Override in subclasses to accept or reject the call:
 
-            def call_received(self, request: Request) -> None:
-                self.answer(request=request, call_class=MyCall)
+        ```python
+        def call_received(self, request: Request) -> None:
+            self.answer(request=request, call_class=MyCall)
+        ```
 
         Args:
             request: The SIP INVITE request.
@@ -484,13 +491,15 @@ class SessionInitiationProtocol(asyncio.Protocol):
     async def answer(self, request: Request, *, call_class: type[RTPCall]) -> None:
         """Answer an incoming call by setting up RTP and sending 200 OK with SDP.
 
-        This coroutine can be awaited directly or wrapped in a task::
+        This coroutine can be awaited directly or wrapped in a task:
 
-            # inside a sync call_received:
-            asyncio.create_task(self.answer(request=request, call_class=MyCall))
+        ```python
+        # inside a sync call_received:
+        asyncio.create_task(self.answer(request=request, call_class=MyCall))
 
-            # inside an async call_received:
-            await self.answer(request=request, call_class=MyCall)
+        # inside an async call_received:
+        await self.answer(request=request, call_class=MyCall)
+        ```
 
         Args:
             request: The SIP INVITE request (from `call_received`).
@@ -785,10 +794,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
         configured.  The user part is stripped; only the host (and optional
         port) is kept, per RFC 3261 §10.2.
 
-        Examples::
-
-            sip:alice@example.com   →  sip:example.com
-            sips:alice@example.com  →  sips:example.com
+        Examples:
+        ```
+        sip:alice@example.com   →  sip:example.com
+        sips:alice@example.com  →  sips:example.com
+        ```
         """
         if not self.aor:
             raise ValueError("AOR is not configured; cannot derive registrar URI")
