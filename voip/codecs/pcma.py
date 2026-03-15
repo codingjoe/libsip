@@ -29,9 +29,8 @@ class PCMA(RTPCodec):
     PCMA is the ITU-T G.711 A-law logarithmic companding codec for PSTN
     telephony, standardised in RFC 3551 with static payload type 8.
 
-    Both encode and decode implement the standard G.711 segmented algorithm
-    (ITU-T G.711 Annex A) and interoperate bit-exactly with real RTP PCMA
-    streams.  No PyAV dependency is required.
+    Both encode and decode interoperate bit-exactly with real RTP PCMA
+    streams.
 
     [RFC 3551 §4.5.14]: https://datatracker.ietf.org/doc/html/rfc3551#section-4.5.14
     """
@@ -82,11 +81,11 @@ class PCMA(RTPCodec):
             np.searchsorted(_ALAW_SEG_UBOUND, magnitude, side="left").astype(np.int32),
             7,
         )
-        # Quantise: shift right by 1 for segments 0–1, by seg for segments ≥ 2.
-        shift = np.maximum(seg, 1)
-        mantissa_low = (magnitude >> 1) & 0x0F
-        mantissa_high = np.right_shift(magnitude, shift) & 0x0F
-        mantissa = np.where(seg < 2, mantissa_low, mantissa_high).astype(np.uint8)
+        # Extract the 4-bit mantissa in 16-bit space.
+        # G.711 A-law quantises 13-bit PCM (16-bit >> 3), so the effective
+        # mantissa shift is 4 for segments 0–1 and (seg + 3) for segments ≥ 2.
+        shift = np.where(seg < 2, 4, seg + 3).astype(np.int32)
+        mantissa = (np.right_shift(magnitude, shift) & 0x0F).astype(np.uint8)
         aval = (seg.astype(np.uint8) << 4) | mantissa
         return (aval ^ mask).astype(np.uint8).tobytes()
 

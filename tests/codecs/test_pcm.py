@@ -108,6 +108,18 @@ class TestPCMAEncode:
         """Maximum positive amplitude (1.0) must encode to 0xAA per ITU-T G.711."""
         assert PCMA.encode(np.array([1.0], dtype=np.float32))[0] == 0xAA
 
+    def test_encode_decode__roundtrip_midrange(self):
+        """Roundtrip encode→decode stays within one G.711 quantisation step.
+
+        Values in segments 2–5 had ~3× the expected error with the old (wrong)
+        mantissa shift; this test guards against regression.
+        """
+        # Values chosen so all four land in segments 3–5 (magnitudes 1 000–8 191).
+        original = np.array([0.05, -0.05, 0.1, -0.1], dtype=np.float32)
+        recovered = PCMA.decode(PCMA.encode(original), 8000)
+        # Maximum step for segment 5 is 256/32768 ≈ 0.0078; allow ~2 steps of margin.
+        assert np.allclose(original, recovered, atol=1 / 64)
+
 
 class TestPCMUConstants:
     def test_payload_type(self):
