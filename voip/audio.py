@@ -25,7 +25,7 @@ from voip.codecs import Codec
 from voip.rtp import RTPCall, RTPPacket
 from voip.sdp.types import MediaDescription
 
-__all__ = ["AudioCall"]
+__all__ = ["AudioCall", "EchoCall"]
 
 
 logger = logging.getLogger(__name__)
@@ -278,6 +278,83 @@ class AudioCall(RTPCall):
             np.arange(len(audio)),
             audio,
         ).astype(np.float32)
+
+
+@dataclasses.dataclass(kw_only=True)
+class EchoCall(AudioCall):
+    """RTP call handler that echoes the caller's speech back after they finish speaking.
+
+    Accumulates speech audio frames (RMS above `speech_threshold`) and
+    replays them once a sustained silence lasting `silence_gap` seconds is
+    detected.  This gives the caller a natural echo of their own voice,
+    useful for network latency testing and call-flow demonstrations.
+
+    Example:
+        ```python
+        class MySession(SessionInitiationProtocol):
+            def call_received(self, request: Request) -> None:
+                self.answer(request=request, call_class=EchoCall)
+        ```
+
+    Attributes:
+        speech_threshold: RMS level below which audio is treated as silence.
+        silence_gap: Seconds of sustained silence required to trigger echo.
+    """
+
+    speech_threshold: float = dataclasses.field(default=0.001)
+    silence_gap: float = dataclasses.field(default=0.5)
+
+    speech_buffer: list[np.ndarray] = dataclasses.field(
+        init=False, repr=False, default_factory=list
+    )
+    echo_handle: asyncio.TimerHandle | None = dataclasses.field(
+        init=False, repr=False, default=None
+    )
+
+    def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
+        if rms > self.speech_threshold:
+            self.speech_buffer.append(audio)
+            self.on_audio_speech()
+        else:
+            self.on_audio_silence()
+
+    def on_audio_speech(self) -> None:
+        """Cancel any pending echo timer when speech is detected."""
+        if self.echo_handle is not None:
+            self.echo_handle.cancel()
+            self.echo_handle = None
+
+    def on_audio_silence(self) -> None:
+        """Arm the echo debounce timer on silence if not already running."""
+        if self.echo_handle is None and self.speech_buffer:
+            loop = asyncio.get_running_loop()
+            self.echo_handle = loop.call_later(
+                self.silence_gap,
+                self.flush_speech_buffer,
+            )
+
+    def flush_speech_buffer(self) -> None:
+        """Concatenate buffered speech and schedule async echo playback.
+
+        Resets speech state so the next utterance starts with a clean buffer.
+        """
+        self.echo_handle = None
+        if not self.speech_buffer:
+            return
+        audio = np.concatenate(self.speech_buffer)
+        self.speech_buffer.clear()
+        asyncio.create_task(self.echo(audio))
+
+    async def echo(self, audio: np.ndarray) -> None:
+        """Resample and transmit buffered speech audio back to the caller.
+
+        Args:
+            audio: Float32 mono PCM array at [`RESAMPLING_RATE_HZ`][voip.audio.AudioCall.RESAMPLING_RATE_HZ] Hz.
+        """
+        resampled = self.resample(
+            audio, self.RESAMPLING_RATE_HZ, self.codec.sample_rate_hz
+        )
+        await self.send_rtp_audio(resampled)
 
 
 # Populate PREFERRED_CODECS after all codec imports settle.
