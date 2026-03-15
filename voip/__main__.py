@@ -411,19 +411,17 @@ def agent(ctx, model, ollama_model, voice, system_prompt):
         if _system_prompt is not None:
             system_prompt: str = dataclasses.field(default=_system_prompt)
 
-        def transcription_received(self, text: str) -> None:
-            click.echo(click.style(f"User:  {text}", fg="blue", bold=True))
-            super().transcription_received(text)
-
-        async def _respond(self) -> None:
-            msg_count = len(self._messages)
-            await super()._respond()
-            for msg in self._messages[msg_count:]:
-                if msg["role"] == "assistant":
-                    click.echo(
-                        click.style(f"Agent: {msg['content']}", fg="green", bold=True)
+        async def respond(self) -> None:
+            msg_count = len(self.messages)
+            await super().respond()
+            for msg in self.messages[msg_count:]:
+                click.echo(
+                    click.style(
+                        f"{msg['role']}: {msg['content']}",
+                        fg="green" if msg["role"] == "assistant" else "blue",
+                        bold=True,
                     )
-                    break
+                )
 
     bases = (ConsoleMessageProcessor, SIP) if verbose >= 3 else (SIP,)
 
