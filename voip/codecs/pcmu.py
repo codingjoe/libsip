@@ -50,11 +50,14 @@ class PCMU(RTPCodec):
         sign = np.where(raw & 0x80, 1.0, -1.0)
         exp = ((raw >> 4) & 0x07).astype(np.int32)
         mantissa = (raw & 0x0F).astype(np.int32)
-        # Reconstruct the biased linear magnitude from segment and mantissa.
-        biased = ((mantissa | 0x10) << (exp + 3)).astype(np.int32)
-        linear = ((biased - _MU_LAW_BIAS) / 32768.0).astype(np.float32)
+        # ITU-T G.711 §A: magnitude = (((mantissa << 3) + BIAS) << exp) - BIAS
+        magnitude = (((mantissa << 3) + _MU_LAW_BIAS) << exp) - _MU_LAW_BIAS
+        linear = (magnitude.astype(np.float32) / 32768.0).astype(np.float32)
+        source_rate_hz = (
+            input_rate_hz if input_rate_hz is not None else cls.sample_rate_hz
+        )
         return cls.resample(
-            (sign * linear).astype(np.float32), cls.sample_rate_hz, output_rate_hz
+            (sign * linear).astype(np.float32), source_rate_hz, output_rate_hz
         )
 
     @classmethod

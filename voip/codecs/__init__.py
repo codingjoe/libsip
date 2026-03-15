@@ -20,7 +20,7 @@ from voip.codecs.base import RTPCodec
 from voip.codecs.pcma import PCMA
 from voip.codecs.pcmu import PCMU
 
-__all__ = ["G722", "Opus", "PCMA", "PCMU", "PyAVCodec", "RTPCodec", "get"]
+__all__ = ["PCMA", "PCMU", "RTPCodec", "get"]
 
 #: Registry mapping lowercase encoding names to codec classes.
 REGISTRY: dict[str, type[RTPCodec]] = {
@@ -34,6 +34,7 @@ try:
     from voip.codecs.opus import Opus
 
     REGISTRY |= {G722.encoding_name: G722, Opus.encoding_name: Opus}
+    __all__ = [*__all__, "G722", "Opus", "PyAVCodec"]
 except ImportError:
     pass
 
