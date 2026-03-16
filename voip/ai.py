@@ -141,6 +141,11 @@ class AgentCall(TranscribeCall):
     the conversation.  A built-in system prompt informs the model that it is
     on a phone call.
 
+    Uses a two-stage silence timing architecture: LLM inference begins after
+    `inference_gap_secs` of silence, while TTS is committed only after
+    `response_gap_secs`.  If the counterparty resumes speaking before the
+    commit, the speculative inference is cancelled and history is rolled back.
+
     To share the TTS model across multiple calls pass a pre-loaded
     `TTSModel`:
 
@@ -162,15 +167,24 @@ class AgentCall(TranscribeCall):
     #: Pre-loaded Pocket TTS model.  Pass a shared instance to avoid
     #: loading the model separately for each call.
     tts_model: TTSModel | None = dataclasses.field(default=None)
+    #: Seconds of silence before flushing the speech buffer and starting LLM inference.
+    inference_gap_secs: float = dataclasses.field(default=0.25)
+    #: Seconds of silence before committing to TTS output.
+    response_gap_secs: float = dataclasses.field(default=0.5)
 
     tts_instance: TTSModel = dataclasses.field(init=False, repr=False)
     voice_state: Any = dataclasses.field(init=False, repr=False)
     messages: list[dict] = dataclasses.field(init=False, repr=False)
     pending_text: list[str] = dataclasses.field(init=False, repr=False)
     response_task: asyncio.Task | None = dataclasses.field(init=False, repr=False)
+    response_handle: asyncio.TimerHandle | None = dataclasses.field(
+        init=False, repr=False
+    )
+    response_committed: asyncio.Event = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        self.silence_gap = self.inference_gap_secs
         self.tts_instance = self.tts_model or TTSModel.load_model()
         self.voice_state = self.tts_instance.get_state_for_audio_prompt(self.voice)  # type: ignore[arg-type]
         self.messages = [
@@ -182,6 +196,42 @@ class AgentCall(TranscribeCall):
         ]
         self.pending_text = []
         self.response_task = None
+        self.response_handle = None
+        self.response_committed = asyncio.Event()
+
+    def on_audio_speech(self) -> None:
+        """Cancel both timers and any uncommitted inference on speech detection."""
+        if self.response_handle is not None:
+            self.response_handle.cancel()
+            self.response_handle = None
+        if (
+            self.response_task is not None
+            and not self.response_task.done()
+            and not self.response_committed.is_set()
+        ):
+            self.response_task.cancel()
+            self.response_task = None
+        super().on_audio_speech()
+
+    def on_audio_silence(self) -> None:
+        """Arm the inference timer and the response-commit timer on silence detection."""
+        if self.speech_buffer:
+            loop = asyncio.get_running_loop()
+            if self.silence_handle is None:
+                self.silence_handle = loop.call_later(
+                    self.inference_gap_secs,
+                    self.flush_speech_buffer,
+                )
+            if self.response_handle is None:
+                self.response_handle = loop.call_later(
+                    self.response_gap_secs,
+                    self.commit_response,
+                )
+
+    def commit_response(self) -> None:
+        """Signal that TTS output is committed and may begin streaming."""
+        self.response_handle = None
+        self.response_committed.set()
 
     def transcription_received(self, text: str) -> None:
         match text:
@@ -191,12 +241,13 @@ class AgentCall(TranscribeCall):
                 self.pending_text.append(text)
                 if self.response_task is not None and not self.response_task.done():
                     self.response_task.cancel()
+                self.response_committed.clear()
                 self.response_task = asyncio.create_task(self.respond())
 
     async def respond(self) -> None:
         """Fetch an Ollama reply for pending text and stream it as speech via RTP.
 
-        On cancellation (human started speaking) the partial user turn is
+        On cancellation before commit the user and assistant turns are both
         removed from the chat history so the history stays consistent.
         """
         self.messages.append({"role": "user", "content": "\n".join(self.pending_text)})
@@ -209,9 +260,12 @@ class AgentCall(TranscribeCall):
             reply = (response.message.content or "").encode("ascii", "ignore").decode()
             self.messages.append({"role": "assistant", "content": reply})
             logger.info("Agent reply: %r", reply)
+            await self.response_committed.wait()
             await self.send_speech(reply)
         except asyncio.CancelledError:
-            # Remove the partial user turn so history stays consistent.
+            # Roll back any partial turns to keep history consistent.
+            if self.messages and self.messages[-1]["role"] == "assistant":
+                self.messages.pop()
             if self.messages and self.messages[-1]["role"] == "user":
                 self.messages.pop()
             raise

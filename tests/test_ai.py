@@ -405,12 +405,14 @@ class TestAgentCall:
         assert call.voice_state is voice_state
 
     def test_init__initializes_pending_state(self):
-        """AgentCall starts with empty pending text and no response task."""
+        """AgentCall starts with empty pending text, no response task, and a clear event."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
         assert call.pending_text == []
         assert call.response_task is None
+        assert call.response_handle is None
+        assert isinstance(call.response_committed, asyncio.Event)
 
     def test_init__initializes_chat_history_with_system_prompt(self):
         """Chat history is seeded with a system prompt mentioning a phone call."""
@@ -468,11 +470,12 @@ class TestAgentCall:
         old_task.cancel.assert_called_once()
 
     async def test_respond__calls_ollama_and_sends_speech(self):
-        """_respond fetches an Ollama reply, records it in history, and sends speech."""
+        """respond fetches an Ollama reply, records it in history, and sends speech."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
         call.pending_text = ["hello"]
+        call.response_committed.set()
         mock_response = MagicMock()
         mock_response.message.content = "I am an AI assistant."
         with (
@@ -494,11 +497,12 @@ class TestAgentCall:
         } in call.messages
 
     async def test_respond__passes_full_history_to_ollama(self):
-        """_respond passes the full message history (including system prompt) to Ollama."""
+        """respond passes the full message history (including system prompt) to Ollama."""
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
         call = make_agent_call(MagicMock(), tts_mock)
         call.pending_text = ["hello"]
+        call.response_committed.set()
         mock_response = MagicMock()
         mock_response.message.content = "reply"
         with (
@@ -554,3 +558,158 @@ class TestAgentCall:
     def test_preferred_codecs__opus_is_first(self):
         """AgentCall prefers Opus as the highest-priority outbound codec."""
         assert AgentCall.PREFERRED_CODECS[0].payload_type == RTPPayloadType.OPUS
+
+    async def test_respond__rolls_back_assistant_message_on_cancel_before_commit(self):
+        """Roll back both user and assistant messages when cancelled before commit."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.pending_text = ["hello"]
+        initial_history_len = len(call.messages)
+        mock_response = MagicMock()
+        mock_response.message.content = "reply"
+
+        async def cancel_on_wait():
+            raise asyncio.CancelledError()
+
+        with (
+            patch("voip.ai.ollama.AsyncClient") as mock_client_cls,
+            patch.object(
+                call.response_committed, "wait", side_effect=cancel_on_wait
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            mock_client = MagicMock()
+            mock_client.chat = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+            await call.respond()
+
+        # Both user and assistant turns must be rolled back
+        assert len(call.messages) == initial_history_len
+
+    def test_on_audio_speech__cancels_response_handle(self):
+        """Cancel the response commit timer when speech is detected."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        handle = MagicMock()
+        call.response_handle = handle
+        call.on_audio_speech()
+        handle.cancel.assert_called_once()
+        assert call.response_handle is None
+
+    def test_on_audio_speech__cancels_uncommitted_response_task(self):
+        """Cancel the response task when speech is detected before commit."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        task = MagicMock()
+        task.done.return_value = False
+        call.response_task = task
+        # response_committed is clear (not set) by default
+        call.on_audio_speech()
+        task.cancel.assert_called_once()
+        assert call.response_task is None
+
+    def test_on_audio_speech__does_not_cancel_committed_response_task(self):
+        """Leave the response task running when TTS has already been committed."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        task = MagicMock()
+        task.done.return_value = False
+        call.response_task = task
+        call.response_committed.set()
+        call.on_audio_speech()
+        task.cancel.assert_not_called()
+
+    def test_on_audio_silence__arms_inference_handle(self):
+        """Arm the inference timer when silence is detected with buffered speech."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.speech_buffer = [MagicMock()]
+        loop_mock = MagicMock()
+        with patch("voip.ai.asyncio.get_running_loop", return_value=loop_mock):
+            call.on_audio_silence()
+        loop_mock.call_later.assert_any_call(
+            call.inference_gap_secs, call.flush_speech_buffer
+        )
+        assert call.silence_handle is not None
+
+    def test_on_audio_silence__arms_response_handle(self):
+        """Arm the response commit timer when silence is detected with buffered speech."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.speech_buffer = [MagicMock()]
+        loop_mock = MagicMock()
+        with patch("voip.ai.asyncio.get_running_loop", return_value=loop_mock):
+            call.on_audio_silence()
+        loop_mock.call_later.assert_any_call(call.response_gap_secs, call.commit_response)
+        assert call.response_handle is not None
+
+    def test_on_audio_silence__does_not_rearm_existing_handles(self):
+        """Skip arming timers that are already set."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.speech_buffer = [MagicMock()]
+        existing_silence_handle = MagicMock()
+        existing_response_handle = MagicMock()
+        call.silence_handle = existing_silence_handle
+        call.response_handle = existing_response_handle
+        loop_mock = MagicMock()
+        with patch("voip.ai.asyncio.get_running_loop", return_value=loop_mock):
+            call.on_audio_silence()
+        loop_mock.call_later.assert_not_called()
+        assert call.silence_handle is existing_silence_handle
+        assert call.response_handle is existing_response_handle
+
+    def test_on_audio_silence__no_op_when_buffer_empty(self):
+        """Skip arming any timers when the speech buffer is empty."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        loop_mock = MagicMock()
+        with patch("voip.ai.asyncio.get_running_loop", return_value=loop_mock):
+            call.on_audio_silence()
+        loop_mock.call_later.assert_not_called()
+        assert call.silence_handle is None
+        assert call.response_handle is None
+
+    def test_commit_response__sets_response_committed_event(self):
+        """commit_response signals the event and clears the handle."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.response_handle = MagicMock()
+        call.commit_response()
+        assert call.response_committed.is_set()
+        assert call.response_handle is None
+
+    def test_transcription_received__clears_response_committed(self):
+        """transcription_received clears the response_committed event."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        call = make_agent_call(MagicMock(), tts_mock)
+        call.response_committed.set()
+        with patch("voip.ai.asyncio.create_task", side_effect=lambda c: c.close()):
+            call.transcription_received("new speech")
+        assert not call.response_committed.is_set()
+
+    async def test_send_speech__generates_and_streams_audio(self):
+        """send_speech generates TTS audio chunks and streams them via RTP."""
+        tts_mock = MagicMock()
+        tts_mock.get_state_for_audio_prompt.return_value = MagicMock()
+        tts_mock.sample_rate = 24000
+        call = make_agent_call(MagicMock(), tts_mock)
+
+        chunk_mock = MagicMock()
+        chunk_mock.numpy.return_value = np.zeros(1000, dtype=np.float32)
+        tts_mock.generate_audio_stream.return_value = [chunk_mock]
+
+        with patch.object(call, "send_rtp_audio", new_callable=AsyncMock) as mock_rtp:
+            await call.send_speech("hello")
+
+        mock_rtp.assert_awaited_once()
