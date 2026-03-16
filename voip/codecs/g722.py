@@ -14,6 +14,7 @@ Requires the ``pyav`` extra: ``pip install voip[pyav]``.
 from __future__ import annotations
 
 import dataclasses
+import typing
 from collections.abc import Iterator
 from typing import ClassVar
 
@@ -105,7 +106,7 @@ class G722(PyAVCodec):
         return G722Decoder(output_rate_hz)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class G722Decoder:
     """Stateful G.722 decoder that preserves ADPCM predictor state across packets.
 
@@ -121,21 +122,22 @@ class G722Decoder:
 
     Attributes:
         output_rate_hz: Target PCM sample rate in Hz for decoded audio.
-        codec_context: Persistent [`av.CodecContext`][] G.722 decoder context
-            shared across all [`decode`][voip.codecs.g722.G722Decoder.decode]
+        codec_context: Persistent G.722 decoder context
+            shared across all [decode][voip.codecs.g722.G722Decoder.decode]
             calls on this instance.
-        resampler: [`av.audio.resampler.AudioResampler`][] targeting
-            `output_rate_hz` Hz.
+        resampler: Sampler targeting `output_rate_hz` Hz.
     """
 
     output_rate_hz: int
-    codec_context: av.CodecContext = dataclasses.field(init=False, repr=False)
+    codec_context: av.AudioCodecContext = dataclasses.field(init=False, repr=False)
     resampler: av.audio.resampler.AudioResampler = dataclasses.field(
         init=False, repr=False
     )
 
     def __post_init__(self) -> None:
-        self.codec_context = av.CodecContext.create("g722", "r")
+        self.codec_context = typing.cast(
+            av.AudioCodecContext, av.AudioCodecContext.create("g722", "r")
+        )
         self.codec_context.sample_rate = G722.sample_rate_hz
         self.codec_context.open()
         self.resampler = av.audio.resampler.AudioResampler(
