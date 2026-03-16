@@ -15,6 +15,7 @@ from voip.sip.protocol import (
     SIP,
     RegistrationError,
     SessionInitiationProtocol,
+    _format_host,
     _mask_caller,
 )
 from voip.sip.types import CallerID, DigestAlgorithm
@@ -1649,6 +1650,20 @@ class TestSIPProtocol:
 # ---------------------------------------------------------------------------
 # Tests for SIP REGISTER / digest-auth / response handling
 # ---------------------------------------------------------------------------
+
+
+class TestFormatHost:
+    def test_format_host__ipv4__unchanged(self):
+        """IPv4 addresses are returned unchanged."""
+        assert _format_host("192.0.2.1") == "192.0.2.1"
+
+    def test_format_host__ipv6__bracketed(self):
+        """IPv6 addresses are wrapped in square brackets."""
+        assert _format_host("2001:db8::1") == "[2001:db8::1]"
+
+    def test_format_host__hostname__unchanged(self):
+        """Hostnames (non-IP strings) are returned unchanged."""
+        assert _format_host("example.com") == "example.com"
 
 
 class TestRegistration:

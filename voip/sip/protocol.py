@@ -39,21 +39,6 @@ logger = logging.getLogger("voip.sip")
 __all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol"]
 
 
-def _is_ipv6_address(host: str) -> bool:
-    """Return ``True`` when *host* is a bare IPv6 address string.
-
-    Args:
-        host: Host string to test (without surrounding brackets).
-
-    Returns:
-        ``True`` for IPv6 addresses, ``False`` for IPv4 and hostnames.
-    """
-    try:
-        return isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
-    except ValueError:
-        return False
-
-
 def _format_host(host: str) -> str:
     """Return *host* wrapped in brackets when it is an IPv6 address.
 
@@ -66,7 +51,14 @@ def _format_host(host: str) -> str:
     Returns:
         ``[host]`` for IPv6 addresses, *host* unchanged otherwise.
     """
-    return f"[{host}]" if _is_ipv6_address(host) else host
+    try:
+        return (
+            f"[{host}]"
+            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
+            else host
+        )
+    except ValueError:
+        return host
 
 
 class RegistrationError(Exception):
@@ -220,7 +212,13 @@ class SessionInitiationProtocol(asyncio.Protocol):
         over IPv6.
         """
         loop = asyncio.get_running_loop()
-        rtp_bind = "::" if _is_ipv6_address(self.local_address[0]) else "0.0.0.0"  # noqa: S104
+        rtp_bind = (
+            "::"
+            if isinstance(
+                ipaddress.ip_address(self.local_address[0]), ipaddress.IPv6Address
+            )
+            else "0.0.0.0"  # noqa: S104
+        )
         self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
             lambda: RealtimeTransportProtocol(
                 stun_server_address=self.rtp_stun_server_address
@@ -677,13 +675,21 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         sess_id=sess_id,
                         sess_version=sess_id,
                         nettype="IN",
-                        addrtype="IP6" if _is_ipv6_address(rtp_public[0]) else "IP4",
+                        addrtype="IP6"
+                        if isinstance(
+                            ipaddress.ip_address(rtp_public[0]), ipaddress.IPv6Address
+                        )
+                        else "IP4",
                         unicast_address=rtp_public[0],
                     ),
                     timings=[Timing(start_time=0, stop_time=0)],
                     connection=ConnectionData(
                         nettype="IN",
-                        addrtype="IP6" if _is_ipv6_address(rtp_public[0]) else "IP4",
+                        addrtype="IP6"
+                        if isinstance(
+                            ipaddress.ip_address(rtp_public[0]), ipaddress.IPv6Address
+                        )
+                        else "IP4",
                         connection_address=rtp_public[0],
                     ),
                     media=[
