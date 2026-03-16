@@ -2,6 +2,8 @@
 
 The [`G722`][voip.codecs.g722.G722] class handles the RFC 3551 clock-rate
 quirk: SDP advertises 8 000 Hz but the actual audio runs at 16 000 Hz.
+
+Requires the ``pyav`` extra: ``pip install voip[pyav]``.
 """
 
 from __future__ import annotations
@@ -11,20 +13,20 @@ from typing import ClassVar
 
 import numpy as np
 
-from voip.codecs.base import RTPCodec
+from voip.codecs.av import PyAVCodec
 
 __all__ = ["G722"]
 
 
-class G722(RTPCodec):
+class G722(PyAVCodec):
     """G.722 wideband audio codec ([RFC 3551 §4.5.2][]).
 
     G.722 is an ITU-T ADPCM wideband codec.  Despite encoding audio at
     16 000 Hz, the RTP timestamp clock runs at 8 000 Hz per RFC 3551 —
     a well-known quirk of the original specification.
 
-    [`packetize`][voip.codecs.g722.G722.packetize] encodes the entire buffer
-    at once to preserve the ADPCM predictor state across packet boundaries.
+    The entire buffer is encoded at once to preserve the ADPCM predictor
+    state across packet boundaries.
 
     [RFC 3551 §4.5.2]: https://datatracker.ietf.org/doc/html/rfc3551#section-4.5.2
     """
