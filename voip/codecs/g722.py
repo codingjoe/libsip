@@ -8,7 +8,7 @@ Use [`G722Decoder`][voip.codecs.g722.G722Decoder] (via
 stateful decoding that preserves the ADPCM predictor state across consecutive
 RTP packets.
 
-Requires the ``pyav`` extra: ``pip install voip[pyav]``.
+Requires the ``hd-audio`` extra: ``pip install voip[hd-audio]``.
 """
 
 from __future__ import annotations
@@ -136,7 +136,7 @@ class G722Decoder:
 
     def __post_init__(self) -> None:
         self.codec_context = typing.cast(
-            av.AudioCodecContext, av.AudioCodecContext.create("g722", "r")
+            av.AudioCodecContext, av.CodecContext.create("g722", "r")
         )
         self.codec_context.sample_rate = G722.sample_rate_hz
         self.codec_context.open()

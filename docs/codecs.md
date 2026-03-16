@@ -31,7 +31,7 @@ These codecs work without PyAV and require only `numpy`.
 
 ## HD audio
 
-These codecs require the `pyav` extra (`pip install voip[pyav]`).
+These codecs require the `hd-audio` extra (`pip install voip[hd-audio]`).
 
 ::: voip.codecs.g722.G722
 

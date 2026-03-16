@@ -175,7 +175,7 @@ class RTPCodec:
     @classmethod
     def create_decoder(
         cls, output_rate_hz: int, *, input_rate_hz: int | None = None
-    ) -> PerPacketDecoder:
+    ) -> PayloadDecoder:
         """Create a stateless per-call payload decoder for this codec.
 
         Override in subclasses that require stateful decoding across RTP
@@ -188,8 +188,9 @@ class RTPCodec:
                 codec default.
 
         Returns:
-            A [`PerPacketDecoder`][voip.codecs.base.PerPacketDecoder] that
-            delegates each call to [`decode`][voip.codecs.base.RTPCodec.decode].
+            A [`PayloadDecoder`][voip.codecs.base.PayloadDecoder] that, by
+            default, is a [`PerPacketDecoder`][voip.codecs.base.PerPacketDecoder]
+            delegating each call to [`decode`][voip.codecs.base.RTPCodec.decode].
         """
         return PerPacketDecoder(cls, output_rate_hz, input_rate_hz)
 
@@ -229,10 +230,10 @@ class RTPCodec:
 class PerPacketDecoder:
     """Stateless payload decoder that processes each RTP packet independently.
 
-    Delegates each call to
-    [`RTPCodec.decode`][voip.codecs.base.RTPCodec.decode], creating a fresh
-    codec context per packet.  Suitable for stateless codecs such as PCMA,
-    PCMU, and Opus.
+    Delegate each call to
+    [`RTPCodec.decode`][voip.codecs.base.RTPCodec.decode], decoding each
+    payload independently without preserving cross-packet state. Suitable for
+    stateless codecs such as PCMA, PCMU, and Opus.
 
     Attributes:
         codec: Codec class to delegate decoding to.
