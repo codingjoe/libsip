@@ -35,6 +35,8 @@ These codecs require the `pyav` extra (`pip install voip[pyav]`).
 
 ::: voip.codecs.g722.G722
 
+::: voip.codecs.g722.G722Decoder
+
 ::: voip.codecs.opus.Opus
 
 ## Registry
@@ -44,6 +46,10 @@ These codecs require the `pyav` extra (`pip install voip[pyav]`).
 ## Base classes
 
 ::: voip.codecs.base.RTPCodec
+
+::: voip.codecs.base.PayloadDecoder
+
+::: voip.codecs.base.PerPacketDecoder
 
 ::: voip.codecs.av.PyAVCodec
 
