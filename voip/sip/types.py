@@ -1,9 +1,195 @@
 from __future__ import annotations
 
+import dataclasses
 import enum
 import re
 
-__all__ = ["CallerID", "DigestAlgorithm", "DigestQoP", "Status"]
+__all__ = ["CallerID", "DigestAlgorithm", "DigestQoP", "SipURI", "Status"]
+
+
+@dataclasses.dataclass
+class SipURI:
+    """A parsed SIP or SIPS URI per [RFC 3261 §19.1].
+
+    Format: ``sip:user:password@host:port;uri-parameters?headers``
+
+    The `parse` classmethod decodes a raw SIP URI string into structured
+    fields.  IPv6 addresses in the host part must be enclosed in square
+    brackets per [RFC 2732] (e.g. ``sip:alice@[::1]:5060``); the stored
+    `host` is the bare address without brackets.
+
+    [RFC 3261 §19.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-19.1
+    [RFC 2732]: https://datatracker.ietf.org/doc/html/rfc2732
+
+    Examples:
+        >>> SipURI.parse("sip:alice@example.com")
+        SipURI(scheme='sip', user='alice', host='example.com', ...)
+        >>> SipURI.parse("sips:+15551234567@carrier.com:5061")
+        SipURI(scheme='sips', user='+15551234567', host='carrier.com', port=5061, ...)
+        >>> SipURI.parse("sip:alice@[::1]:5060")
+        SipURI(scheme='sip', user='alice', host='::1', port=5060, ...)
+    """
+
+    scheme: str
+    """URI scheme — ``"sip"`` or ``"sips"``."""
+    user: str
+    """SIP user part (phone number or username)."""
+    host: str
+    """Host as a bare string — no brackets for IPv6 addresses."""
+    password: str | None = None
+    """Optional password from the user-info component (``user:password@host``)."""
+    port: int | None = None
+    """Optional port number; ``None`` when not present in the URI."""
+    uri_parameters: dict[str, str | None] = dataclasses.field(default_factory=dict)
+    """URI parameters as a mapping of name → value (``None`` for flag parameters)."""
+    headers: dict[str, str] = dataclasses.field(default_factory=dict)
+    """SIP URI headers (``?Header=value``) as a mapping of name → value."""
+
+    @classmethod
+    def parse(cls, value: str) -> SipURI:
+        """Parse a SIP or SIPS URI string into a `SipURI` instance.
+
+        Implements the full ``sip:user:password@host:port;uri-parameters?headers``
+        grammar from [RFC 3261 §19.1].  IPv6 host literals must be bracketed
+        per [RFC 2732], e.g. ``sip:alice@[::1]:5060``.
+
+        [RFC 3261 §19.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-19.1
+        [RFC 2732]: https://datatracker.ietf.org/doc/html/rfc2732
+
+        Args:
+            value: Raw SIP URI string.
+
+        Returns:
+            Parsed `SipURI` instance.
+
+        Raises:
+            ValueError: When the URI is malformed (missing scheme, missing
+                ``user@host``, unclosed IPv6 bracket, empty host, or invalid port).
+        """
+        scheme, _, rest = value.partition(":")
+        if not scheme or not rest:
+            raise ValueError(
+                f"Invalid SIP URI: {value!r}. Expected sip[s]:user@host[:port]."
+            )
+
+        # Strip SIP URI headers (?Header=value&...) — must come after parameters.
+        rest, _, headers_str = rest.partition("?")
+        headers = cls._parse_headers(headers_str)
+
+        # Strip URI parameters (;param or ;param=value) — after hostport.
+        rest, _, params_str = rest.partition(";")
+        uri_parameters = cls._parse_uri_parameters(params_str)
+
+        # Separate user-info (user:password) from hostport.
+        if "@" in rest:
+            user_info, _, hostport = rest.partition("@")
+            user, _, raw_password = user_info.partition(":")
+            password: str | None = raw_password or None
+        else:
+            raise ValueError(
+                f"Invalid SIP URI: {value!r}. Missing user@host part."
+            )
+
+        # Parse hostport — IPv6 literals are enclosed in brackets.
+        host, port = cls._parse_hostport(hostport, value)
+
+        return cls(
+            scheme=scheme,
+            user=user,
+            host=host,
+            password=password,
+            port=port,
+            uri_parameters=uri_parameters,
+            headers=headers,
+        )
+
+    @staticmethod
+    def _parse_hostport(hostport: str, original: str) -> tuple[str, int | None]:
+        """Parse ``host`` or ``[IPv6host]:port`` into ``(host, port)``.
+
+        Args:
+            hostport: The host-port portion of a SIP URI.
+            original: The full original URI string (used in error messages only).
+
+        Returns:
+            Tuple of ``(bare_host, port)`` where ``port`` is ``None`` when absent.
+
+        Raises:
+            ValueError: When the bracket is unclosed, the host is empty, or the
+                port is not a valid integer.
+        """
+        if hostport.startswith("["):
+            bracket_end = hostport.find("]")
+            if bracket_end == -1:
+                raise ValueError(
+                    f"Invalid SIP URI: {original!r}. Unclosed bracket in IPv6 address."
+                )
+            host = hostport[1:bracket_end]
+            if not host:
+                raise ValueError(
+                    f"Invalid SIP URI: {original!r}. Empty host in IPv6 brackets."
+                )
+            remainder = hostport[bracket_end + 1 :]
+            port_str = remainder.removeprefix(":")
+            try:
+                port: int | None = int(port_str) if port_str else None
+            except ValueError:
+                raise ValueError(
+                    f"Invalid SIP URI: {original!r}. Invalid port: {port_str!r}."
+                ) from None
+        else:
+            host, _, port_str = hostport.partition(":")
+            if not host:
+                raise ValueError(
+                    f"Invalid SIP URI: {original!r}. Missing host."
+                )
+            try:
+                port = int(port_str) if port_str else None
+            except ValueError:
+                raise ValueError(
+                    f"Invalid SIP URI: {original!r}. Invalid port: {port_str!r}."
+                ) from None
+        return host, port
+
+    @staticmethod
+    def _parse_uri_parameters(params_str: str) -> dict[str, str | None]:
+        """Parse semicolon-separated URI parameters into a dict.
+
+        Args:
+            params_str: Semicolon-separated parameter string (without the leading ``;``).
+
+        Returns:
+            Mapping of parameter name → value (``None`` for flag parameters).
+        """
+        params: dict[str, str | None] = {}
+        if not params_str:
+            return params
+        for part in params_str.split(";"):
+            if "=" in part:
+                key, _, val = part.partition("=")
+                params[key] = val
+            elif part:
+                params[part] = None
+        return params
+
+    @staticmethod
+    def _parse_headers(headers_str: str) -> dict[str, str]:
+        """Parse ampersand-separated SIP URI headers into a dict.
+
+        Args:
+            headers_str: Ampersand-separated header string (without the leading ``?``).
+
+        Returns:
+            Mapping of header name → value.
+        """
+        headers: dict[str, str] = {}
+        if not headers_str:
+            return headers
+        for part in headers_str.split("&"):
+            if "=" in part:
+                key, _, val = part.partition("=")
+                headers[key] = val
+        return headers
 
 
 class CallerID(str):

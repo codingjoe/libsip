@@ -7,6 +7,7 @@ import time
 
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
+from voip.sip.types import SipURI
 
 try:
     import click
@@ -24,63 +25,6 @@ except ImportError as e:
 SIP_TCP_PORT = 5060
 #: Standard SIP/TLS port (RFC 3261 §26.2.2).
 SIP_TLS_PORT = 5061
-
-
-def _parse_aor(value: str) -> tuple[str, str, str, int | None]:
-    """Parse a SIP URI into `(scheme, user, host, port)`.
-
-    The port is `None` when not present in the URI.  IPv6 addresses in the
-    host part must be enclosed in square brackets per RFC 2732, e.g.
-    ``sip:alice@[::1]:5060``; the returned host is the bare address without
-    brackets.
-
-    Examples:
-    ```
-    >>> _parse_aor("sip:alice@example.com")
-    ('sip', 'alice', 'example.com', None)
-    >>> _parse_aor("sips:+15551234567@carrier.com:5061")
-    ('sips', '+15551234567', 'carrier.com', 5061)
-    >>> _parse_aor("sip:alice@[::1]:5060")
-    ('sip', 'alice', '::1', 5060)
-    ```
-
-    Args:
-        value: SIP URI string.
-
-    Returns:
-        Tuple of (scheme, user, host, port).
-
-    Raises:
-        click.BadParameter: When the URI is malformed.
-    """
-    scheme, _, rest = value.partition(":")
-    if not scheme or not rest:
-        raise click.BadParameter(
-            f"Invalid SIP URI: {value!r}. Expected sip[s]:user@host[:port]."
-        )
-    user_part, _, hostport = rest.partition("@")
-    if not hostport:
-        raise click.BadParameter(f"Invalid SIP URI: {value!r}. Missing user@host part.")
-    if hostport.startswith("["):
-        bracket_end = hostport.find("]")
-        if bracket_end == -1:
-            raise click.BadParameter(
-                f"Invalid SIP URI: {value!r}. Unclosed bracket in IPv6 address."
-            )
-        host = hostport[1:bracket_end]
-        if not host:
-            raise click.BadParameter(
-                f"Invalid SIP URI: {value!r}. Empty host in IPv6 brackets."
-            )
-        remainder = hostport[bracket_end + 1 :]
-        port_str = remainder.removeprefix(":")
-        port: int | None = int(port_str) if port_str else None
-    else:
-        host, _, port_str = hostport.partition(":")
-        if not host:
-            raise click.BadParameter(f"Invalid SIP URI: {value!r}. Missing host.")
-        port = int(port_str) if port_str else None
-    return scheme, user_part, host, port
 
 
 def _parse_hostport(
@@ -146,10 +90,6 @@ def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
     if value is None or value.lower() == "none":
         return None
     return _parse_hostport(ctx, param, value, default_port=3478)
-
-
-# Keep the old name as an alias so existing internal callers still work.
-_parse_server = _parse_hostport
 
 
 class ConsoleMessageProcessor(SessionInitiationProtocol):
@@ -263,21 +203,21 @@ def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls)
     """
     ctx.ensure_object(dict)
     try:
-        scheme, aor_user, aor_host, aor_port = _parse_aor(aor)
-    except click.BadParameter as exc:
+        parsed_aor = SipURI.parse(aor)
+    except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="AOR") from exc
 
-    effective_username = username or aor_user
+    effective_username = username or parsed_aor.user
 
     if proxy is not None:
         proxy_addr = _parse_hostport(ctx, None, proxy)
     else:
-        default_port = SIP_TCP_PORT if scheme == "sip" else SIP_TLS_PORT
-        port = aor_port if aor_port is not None else default_port
-        proxy_addr = (aor_host, port)
+        default_port = SIP_TCP_PORT if parsed_aor.scheme == "sip" else SIP_TLS_PORT
+        port = parsed_aor.port if parsed_aor.port is not None else default_port
+        proxy_addr = (parsed_aor.host, port)
 
     use_tls = not no_tls and proxy_addr[1] != SIP_TCP_PORT
-    normalized_aor = f"{scheme}:{effective_username}@{aor_host}"
+    normalized_aor = f"{parsed_aor.scheme}:{effective_username}@{parsed_aor.host}"
 
     ctx.obj.update(
         aor=normalized_aor,

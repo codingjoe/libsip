@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
+import ipaddress
 import logging
-import socket
 import struct
 import uuid
 
@@ -31,7 +31,9 @@ class STUNAttributeType(enum.IntEnum):
     XOR_MAPPED_ADDRESS = 0x0020
 
 
-def _parse_address(value: bytes, xor_key: bytes) -> tuple[str, int] | None:
+def _parse_address(
+    value: bytes, xor_key: bytes
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] | None:
     """Decode a STUN MAPPED-ADDRESS or XOR-MAPPED-ADDRESS attribute value.
 
     When *xor_key* is non-empty the port and address bytes are XORed with
@@ -45,7 +47,7 @@ def _parse_address(value: bytes, xor_key: bytes) -> tuple[str, int] | None:
             for XOR-MAPPED-ADDRESS, or empty bytes for plain MAPPED-ADDRESS.
 
     Returns:
-        ``(ip_address_string, port)`` on success, ``None`` when *value* is
+        ``(ip_address, port)`` on success, ``None`` when *value* is
         too short or the address family is unrecognised.
     """
     assert not xor_key or len(xor_key) == 16, "xor_key must be 16 bytes or empty"  # noqa: S101
@@ -62,7 +64,7 @@ def _parse_address(value: bytes, xor_key: bytes) -> tuple[str, int] | None:
                 if xor_key
                 else raw_ip
             )
-            return socket.inet_ntoa(ip_bytes), port
+            return ipaddress.IPv4Address(ip_bytes), port
         case 0x02 if len(value) >= 20:  # IPv6
             raw_ip = value[4:20]
             ip_bytes = (
@@ -70,7 +72,7 @@ def _parse_address(value: bytes, xor_key: bytes) -> tuple[str, int] | None:
                 if xor_key
                 else raw_ip
             )
-            return socket.inet_ntop(socket.AF_INET6, ip_bytes), port
+            return ipaddress.IPv6Address(ip_bytes), port
         case _:
             return None
 
@@ -118,7 +120,8 @@ class STUNProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self.transport = transport
         if self.stun_server_address is None:
-            self.stun_connection_made(transport, transport.get_extra_info("sockname"))
+            host, port = transport.get_extra_info("sockname")
+            self.stun_connection_made(transport, (ipaddress.ip_address(host), port))
         else:
             self._stun_transaction_id = uuid.uuid4().bytes[:12]
             self._send_stun_request()
@@ -126,7 +129,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
     def stun_connection_made(
         self,
         transport: asyncio.DatagramTransport,
-        addr: tuple[str, int],
+        addr: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int],
     ) -> None:
         """Called when the socket is ready and the reachable address is known.
 
@@ -221,8 +224,8 @@ class STUNProtocol(asyncio.DatagramProtocol):
         # Clear transaction ID so duplicate responses are ignored.
         self._stun_transaction_id = b""
         offset = 20
-        xor_mapped: tuple[str, int] | None = None
-        mapped: tuple[str, int] | None = None
+        xor_mapped: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] | None = None
+        mapped: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] | None = None
         xor_key = struct.pack(">I", MAGIC_COOKIE) + response_tid
         while offset + 4 <= len(data):
             attribute_type, attribute_len = struct.unpack(

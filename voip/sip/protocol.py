@@ -39,24 +39,25 @@ logger = logging.getLogger("voip.sip")
 __all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol"]
 
 
-def _format_host(host: str) -> str:
+def _format_host(host: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
     """Return *host* wrapped in brackets when it is an IPv6 address.
 
     RFC 3261 §19.1.1 and RFC 2732 require IPv6 addresses in SIP URIs and
     Via/Contact headers to be enclosed in square brackets.
 
     Args:
-        host: Bare host string (IP address or hostname).
+        host: Host as a typed IP address object or bare host string.
 
     Returns:
         ``[host]`` for IPv6 addresses, *host* unchanged otherwise.
     """
+    if isinstance(host, ipaddress.IPv6Address):
+        return f"[{host}]"
+    if isinstance(host, ipaddress.IPv4Address):
+        return str(host)
     try:
-        return (
-            f"[{host}]"
-            if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address)
-            else host
-        )
+        addr = ipaddress.ip_address(host)
+        return f"[{addr}]" if isinstance(addr, ipaddress.IPv6Address) else host
     except ValueError:
         return host
 
@@ -182,7 +183,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
     call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
     #: Local TCP socket address (host, port) — set when connection is established.
-    local_address: tuple[str, int] = dataclasses.field(init=False)
+    local_address: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] = (
+        dataclasses.field(init=False)
+    )
     transport: asyncio.Transport | None = dataclasses.field(init=False, default=None)
     #: True when the underlying transport is TLS-wrapped; False for plain TCP.
     _is_tls: bool = dataclasses.field(init=False, default=False)
@@ -193,7 +196,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         """Store the TLS/TCP transport and start RTP mux + carrier registration."""
         self.transport = transport
-        self.local_address = transport.get_extra_info("sockname")
+        host, port = transport.get_extra_info("sockname")
+        self.local_address = (ipaddress.ip_address(host), port)
         self._is_tls = transport.get_extra_info("ssl_object") is not None
         try:
             self._initialize_task = asyncio.get_running_loop().create_task(
@@ -214,9 +218,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         loop = asyncio.get_running_loop()
         rtp_bind = (
             "::"
-            if isinstance(
-                ipaddress.ip_address(self.local_address[0]), ipaddress.IPv6Address
-            )
+            if isinstance(self.local_address[0], ipaddress.IPv6Address)
             else "0.0.0.0"  # noqa: S104
         )
         self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
@@ -676,21 +678,17 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         sess_version=sess_id,
                         nettype="IN",
                         addrtype="IP6"
-                        if isinstance(
-                            ipaddress.ip_address(rtp_public[0]), ipaddress.IPv6Address
-                        )
+                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
                         else "IP4",
-                        unicast_address=rtp_public[0],
+                        unicast_address=str(rtp_public[0]),
                     ),
                     timings=[Timing(start_time=0, stop_time=0)],
                     connection=ConnectionData(
                         nettype="IN",
                         addrtype="IP6"
-                        if isinstance(
-                            ipaddress.ip_address(rtp_public[0]), ipaddress.IPv6Address
-                        )
+                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
                         else "IP4",
-                        connection_address=rtp_public[0],
+                        connection_address=str(rtp_public[0]),
                     ),
                     media=[
                         MediaDescription(

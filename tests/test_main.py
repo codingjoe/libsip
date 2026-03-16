@@ -30,96 +30,135 @@ def make_runner():
     return CliRunner()
 
 
-class TestParseAOR:
-    def test_parse_aor__sips_no_port(self):
+def make_mock_transport(host: str = "127.0.0.1", port: int = 5060) -> MagicMock:
+    """Return a MagicMock transport with a pre-configured sockname."""
+    transport = MagicMock()
+    transport.get_extra_info.return_value = (host, port)
+    return transport
+
+class TestSipURI:
+    def test_parse__sips_no_port(self):
         """Parse scheme, user and host from a sips URI without port."""
-        from voip.__main__ import _parse_aor
+        from voip.sip.types import SipURI
 
-        assert _parse_aor("sips:alice@example.com") == (
-            "sips",
-            "alice",
-            "example.com",
-            None,
-        )
+        uri = SipURI.parse("sips:alice@example.com")
+        assert uri.scheme == "sips"
+        assert uri.user == "alice"
+        assert uri.host == "example.com"
+        assert uri.port is None
+        assert uri.password is None
 
-    def test_parse_aor__sip_with_port(self):
+    def test_parse__sip_with_port(self):
         """Parse scheme, user, host and port from a sip URI with port."""
-        from voip.__main__ import _parse_aor
+        from voip.sip.types import SipURI
 
-        assert _parse_aor("sip:alice@example.com:5060") == (
-            "sip",
-            "alice",
-            "example.com",
-            5060,
-        )
+        uri = SipURI.parse("sip:alice@example.com:5060")
+        assert uri.scheme == "sip"
+        assert uri.user == "alice"
+        assert uri.host == "example.com"
+        assert uri.port == 5060
 
-    def test_parse_aor__sips_with_port(self):
+    def test_parse__sips_with_port(self):
         """Parse all components including an explicit port."""
-        from voip.__main__ import _parse_aor
+        from voip.sip.types import SipURI
 
-        assert _parse_aor("sips:+15551234567@carrier.com:5061") == (
-            "sips",
-            "+15551234567",
-            "carrier.com",
-            5061,
-        )
+        uri = SipURI.parse("sips:+15551234567@carrier.com:5061")
+        assert uri.scheme == "sips"
+        assert uri.user == "+15551234567"
+        assert uri.host == "carrier.com"
+        assert uri.port == 5061
 
-    def test_parse_aor__invalid_no_at(self):
-        """Raise BadParameter when user@host part is missing."""
-        import click
-        from voip.__main__ import _parse_aor
+    def test_parse__password(self):
+        """Parse the optional password from the user-info component."""
+        from voip.sip.types import SipURI
 
-        with pytest.raises(click.BadParameter):
-            _parse_aor("sip:example.com")
+        uri = SipURI.parse("sip:alice:secret@example.com")
+        assert uri.user == "alice"
+        assert uri.password == "secret"
+        assert uri.host == "example.com"
 
-    def test_parse_aor__invalid_no_scheme(self):
-        """Raise BadParameter when scheme is missing."""
-        import click
-        from voip.__main__ import _parse_aor
+    def test_parse__uri_parameters(self):
+        """Parse semicolon-separated URI parameters."""
+        from voip.sip.types import SipURI
 
-        with pytest.raises(click.BadParameter):
-            _parse_aor("alice@example.com")
+        uri = SipURI.parse("sip:alice@example.com;transport=tls;lr")
+        assert uri.uri_parameters == {"transport": "tls", "lr": None}
 
-    def test_parse_aor__invalid_empty_host(self):
-        """Raise BadParameter when host is empty (e.g. sip:alice@:5060)."""
-        import click
-        from voip.__main__ import _parse_aor
+    def test_parse__headers(self):
+        """Parse question-mark-separated SIP URI headers."""
+        from voip.sip.types import SipURI
 
-        with pytest.raises(click.BadParameter):
-            _parse_aor("sip:alice@:5060")
+        uri = SipURI.parse("sip:alice@example.com?Subject=meeting&Priority=urgent")
+        assert uri.headers == {"Subject": "meeting", "Priority": "urgent"}
 
-    def test_parse_aor__ipv6_with_port(self):
+    def test_parse__invalid_no_at(self):
+        """Raise ValueError when user@host part is missing."""
+        from voip.sip.types import SipURI
+
+        with pytest.raises(ValueError, match="Missing user@host"):
+            SipURI.parse("sip:example.com")
+
+    def test_parse__invalid_no_scheme(self):
+        """Raise ValueError when scheme is missing."""
+        from voip.sip.types import SipURI
+
+        with pytest.raises(ValueError, match="Invalid SIP URI"):
+            SipURI.parse("alice@example.com")
+
+    def test_parse__invalid_empty_host(self):
+        """Raise ValueError when host is empty (e.g. sip:alice@:5060)."""
+        from voip.sip.types import SipURI
+
+        with pytest.raises(ValueError, match="Missing host"):
+            SipURI.parse("sip:alice@:5060")
+
+    def test_parse__ipv6_with_port(self):
         """Parse scheme, user, bare IPv6 host and port from a bracketed IPv6 URI."""
-        from voip.__main__ import _parse_aor
+        from voip.sip.types import SipURI
 
-        assert _parse_aor("sip:alice@[::1]:5060") == ("sip", "alice", "::1", 5060)
+        uri = SipURI.parse("sip:alice@[::1]:5060")
+        assert uri.scheme == "sip"
+        assert uri.user == "alice"
+        assert uri.host == "::1"
+        assert uri.port == 5060
 
-    def test_parse_aor__ipv6_without_port(self):
+    def test_parse__ipv6_without_port(self):
         """Parse scheme, user and bare IPv6 host from a bracketed URI without port."""
-        from voip.__main__ import _parse_aor
+        from voip.sip.types import SipURI
 
-        assert _parse_aor("sips:alice@[2001:db8::1]") == (
-            "sips",
-            "alice",
-            "2001:db8::1",
-            None,
-        )
+        uri = SipURI.parse("sips:alice@[2001:db8::1]")
+        assert uri.scheme == "sips"
+        assert uri.user == "alice"
+        assert uri.host == "2001:db8::1"
+        assert uri.port is None
 
-    def test_parse_aor__ipv6_unclosed_bracket(self):
-        """Raise BadParameter when the IPv6 bracket is not closed."""
-        import click
-        from voip.__main__ import _parse_aor
+    def test_parse__ipv6_unclosed_bracket(self):
+        """Raise ValueError when the IPv6 bracket is not closed."""
+        from voip.sip.types import SipURI
 
-        with pytest.raises(click.BadParameter):
-            _parse_aor("sip:alice@[::1:5060")
+        with pytest.raises(ValueError, match="Unclosed bracket"):
+            SipURI.parse("sip:alice@[::1:5060")
 
-    def test_parse_aor__ipv6_empty_host_in_brackets(self):
-        """Raise BadParameter when brackets are present but the host is empty."""
-        import click
-        from voip.__main__ import _parse_aor
+    def test_parse__ipv6_empty_host_in_brackets(self):
+        """Raise ValueError when brackets are present but the host is empty."""
+        from voip.sip.types import SipURI
 
-        with pytest.raises(click.BadParameter):
-            _parse_aor("sip:alice@[]:5060")
+        with pytest.raises(ValueError, match="Empty host"):
+            SipURI.parse("sip:alice@[]:5060")
+
+    def test_parse__ipv6_invalid_port(self):
+        """Raise ValueError when the IPv6 port is not a valid integer."""
+        from voip.sip.types import SipURI
+
+        with pytest.raises(ValueError, match="Invalid port"):
+            SipURI.parse("sip:alice@[::1]:notaport")
+
+    def test_parse__invalid_port(self):
+        """Raise ValueError when a non-IPv6 port is not a valid integer."""
+        from voip.sip.types import SipURI
+
+        with pytest.raises(ValueError, match="Invalid port"):
+            SipURI.parse("sip:alice@example.com:notaport")
 
 
 class TestParseHostport:
@@ -557,7 +596,7 @@ class TestTranscribeCLI:
 
         async def run():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
@@ -609,7 +648,7 @@ class TestTranscribeCLI:
 
         async def _run_whisper():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
@@ -722,7 +761,7 @@ class TestAgentCLI:
 
         async def _run_agent():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
@@ -772,7 +811,7 @@ class TestAgentCLI:
 
         async def _run_ollama():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 _, kwargs = mock_answer.call_args
@@ -822,7 +861,7 @@ class TestAgentCLI:
 
         async def _run_voice():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 _, kwargs = mock_answer.call_args
