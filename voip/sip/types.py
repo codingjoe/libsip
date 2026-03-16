@@ -66,23 +66,23 @@ class SipURI:
             ValueError: When the URI is malformed (missing scheme, missing
                 ``user@host``, unclosed IPv6 bracket, empty host, or invalid port).
         """
-        scheme, _, rest = value.partition(":")
-        if not scheme or not rest:
+        scheme, _, uri_remainder = value.partition(":")
+        if not scheme or not uri_remainder:
             raise ValueError(
                 f"Invalid SIP URI: {value!r}. Expected sip[s]:user@host[:port]."
             )
 
         # Strip SIP URI headers (?Header=value&...) — must come after parameters.
-        rest, _, headers_str = rest.partition("?")
+        uri_remainder, _, headers_str = uri_remainder.partition("?")
         headers = cls._parse_headers(headers_str)
 
         # Strip URI parameters (;param or ;param=value) — after hostport.
-        rest, _, params_str = rest.partition(";")
+        uri_remainder, _, params_str = uri_remainder.partition(";")
         uri_parameters = cls._parse_uri_parameters(params_str)
 
         # Separate user-info (user:password) from hostport.
-        if "@" in rest:
-            user_info, _, hostport = rest.partition("@")
+        if "@" in uri_remainder:
+            user_info, _, hostport = uri_remainder.partition("@")
             user, _, raw_password = user_info.partition(":")
             password: str | None = raw_password or None
         else:
