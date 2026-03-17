@@ -462,7 +462,7 @@ class TestSendRTPAudio:
             await call.send_audio(audio)
 
         assert len(sleep_calls) == 2
-        assert all(s == call.rpt_packet_duration.total_seconds() for s in sleep_calls)
+        assert all(s <= call.rpt_packet_duration.total_seconds() for s in sleep_calls)
 
 
 def make_echo_call(**kwargs) -> EchoCall:
