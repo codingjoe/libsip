@@ -8,8 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("click")
+pytest.importorskip("numpy")
 _click_testing = pytest.importorskip("click.testing")
+from voip.__main__ import voip
+
 CliRunner = _click_testing.CliRunner
 
 # Stub out optional heavy dependencies so the CLI can be imported without them.
@@ -129,8 +131,6 @@ class TestParseStunServer:
 class TestVoIPCommand:
     def test_voip__verbose_flag(self):
         """Accept -v flag without error."""
-        from voip.__main__ import voip
-
         result = make_runner().invoke(voip, ["-v", "--help"])
         assert result.exit_code == 0
 
@@ -138,8 +138,6 @@ class TestVoIPCommand:
 class TestTranscribeCLI:
     def test_transcribe__sips_aor_uses_tls(self):
         """sips: AOR without explicit port defaults to TLS on port 5061."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -170,8 +168,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__port_5060_uses_tcp(self):
         """Port 5060 in the AOR triggers plain TCP (no TLS)."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -200,8 +196,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__sip_aor_defaults_to_port_5060(self):
         """sip: AOR without explicit port defaults to port 5060 and plain TCP."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -230,8 +224,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__no_tls_forces_tcp_on_sips_aor(self):
         """--no-tls forces plain TCP even when the AOR uses sips:."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -259,8 +251,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__aor_sets_protocol_aor(self):
         """The AOR positional argument sets the normalized aor on the protocol."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -289,8 +279,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__username_override(self):
         """--username overrides the user part from the AOR."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -321,8 +309,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__proxy_overrides_outbound_proxy(self):
         """--proxy overrides the outbound proxy address derived from AOR."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -355,8 +341,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__aor_with_port_parsed_as_outbound_proxy(self):
         """Port in AOR sets the outbound proxy port on the protocol."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -384,8 +368,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__stun_none_disables_stun(self):
         """Disable RTP STUN when --stun-server=none is passed."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -414,8 +396,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__registered_logs_and_echoes(self):
         """Log and echo a message when registration succeeds."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -445,8 +425,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__call_received_answers_call(self):
         """Answer the call when call_received is invoked."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -491,8 +469,6 @@ class TestTranscribeCLI:
 
     def test_transcribe__call_received_uses_whisper_call_class(self):
         """call_received answers with a TranscribeCall subclass."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -548,8 +524,6 @@ class TestTranscribeCLI:
 class TestAgentCLI:
     def test_agent__sips_aor_uses_tls(self):
         """sips: AOR without explicit port defaults to TLS on port 5061."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -580,8 +554,6 @@ class TestAgentCLI:
 
     def test_agent__port_5060_uses_tcp(self):
         """Port 5060 in the AOR triggers plain TCP (no TLS)."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -610,8 +582,6 @@ class TestAgentCLI:
 
     def test_agent__call_received_uses_agent_call_class(self):
         """call_received answers with an AgentCall subclass."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -659,8 +629,6 @@ class TestAgentCLI:
 
     def test_agent__ollama_model_option(self):
         """--llm-model sets the llm_model kwarg on the answer call."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -709,8 +677,6 @@ class TestAgentCLI:
 
     def test_agent__voice_option(self):
         """--voice sets the voice kwarg on the answer call."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -761,8 +727,6 @@ class TestAgentCLI:
 class TestEchoCLI:
     def test_echo__sips_aor_uses_tls(self):
         """sips: AOR without explicit port defaults to TLS on port 5061."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -793,8 +757,6 @@ class TestEchoCLI:
 
     def test_echo__port_5060_uses_tcp(self):
         """Port 5060 in the AOR triggers plain TCP (no TLS)."""
-        from voip.__main__ import voip
-
         captured = {}
 
         async def fake_connection(factory, *, host, port, ssl):
@@ -823,8 +785,6 @@ class TestEchoCLI:
 
     def test_echo__call_received_answers_with_echo_call(self):
         """call_received answers with an EchoCall class."""
-        from voip.__main__ import voip
-
         protocol_holder = {}
 
         async def fake_connection(factory, *, host, port, ssl):

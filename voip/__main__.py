@@ -5,13 +5,12 @@ import logging
 import ssl
 import time
 
-import numpy as np
-
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
 
 try:
     import click
+    import numpy as np
     from pygments import highlight
     from pygments.formatters import TerminalFormatter  # type: ignore[unresolved-import]
 
