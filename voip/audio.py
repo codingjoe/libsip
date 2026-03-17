@@ -17,6 +17,7 @@ import datetime
 import json
 import logging
 import secrets
+import time
 from typing import ClassVar
 
 import numpy as np
@@ -72,6 +73,13 @@ class AudioCall(RTPCall):
     rtp_timestamp: int = dataclasses.field(init=False, repr=False, default=0)
     rtp_ssrc: int = dataclasses.field(
         init=False, repr=False, default_factory=generate_ssrc
+    )
+    last_packet_time: float = dataclasses.field(
+        init=False, repr=False, default_factory=time.perf_counter
+    )
+    send_audio_lock: asyncio.Lock = dataclasses.field(
+        default_factory=asyncio.Lock,
+        init=False,
     )
 
     def __post_init__(self) -> None:
@@ -207,9 +215,17 @@ class AudioCall(RTPCall):
         if remote_addr is None:
             logger.warning("No remote RTP address for this call; dropping audio")
             return
-        for payload in self.codec.packetize(audio):
-            self.send_packet(self.next_rtp_packet(payload), remote_addr)
-            await asyncio.sleep(self.rpt_packet_duration.total_seconds())
+        async with self.send_audio_lock:
+            for payload in self.codec.packetize(audio):
+                await asyncio.sleep(
+                    max(
+                        0.0,
+                        self.rpt_packet_duration.total_seconds()
+                        - (time.perf_counter() - self.last_packet_time),
+                    )
+                )
+                self.send_packet(self.next_rtp_packet(payload), remote_addr)
+                self.last_packet_time = time.perf_counter()
 
     def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
         """
@@ -310,7 +326,7 @@ class VoiceActivityCall(AudioCall):
             < self.sampling_rate_hz * self.silence_gap.total_seconds()
             or self.rms(self._speech_buffer) < self.utterances_rms_threshold
         ):
-            asyncio.create_task(self.voice_received(self._speech_buffer[:]))
+            asyncio.create_task(self.voice_received(self._speech_buffer.copy()))
         self._speech_buffer = np.empty((0,), dtype=np.float32)
 
     async def voice_received(self, audio: np.ndarray) -> None:
