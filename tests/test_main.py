@@ -87,7 +87,6 @@ class TestParseHostport:
     def test_parse_hostport__unbracketed_ipv6_raises_bad_parameter(self):
         """Raise BadParameter when an unbracketed IPv6 literal is given."""
         import click
-
         from voip.__main__ import _parse_hostport
 
         with pytest.raises(click.BadParameter, match="enclosed in brackets"):
