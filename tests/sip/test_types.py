@@ -209,8 +209,61 @@ class TestSipUri:
                 ),
                 "sip:alice@127.0.0.1:5060",
             ),
+            # password in user-info
+            (
+                SipUri(
+                    scheme="sip",
+                    user="alice",
+                    password="secret",
+                    host="example.com",
+                    port=5060,
+                ),
+                "sip:alice:secret@example.com:5060",
+            ),
+            # flag URI parameter (value=None) in __str__
+            (
+                SipUri(
+                    scheme="sip",
+                    user="alice",
+                    host="example.com",
+                    port=5060,
+                    uri_parameters={"lr": None},
+                ),
+                "sip:alice@example.com:5060;lr",
+            ),
         ],
     )
     def test_str(self, uri_obj, expected_uri_str):
         """Test string representation of SipUri objects."""
         assert str(uri_obj) == expected_uri_str
+
+    @pytest.mark.parametrize(
+        "uri_str, expected_uri_obj",
+        [
+            # flag URI parameter (;lr with no value)
+            (
+                "sip:alice@example.com;lr",
+                SipUri(
+                    scheme="sip",
+                    user="alice",
+                    host="example.com",
+                    port=5060,
+                    uri_parameters={"lr": None},
+                ),
+            ),
+            # header without '=' value
+            (
+                "sip:alice@example.com?Subject",
+                SipUri(
+                    scheme="sip",
+                    user="alice",
+                    host="example.com",
+                    port=5060,
+                    headers={"Subject": ""},
+                ),
+            ),
+        ],
+    )
+    def test_parse__flag_parameter_and_valueless_header(self, uri_str, expected_uri_obj):
+        """Parse flag URI parameters and valueless headers."""
+        assert SipUri.parse(uri_str) == expected_uri_obj

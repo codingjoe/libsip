@@ -120,7 +120,10 @@ class STUNProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self.transport = transport
         if self.stun_server_address is None:
-            host, port = transport.get_extra_info("sockname")
+            # IPv6 sockets return a 4-tuple (host, port, flowinfo, scope_id);
+            # we only need the first two elements.
+            sockname = transport.get_extra_info("sockname")
+            host, port = sockname[0], sockname[1]
             self.stun_connection_made(transport, (ipaddress.ip_address(host), port))
         else:
             self._stun_transaction_id = uuid.uuid4().bytes[:12]

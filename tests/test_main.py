@@ -70,6 +70,16 @@ class TestVoIPCommand:
         result = make_runner().invoke(voip, ["-v", "--help"])
         assert result.exit_code == 0
 
+    def test_sip__aor_without_user_raises_error(self):
+        """Raise BadParameter when AOR has no user part."""
+        from voip.__main__ import voip
+
+        result = make_runner().invoke(
+            voip,
+            ["sip", "--password=p", "--stun-server=none", "sip:example.com", "echo"],
+        )
+        assert result.exit_code != 0
+        assert "AOR must contain a user part" in (result.output or "")
 
 class TestTranscribeCLI:
     def test_transcribe__sips_aor_uses_tls(self):
@@ -756,7 +766,7 @@ class TestEchoCLI:
 
         async def run():
             with patch.object(protocol, "answer") as mock_answer:
-                protocol.connection_made(MagicMock())
+                protocol.connection_made(make_mock_transport())
                 protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()

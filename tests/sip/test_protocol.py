@@ -755,7 +755,7 @@ class TestAnswer:
         protocol._rtp_transport = FakeTransport(("2001:db8::2", 12000))
         protocol.local_address = (ipaddress.IPv6Address("2001:db8::2"), 5061)
 
-        await protocol._answer(invite, _CodecAwareCall)
+        await protocol.answer(invite, call_class=_CodecAwareCall)
         response, _ = protocol._sent_responses[-1]
         assert response.body.origin.addrtype == "IP6"
         assert response.body.connection.addrtype == "IP6"

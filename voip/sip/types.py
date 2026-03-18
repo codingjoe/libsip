@@ -13,7 +13,7 @@ from collections.abc import Generator
 from typing import Any
 
 
-@dataclasses.dataclass(slots=True, eq=True, order=True, unsafe_hash=True)
+@dataclasses.dataclass(slots=True, eq=True)
 class SipUri:
     """A parsed SIP or SIPS URI per [RFC 3261 §19.1].
 
@@ -29,11 +29,11 @@ class SipUri:
 
     Examples:
         >>> SipUri.parse("sip:alice@example.com")
-        SipURI(scheme='sip', user='alice', host='example.com', ...)
+        SipUri(scheme='sip', user='alice', host='example.com', ...)
         >>> SipUri.parse("sips:+15551234567@carrier.com:5061")
-        SipURI(scheme='sips', user='+15551234567', host='carrier.com', port=5061, ...)
+        SipUri(scheme='sips', user='+15551234567', host='carrier.com', port=5061, ...)
         >>> SipUri.parse("sip:alice@[::1]:5060")
-        SipURI(scheme='sip', user='alice', host='::1', port=5060, ...)
+        SipUri(scheme='sip', user='alice', host=IPv6Address('::1'), port=5060, ...)
     """
 
     scheme: str
@@ -45,7 +45,12 @@ class SipUri:
     password: str | None = None
     """Optional password from the user-info component (``user:password@host``)."""
     port: int | None = None
-    """Optional port number; ``None`` when not present in the URI."""
+    """Port number.
+
+    When not present in the URI, defaults to ``5061`` for ``sips:`` and
+    ``5060`` for ``sip:``.  After construction this field is always an
+    ``int`` — it is never ``None``.
+    """
     uri_parameters: dict[str, str | None] = dataclasses.field(default_factory=dict)
     """URI parameters as a mapping of name → value (``None`` for flag parameters)."""
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -67,7 +72,7 @@ class SipUri:
     SIP_URL_PATTERN: typing.ClassVar[re.Pattern[str]] = re.compile(
         r"^(?P<scheme>sips?):"
         r"((?P<user>[^@;:]+)(?P<password>:[^@;]*)?@)?"
-        r"(?P<host>([^;?:@]+|\[[0-9a-fA-F:]+\]))"
+        r"(?P<host>(\[[0-9a-fA-F:]+\]|[^;?:@\[\]]+))"
         r"(?P<port>:[0-9]+)?"
         r"(?P<uri_parameters>;[^?]+)?"
         r"(?P<headers>\?[^?]+)?$",
@@ -76,11 +81,12 @@ class SipUri:
 
     @classmethod
     def parse(cls, value: str) -> SipUri:
-        """Parse a SIP or SIPS URI string into a `SipURI` instance.
+        """Parse a SIP or SIPS URI string into a `SipUri` instance.
 
         Implements the full ``sip:user:password@host:port;uri-parameters?headers``
         grammar from [RFC 3261 §19.1].  IPv6 host literals must be bracketed
-        per [RFC 2732], e.g. ``sip:alice@[::1]:5060``.
+        per [RFC 2732], e.g. ``sip:alice@[::1]:5060``.  Unbracketed IPv6
+        addresses (e.g. ``sip:alice@::1``) are rejected.
 
         [RFC 3261 §19.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-19.1
         [RFC 2732]: https://datatracker.ietf.org/doc/html/rfc2732
@@ -89,11 +95,11 @@ class SipUri:
             value: Raw SIP URI string.
 
         Returns:
-            Parsed `SipURI` instance.
+            Parsed `SipUri` instance.
 
         Raises:
-            ValueError: When the URI is malformed (missing scheme, missing
-                ``user@host``, unclosed IPv6 bracket, empty host, or invalid port).
+            ValueError: When the URI is malformed (missing scheme, invalid
+                characters, unclosed IPv6 bracket, empty host, or invalid port).
         """
         if match := cls.SIP_URL_PATTERN.fullmatch(value):
             host = match.group("host")
@@ -156,7 +162,6 @@ class SipUri:
             if self.password:
                 parts.append(f":{urllib.parse.quote(self.password)}")
             parts.append("@")
-        print(type(self.host), self.host)
         parts.append(
             f"[{str(self.host)}]"
             if isinstance(self.host, ipaddress.IPv6Address)

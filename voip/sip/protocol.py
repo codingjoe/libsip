@@ -185,7 +185,10 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         """Store the TLS/TCP transport and start RTP mux + carrier registration."""
         self.transport = transport
-        host, port = transport.get_extra_info("sockname")
+        # IPv6 sockets return a 4-tuple (host, port, flowinfo, scope_id);
+        # we only need the first two elements.
+        sockname = transport.get_extra_info("sockname")
+        host, port = sockname[0], sockname[1]
         self.local_address = (ipaddress.ip_address(host), port)
         self._is_tls = transport.get_extra_info("ssl_object") is not None
         try:

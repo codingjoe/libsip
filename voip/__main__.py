@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import dataclasses
+import ipaddress
 import logging
 import ssl
 import time
@@ -208,16 +209,28 @@ def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls)
         raise click.BadParameter(str(exc), param_hint="AOR") from exc
 
     effective_username = username or parsed_aor.user
+    if not effective_username:
+        raise click.BadParameter(
+            "AOR must contain a user part (e.g. sip:alice@example.com).",
+            param_hint="AOR",
+        )
 
     if proxy is not None:
         proxy_addr = _parse_hostport(ctx, None, proxy)
     else:
         default_port = SIP_TCP_PORT if parsed_aor.scheme == "sip" else SIP_TLS_PORT
         port = parsed_aor.port if parsed_aor.port is not None else default_port
-        proxy_addr = (parsed_aor.host, port)
+        # asyncio.create_connection requires a plain str host, not an ipaddress object.
+        proxy_addr = (str(parsed_aor.host), port)
 
     use_tls = not no_tls and proxy_addr[1] != SIP_TCP_PORT
-    normalized_aor = f"{parsed_aor.scheme}:{effective_username}@{parsed_aor.host}"
+    # Build the canonical AOR; IPv6 hosts must be enclosed in brackets per RFC 2732.
+    host_in_aor = (
+        f"[{parsed_aor.host}]"
+        if isinstance(parsed_aor.host, ipaddress.IPv6Address)
+        else str(parsed_aor.host)
+    )
+    normalized_aor = f"{parsed_aor.scheme}:{effective_username}@{host_in_aor}"
 
     ctx.obj.update(
         aor=normalized_aor,
