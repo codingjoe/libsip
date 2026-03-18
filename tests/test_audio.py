@@ -414,7 +414,7 @@ class TestSendRTPAudio:
     """Tests for AudioCall.send_rtp_audio."""
 
     async def test_send_rtp_audio__sends_to_remote_addr(self):
-        """send_rtp_audio sends RTP packets to the caller's registered address."""
+        """The first RTP packet is transmitted synchronously inside send_audio."""
         call = make_audio_call(media=PCMU_MEDIA)
         remote_addr = ("10.0.0.1", 5004)
         call.rtp.calls = {remote_addr: call}
@@ -442,27 +442,47 @@ class TestSendRTPAudio:
         assert any("dropping audio" in r.message for r in caplog.records)
 
     async def test_send_rtp_audio__paces_packets_at_20ms_intervals(self):
-        """send_rtp_audio sleeps RTP_PACKET_DURATION_SECS between each packet."""
+        """Subsequent packets are scheduled at rpt_packet_duration intervals via call_later."""
         call = make_audio_call(media=PCMU_MEDIA)
         remote_addr = ("10.0.0.2", 5006)
         call.rtp.calls = {remote_addr: call}
 
-        audio = np.zeros(320, dtype=np.float32)
-        sleep_calls: list[float] = []
-        original_sleep = asyncio.sleep
+        with patch.object(call, "send_packet"):
+            await call.send_audio(np.zeros(320, dtype=np.float32))
 
-        async def capture_sleep(delay: float) -> None:
-            sleep_calls.append(delay)
-            await original_sleep(0)
+        loop = asyncio.get_event_loop()
+        assert call.outbound_handle is not None
+        assert call.outbound_handle.when() == pytest.approx(
+            loop.time() + call.rpt_packet_duration.total_seconds(), abs=0.01
+        )
 
-        with (
-            patch("voip.audio.asyncio.sleep", side_effect=capture_sleep),
-            patch.object(call, "send_packet"),
-        ):
-            await call.send_audio(audio)
+    async def test_cancel_outbound_audio__cancels_handle_and_clears(self):
+        """cancel_outbound_audio cancels the pending handle and sets outbound_handle to None."""
+        call = make_audio_call(media=PCMU_MEDIA)
+        remote_addr = ("10.0.0.1", 5004)
+        call.rtp.calls = {remote_addr: call}
 
-        assert len(sleep_calls) == 2
-        assert all(s <= call.rpt_packet_duration.total_seconds() for s in sleep_calls)
+        with patch.object(call, "send_packet"):
+            await call.send_audio(np.zeros(320, dtype=np.float32))
+
+        handle = call.outbound_handle
+        call.cancel_outbound_audio()
+
+        assert handle.cancelled()
+        assert call.outbound_handle is None
+
+    async def test_send_audio__preempts_pending_handle(self):
+        """A second send_audio cancels the pending handle from the first call."""
+        call = make_audio_call(media=PCMU_MEDIA)
+        remote_addr = ("10.0.0.1", 5004)
+        call.rtp.calls = {remote_addr: call}
+
+        with patch.object(call, "send_packet"):
+            await call.send_audio(np.zeros(320, dtype=np.float32))
+            first_handle = call.outbound_handle
+            await call.send_audio(np.zeros(320, dtype=np.float32))
+
+        assert first_handle.cancelled()
 
 
 def make_echo_call(**kwargs) -> EchoCall:

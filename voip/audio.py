@@ -17,10 +17,11 @@ import datetime
 import json
 import logging
 import secrets
-import time
+from collections.abc import Iterator
 from typing import ClassVar
 
 import numpy as np
+import pytest
 
 import voip.codecs as codecs
 from voip.codecs import RTPCodec
@@ -74,12 +75,14 @@ class AudioCall(RTPCall):
     rtp_ssrc: int = dataclasses.field(
         init=False, repr=False, default_factory=generate_ssrc
     )
-    last_packet_time: float = dataclasses.field(
-        init=False, repr=False, default_factory=time.perf_counter
-    )
     send_audio_lock: asyncio.Lock = dataclasses.field(
         default_factory=asyncio.Lock,
         init=False,
+    )
+    outbound_handle: asyncio.TimerHandle | None = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
     )
 
     def __post_init__(self) -> None:
@@ -173,8 +176,8 @@ class AudioCall(RTPCall):
     def next_rtp_packet(self, payload: bytes) -> RTPPacket:
         packet = RTPPacket(
             payload_type=self.codec.payload_type,
-            sequence_number=self.rtp_sequence_number & 0xFFFF,
-            timestamp=self.rtp_timestamp & 0xFFFFFFFF,
+            sequence_number=self.rtp_sequence_number,
+            timestamp=self.rtp_timestamp,
             ssrc=self.rtp_ssrc,
             payload=payload,
         )
@@ -201,9 +204,41 @@ class AudioCall(RTPCall):
         """
         return float(np.sqrt(np.mean(np.square(audio))))
 
+    def cancel_outbound_audio(self) -> None:
+        """Stop the current outbound audio while it is being sent."""
+        try:
+            self.outbound_handle.cancel()
+        except AttributeError:
+            pass
+        else:
+            self.outbound_handle = None
+
+    def _dispatch_next_packet(
+        self,
+        packets: Iterator[bytes],
+        remote_addr: tuple[str, int],
+        next_send_at: float,
+    ) -> None:
+        try:
+            payload = next(packets)
+        except StopIteration:
+            self.outbound_handle = None
+        else:
+            self.send_packet(self.next_rtp_packet(payload), remote_addr)
+            duration_seconds = self.rpt_packet_duration.total_seconds()
+            next_deadline = next_send_at + duration_seconds
+            loop = asyncio.get_running_loop()
+            self.outbound_handle = loop.call_at(
+                next_deadline,
+                self._dispatch_next_packet,
+                packets,
+                remote_addr,
+                next_deadline,
+            )
+
     async def send_audio(self, audio: np.ndarray) -> None:
         """
-        Encode *audio* with the negotiated codec and transmit via RTP.
+        Encode `audio` with the negotiated codec and transmit via RTP.
 
         Args:
             audio: Float32 mono PCM at `codec.sample_rate_hz` Hz.
@@ -212,20 +247,23 @@ class AudioCall(RTPCall):
             (addr for addr, call in self.rtp.calls.items() if call is self),
             None,
         )
-        if remote_addr is None:
-            logger.warning("No remote RTP address for this call; dropping audio")
-            return
-        async with self.send_audio_lock:
-            for payload in self.codec.packetize(audio):
-                await asyncio.sleep(
-                    max(
-                        0.0,
-                        self.rpt_packet_duration.total_seconds()
-                        - (time.perf_counter() - self.last_packet_time),
-                    )
+        match remote_addr:
+            case None:
+                logger.warning(
+                    "No remote RTP address for this call; dropping audio",
                 )
-                self.send_packet(self.next_rtp_packet(payload), remote_addr)
-                self.last_packet_time = time.perf_counter()
+                return
+            case _:
+                pass
+        async with self.send_audio_lock:
+            self.cancel_outbound_audio()
+            loop = asyncio.get_running_loop()
+            next_send_at = loop.time()
+            self._dispatch_next_packet(
+                self.codec.packetize(audio),
+                remote_addr,
+                next_send_at,
+            )
 
     def audio_received(self, *, audio: np.ndarray, rms: float) -> None:
         """
@@ -235,6 +273,49 @@ class AudioCall(RTPCall):
             audio: Float32 mono PCM array at `RESAMPLING_RATE_HZ` Hz.
             rms: Root Mean Square of the decoded PCM, as a proxy for signal strength.
         """
+
+
+@pytest.mark.asyncio
+async def test_send_audio_with_empty_packet_iterator_does_not_schedule_packets() -> (
+    None
+):
+    empty_audio = np.array([], dtype=np.float32)
+
+    class EmptyPacketCodec:
+        def __init__(self) -> None:
+            self.payload_type = 0
+            self.timestamp_increment = 160
+            self.sample_rate_hz = 8000
+
+        def packetize(self, audio: np.ndarray) -> Iterator[bytes]:
+            return iter(())
+
+    class SingleCallRtp:
+        def __init__(self, call: AudioCall, remote_addr: tuple[str, int]) -> None:
+            self.calls = {remote_addr: call}
+
+    call = object.__new__(AudioCall)
+    remote_addr = ("127.0.0.1", 4000)
+    codec = EmptyPacketCodec()
+    send_calls: list[tuple[RTPPacket, tuple[str, int]]] = []
+
+    def send_packet(packet: RTPPacket, addr: tuple[str, int]) -> None:
+        send_calls.append((packet, addr))
+
+    call.codec = codec
+    call.rtp_sequence_number = 0
+    call.rtp_timestamp = 0
+    call.rtp_ssrc = 1
+    call.rpt_packet_duration = datetime.timedelta(milliseconds=20)
+    call.outbound_handle = None
+    call.rtp = SingleCallRtp(call, remote_addr)
+    call.send_audio_lock = asyncio.Lock()
+    call.send_packet = send_packet
+
+    await AudioCall.send_audio(call, empty_audio)
+
+    assert call.outbound_handle is None
+    assert send_calls == []
 
 
 @dataclasses.dataclass(kw_only=True)
