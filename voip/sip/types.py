@@ -16,7 +16,7 @@ __all__ = [
 
 import typing
 import urllib.parse
-from collections.abc import Generator
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -43,7 +43,7 @@ class SipUri:
         SipUri(scheme='sip', user='alice', host=IPv6Address('::1'), port=5060, ...)
 
     Args:
-        scheme: URI scheme — `sip` or `sips"`.
+        scheme: URI scheme — `sip` or `sips`.
         host: Host as a bare string — no brackets for IPv6 addresses.
         user: SIP user part (phone number or username).
         port: Port number. 5061 for `sips:` and 5060 for `sip:`.
@@ -125,7 +125,7 @@ class SipUri:
         raise ValueError(f"Invalid SIP URI: {value!r}")
 
     @classmethod
-    def _parse_parameters(cls, params: str) -> Generator[tuple[str, str | None], Any]:
+    def _parse_parameters(cls, params: str) -> Iterator[tuple[str, str | None]]:
         for part in params[1:].split(";"):
             if "=" in part:
                 name, val = part.split("=", 1)
@@ -134,7 +134,7 @@ class SipUri:
                 yield urllib.parse.unquote(part), None
 
     @classmethod
-    def _parse_headers(cls, headers: str) -> Generator[tuple[str, str], Any]:
+    def _parse_headers(cls, headers: str) -> Iterator[tuple[str, str]]:
         for part in headers.split("&"):
             if "=" in part:
                 name, val = part.split("=", 1)
