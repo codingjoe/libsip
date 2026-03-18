@@ -367,7 +367,7 @@ def transcribe(ctx, stt_model):
 @sip.command()
 @click.option(
     "--stt-model",
-    default="tiny",
+    default="base",
     envvar="STT_MODEL",
     show_default=True,
     help="Whisper model size.",
@@ -381,7 +381,7 @@ def transcribe(ctx, stt_model):
 )
 @click.option(
     "--voice",
-    default="azelma",
+    default="marius",
     envvar="TTS_VOICE",
     show_default=True,
     help="Pocket TTS voice name or path to a conditioning audio file.",

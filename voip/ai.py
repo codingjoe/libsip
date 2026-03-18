@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime
 import logging
 import re
 import typing
@@ -110,6 +111,7 @@ class AgentCall(TranscribeCall):
         llm_model: Ollama model to use for text generation.
         tts_model: Pocket TTS model to use for voice synthesis.
         voice: Voice to use for synthesis.
+        audio_interrupt_duration: Time you have to talk over the agent to interrupt the outbound audio.
     """
 
     system_prompt: str = (
@@ -122,6 +124,7 @@ class AgentCall(TranscribeCall):
         default_factory=lambda: TTSModel.load_model()
     )
     voice: pathlib.Path | str | torch.Tensor = dataclasses.field(default="azelma")
+    audio_interrupt_duration: datetime.timedelta = datetime.timedelta(seconds=0.75)
     _voice_state: dict[str, dict[str, torch.Tensor]] = dataclasses.field(
         init=False, repr=False
     )
@@ -188,7 +191,10 @@ class AgentCall(TranscribeCall):
     def on_audio_speech(self) -> None:
         loop = asyncio.get_event_loop()
         if self._cancel_audio_handle is None:
-            self._cancel_audio_handle = loop.call_later(0.5, self.cancel_outbound_audio)
+            self._cancel_audio_handle = loop.call_later(
+                self.audio_interrupt_duration.total_seconds(),
+                self.cancel_outbound_audio,
+            )
         super().on_audio_speech()
 
     def on_audio_silence(self) -> None:
