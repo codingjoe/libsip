@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
 import typing
 
 import numpy as np
@@ -132,6 +133,18 @@ class AgentCall(TranscribeCall):
         init=False, repr=False, default=None
     )
 
+    emoji_pattern: typing.ClassVar[typing.Pattern[str]] = re.compile(
+        "["
+        "\U0001f600-\U0001f64f"  # emoticons
+        "\U0001f300-\U0001f5ff"  # symbols & pictographs
+        "\U0001f680-\U0001f6ff"  # transport & map symbols
+        "\U0001f1e0-\U0001f1ff"  # flags (iOS)
+        "\U00002702-\U000027b0"
+        "\U000024c2-\U0001f251"
+        "]+",
+        flags=re.UNICODE,
+    )
+
     def __post_init__(self) -> None:
         super().__post_init__()
         self.tts_model = self.tts_model or TTSModel.load_model()
@@ -156,7 +169,7 @@ class AgentCall(TranscribeCall):
             messages=self._messages,
         )
         # clean non-ascii characters from the response for TTS processing
-        reply = (response.message.content or "").encode("ascii", "ignore").decode()
+        reply = self.emoji_pattern.sub("", response.message.content or "")
         self._messages.append({"role": "assistant", "content": reply})
         logger.debug("Agent reply: %r", reply)
         await self.send_speech(reply)
