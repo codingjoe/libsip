@@ -264,6 +264,8 @@ class TestSipUri:
             ),
         ],
     )
-    def test_parse__flag_parameter_and_valueless_header(self, uri_str, expected_uri_obj):
+    def test_parse__flag_parameter_and_valueless_header(
+        self, uri_str, expected_uri_obj
+    ):
         """Parse flag URI parameters and valueless headers."""
         assert SipUri.parse(uri_str) == expected_uri_obj

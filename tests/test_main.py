@@ -81,6 +81,7 @@ class TestVoIPCommand:
         assert result.exit_code != 0
         assert "AOR must contain a user part" in (result.output or "")
 
+
 class TestTranscribeCLI:
     def test_transcribe__sips_aor_uses_tls(self):
         """sips: AOR without explicit port defaults to TLS on port 5061."""
