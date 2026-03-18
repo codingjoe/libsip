@@ -128,6 +128,9 @@ class AgentCall(TranscribeCall):
     _response_task: asyncio.Task | None = dataclasses.field(
         init=False, repr=False, default=None
     )
+    _cancel_audio_handle: asyncio.Handle | None = dataclasses.field(
+        init=False, repr=False, default=None
+    )
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -141,6 +144,7 @@ class AgentCall(TranscribeCall):
         ]
 
     def transcription_received(self, text: str) -> None:
+        self.cancel_outbound_audio()
         self._messages.append({"role": "user", "content": text})
         if self._response_task is not None and not self._response_task.done():
             self._response_task.cancel()
@@ -167,3 +171,15 @@ class AgentCall(TranscribeCall):
                 audio.numpy(), self.tts_model.sample_rate, self.codec.sample_rate_hz
             )
         )
+
+    def on_audio_speech(self) -> None:
+        loop = asyncio.get_event_loop()
+        self._cancel_audio_handle = loop.call_later(0.5, self.cancel_outbound_audio)
+        super().on_audio_speech()
+
+    def on_audio_silence(self) -> None:
+        super().on_audio_silence()
+        try:
+            self._cancel_audio_handle.cancel()
+        except AttributeError:
+            pass
