@@ -174,7 +174,8 @@ class AgentCall(TranscribeCall):
 
     def on_audio_speech(self) -> None:
         loop = asyncio.get_event_loop()
-        self._cancel_audio_handle = loop.call_later(0.5, self.cancel_outbound_audio)
+        if self._cancel_audio_handle is None:
+            self._cancel_audio_handle = loop.call_later(0.5, self.cancel_outbound_audio)
         super().on_audio_speech()
 
     def on_audio_silence(self) -> None:
@@ -183,3 +184,5 @@ class AgentCall(TranscribeCall):
             self._cancel_audio_handle.cancel()
         except AttributeError:
             pass
+        else:
+            self._cancel_audio_handle = None
