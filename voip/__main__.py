@@ -30,9 +30,6 @@ SIP_TCP_PORT = 5060
 SIP_TLS_PORT = 5061
 
 
-#: Regex that parses ``[IPv6HOST][:PORT]`` or ``HOST[:PORT]`` strings.
-#: Named groups: ``ipv6`` (bare address inside brackets) or ``host`` (plain hostname /
-#: IPv4 literal), and an optional ``port`` suffix.
 HOSTPORT_PATTERN: re.Pattern[str] = re.compile(
     r"^(?:\[(?P<ipv6>[0-9a-fA-F:]+)\]|(?P<host>[^:\[\]]+))"
     r"(?::(?P<port>\d+))?$"
@@ -61,17 +58,16 @@ def _parse_hostport(
     Raises:
         click.BadParameter: When value is malformed (unbracketed IPv6 or invalid port).
     """
-    match = HOSTPORT_PATTERN.fullmatch(value)
-    if not match:
+    if not (match := HOSTPORT_PATTERN.fullmatch(value)):
         if value.count(":") > 1:
             raise click.BadParameter(
-                f"IPv6 address must be enclosed in brackets, e.g. [{value}].", param=param
+                f"IPv6 address must be enclosed in brackets, e.g. [{value}].",
+                param=param,
             )
         raise click.BadParameter(f"Invalid host:port value: {value!r}.", param=param)
     raw_host = match.group("ipv6") or match.group("host")
     port = int(match.group("port")) if match.group("port") else default_port
     try:
-        # Parse numeric IP literals into typed address objects; hostnames stay as str.
         return ipaddress.ip_address(raw_host), port
     except ValueError:
         return raw_host, port
