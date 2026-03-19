@@ -140,7 +140,10 @@ class SessionInitiationProtocol(asyncio.Protocol):
     VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
 
     #: RFC 3261 §11 – methods supported by this UA (used in Allow header).
-    ALLOW: typing.ClassVar[str] = "INVITE, ACK, BYE, CANCEL, OPTIONS"
+    ALLOW: typing.ClassVar[str] = (
+        "INVITE, ACK, BYE, CANCEL, REGISTER, OPTIONS, "
+        "PRACK, INFO, SUBSCRIBE, NOTIFY, REFER, MESSAGE, UPDATE, PUBLISH"
+    )
 
     _pending_invites: set[str] = dataclasses.field(init=False, default_factory=set)
     _answered_calls: collections.OrderedDict[str, None] = dataclasses.field(
@@ -386,6 +389,38 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 self._to_tags.pop(call_id, None)
                 self._cleanup_rtp_call(call_id)
                 self.cancel_received(request)
+            case "OPTIONS":
+                dialog_headers = {
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                }
+                self.send(
+                    Response(
+                        status_code=SIPStatus.OK,
+                        phrase=SIPStatus.OK.phrase,
+                        headers={**dialog_headers, "Allow": self.ALLOW},
+                    ),
+                )
+                self.options_received(request)
+            case "REGISTER":
+                self.register_received(request)
+            case "INFO":
+                self.info_received(request)
+            case "MESSAGE":
+                self.message_received(request)
+            case "NOTIFY":
+                self.notify_received(request)
+            case "SUBSCRIBE":
+                self.subscribe_received(request)
+            case "PUBLISH":
+                self.publish_received(request)
+            case "REFER":
+                self.refer_received(request)
+            case "PRACK":
+                self.prack_received(request)
+            case "UPDATE":
+                self.update_received(request)
             case _:
                 raise NotImplementedError(
                     f"Unsupported SIP request method: {request.method}"
@@ -500,6 +535,122 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
         Args:
             request: The SIP CANCEL request.
+        """
+
+    def options_received(self, request: Request) -> None:
+        """Handle an OPTIONS capabilities query.
+
+        A 200 OK with an ``Allow`` header listing supported methods is sent
+        automatically before this hook is called. Override in subclasses to
+        add custom processing (e.g. advertising additional capabilities).
+
+        Args:
+            request: The SIP OPTIONS request.
+        """
+
+    def register_received(self, request: Request) -> None:
+        """Handle a REGISTER request from a User Agent.
+
+        Override in subclasses to implement registrar logic (accept, reject or
+        forward the registration).
+
+        Args:
+            request: The SIP REGISTER request.
+        """
+
+    def info_received(self, request: Request) -> None:
+        """Handle an INFO request carrying mid-session information.
+
+        Override in subclasses to process application-level session data
+        (e.g. DTMF digits per [RFC 2976]).
+
+        [RFC 2976]: https://datatracker.ietf.org/doc/html/rfc2976
+
+        Args:
+            request: The SIP INFO request.
+        """
+
+    def message_received(self, request: Request) -> None:
+        """Handle a MESSAGE request carrying an instant message.
+
+        Override in subclasses to process the message body (e.g. deliver a
+        chat message per [RFC 3428]).
+
+        [RFC 3428]: https://datatracker.ietf.org/doc/html/rfc3428
+
+        Args:
+            request: The SIP MESSAGE request.
+        """
+
+    def notify_received(self, request: Request) -> None:
+        """Handle a NOTIFY request for an active subscription.
+
+        Override in subclasses to consume event notifications (e.g. presence
+        or dialog state per [RFC 3265]).
+
+        [RFC 3265]: https://datatracker.ietf.org/doc/html/rfc3265
+
+        Args:
+            request: The SIP NOTIFY request.
+        """
+
+    def subscribe_received(self, request: Request) -> None:
+        """Handle a SUBSCRIBE request to establish an event subscription.
+
+        Override in subclasses to accept or reject the subscription and
+        maintain subscription state per [RFC 3265].
+
+        [RFC 3265]: https://datatracker.ietf.org/doc/html/rfc3265
+
+        Args:
+            request: The SIP SUBSCRIBE request.
+        """
+
+    def publish_received(self, request: Request) -> None:
+        """Handle a PUBLISH request to publish event state.
+
+        Override in subclasses to store or forward the published state per
+        [RFC 3903].
+
+        [RFC 3903]: https://datatracker.ietf.org/doc/html/rfc3903
+
+        Args:
+            request: The SIP PUBLISH request.
+        """
+
+    def refer_received(self, request: Request) -> None:
+        """Handle a REFER request to transfer the session.
+
+        Override in subclasses to implement call-transfer logic per [RFC 3515].
+
+        [RFC 3515]: https://datatracker.ietf.org/doc/html/rfc3515
+
+        Args:
+            request: The SIP REFER request.
+        """
+
+    def prack_received(self, request: Request) -> None:
+        """Handle a PRACK provisional acknowledgement.
+
+        Override in subclasses to react to the reliable acknowledgement of a
+        1xx provisional response per [RFC 3262].
+
+        [RFC 3262]: https://datatracker.ietf.org/doc/html/rfc3262
+
+        Args:
+            request: The SIP PRACK request.
+        """
+
+    def update_received(self, request: Request) -> None:
+        """Handle an UPDATE request to modify session parameters mid-dialog.
+
+        Override in subclasses to apply the updated session description per
+        [RFC 3311].
+
+        [RFC 3311]: https://datatracker.ietf.org/doc/html/rfc3311
+
+        Args:
+            request: The SIP UPDATE request.
         """
 
     async def answer(

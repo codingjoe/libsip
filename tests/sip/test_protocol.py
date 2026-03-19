@@ -1617,12 +1617,273 @@ class TestSIPProtocol:
         transport.write.assert_called_once_with(b"\r\n")
 
     async def test_request_received__unsupported_method__raises(self):
-        """Raise NotImplementedError for any non-INVITE SIP request method."""
+        """Raise NotImplementedError for a completely unknown SIP method."""
         protocol = SIP(outbound_proxy=("127.0.0.1", 5060), aor="sip:test@example.com")
         protocol.connection_made(make_mock_transport())
-        request = Request(method="OPTIONS", uri="sip:alice@atlanta.com")
-        with pytest.raises(NotImplementedError, match="OPTIONS"):
+        request = Request(method="FOOBAR", uri="sip:alice@atlanta.com")
+        with pytest.raises(NotImplementedError, match="FOOBAR"):
             protocol.request_received(request, ("192.0.2.1", 5060))
+
+    def test_request_received__options__sends_200_ok(self):
+        """Send 200 OK with Allow header for OPTIONS and call options_received."""
+        protocol = self._CapturingSIP()
+        request = Request(
+            method="OPTIONS",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "options-1",
+                "CSeq": "1 OPTIONS",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(protocol._sent) == 1
+        response, _ = protocol._sent[0]
+        assert response.status_code == 200
+        assert "Allow" in response.headers
+
+    def test_request_received__options__calls_options_received(self):
+        """Call options_received hook when an OPTIONS request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def options_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="OPTIONS",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "options-hook-1",
+                "CSeq": "1 OPTIONS",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__register__calls_register_received(self):
+        """Call register_received hook when a REGISTER request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def register_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="REGISTER",
+            uri="sip:example.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:alice@atlanta.com",
+                "Call-ID": "register-1",
+                "CSeq": "1 REGISTER",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__info__calls_info_received(self):
+        """Call info_received hook when an INFO request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def info_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="INFO",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "info-1",
+                "CSeq": "2 INFO",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__message__calls_message_received(self):
+        """Call message_received hook when a MESSAGE request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def message_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="MESSAGE",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "message-1",
+                "CSeq": "1 MESSAGE",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__notify__calls_notify_received(self):
+        """Call notify_received hook when a NOTIFY request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def notify_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="NOTIFY",
+            uri="sip:alice@atlanta.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:bob@biloxi.com",
+                "To": "sip:alice@atlanta.com",
+                "Call-ID": "notify-1",
+                "CSeq": "1 NOTIFY",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__subscribe__calls_subscribe_received(self):
+        """Call subscribe_received hook when a SUBSCRIBE request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def subscribe_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="SUBSCRIBE",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "subscribe-1",
+                "CSeq": "1 SUBSCRIBE",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__publish__calls_publish_received(self):
+        """Call publish_received hook when a PUBLISH request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def publish_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="PUBLISH",
+            uri="sip:presence@example.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:presence@example.com",
+                "Call-ID": "publish-1",
+                "CSeq": "1 PUBLISH",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__refer__calls_refer_received(self):
+        """Call refer_received hook when a REFER request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def refer_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="REFER",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "refer-1",
+                "CSeq": "1 REFER",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__prack__calls_prack_received(self):
+        """Call prack_received hook when a PRACK request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def prack_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="PRACK",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "prack-1",
+                "CSeq": "2 PRACK",
+                "RAck": "1 1 INVITE",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
+
+    def test_request_received__update__calls_update_received(self):
+        """Call update_received hook when an UPDATE request is received."""
+        received = []
+
+        class MySIP(self._CapturingSIP):
+            def update_received(self, request: Request) -> None:
+                received.append(request)
+
+        protocol = MySIP()
+        request = Request(
+            method="UPDATE",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "From": "sip:alice@atlanta.com",
+                "To": "sip:bob@biloxi.com",
+                "Call-ID": "update-1",
+                "CSeq": "2 UPDATE",
+            },
+        )
+        protocol.request_received(request, ("192.0.2.1", 5060))
+        assert len(received) == 1
+        assert received[0] is request
 
     async def test_answer__via_call_received__schedules_answer(self):
         """answer() is async; wrapping it in create_task from call_received works."""
