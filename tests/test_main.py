@@ -873,39 +873,3 @@ class TestEchoCLI:
                 assert isinstance(kwargs["call_class"], type)
 
         asyncio.run(run())
-
-    def test_echo__listen_option_uses_create_server(self):
-        """--listen causes the echo command to call loop.create_server."""
-        from unittest.mock import AsyncMock
-
-        captured = {}
-
-        async def fake_create_server(factory, host, port, ssl):
-            captured["host"] = host
-            captured["port"] = port
-            server = MagicMock()
-            server.__aenter__ = AsyncMock(return_value=server)
-            server.__aexit__ = AsyncMock(return_value=None)
-            server.serve_forever = AsyncMock(side_effect=KeyboardInterrupt)
-            return server
-
-        with (
-            patch.dict(sys.modules, _WHISPER_STUBS),
-            patch("asyncio.get_event_loop"),
-            patch("voip.__main__.asyncio.get_running_loop") as mock_loop,
-        ):
-            mock_loop.return_value.create_server = fake_create_server
-            make_runner().invoke(
-                voip,
-                [
-                    "sip",
-                    "--password=p",
-                    "--stun-server=none",
-                    "--listen=0.0.0.0:5060",
-                    "sips:alice@example.com",
-                    "echo",
-                ],
-                catch_exceptions=False,
-            )
-        assert captured.get("host") == "0.0.0.0"  # noqa: S104
-        assert captured.get("port") == 5060

@@ -42,51 +42,6 @@ async def main():
 asyncio.run(main())
 ```
 
-## SIP Server (accepting incoming connections)
-
-Use [`loop.create_server`][asyncio.AbstractEventLoop.create_server] to listen
-for incoming SIP connections instead of connecting outbound to a carrier.  This
-is useful for testing, local PBX setups, or any scenario where SIP clients
-connect directly to your application:
-
-```python
-import asyncio
-
-from voip.ai import TranscribeCall
-from voip.sip.protocol import SIP
-
-
-class MyCall(TranscribeCall):
-    def transcription_received(self, text: str) -> None:
-        print(f"[{self.caller}] {text}")
-
-
-class MySession(SIP):
-    def call_received(self, request) -> None:
-        asyncio.create_task(self.answer(request=request, call_class=MyCall))
-
-
-async def main():
-    loop = asyncio.get_running_loop()
-    server = await loop.create_server(
-        lambda: MySession(aor="sip:alice@0.0.0.0"),
-        host="0.0.0.0",
-        port=5060,
-    )
-    async with server:
-        print("Listening for SIP calls on port 5060…")
-        await server.serve_forever()
-
-
-asyncio.run(main())
-```
-
-To start a server from the CLI, pass `--listen HOST:PORT`:
-
-```bash
-voip sip --password=secret --listen 0.0.0.0:5060 sip:alice@myhost.com echo
-```
-
 ## Sharing a Whisper Model Across Calls
 
 Loading the model is expensive. Pass a pre-loaded

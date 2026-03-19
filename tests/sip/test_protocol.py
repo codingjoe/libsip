@@ -1724,29 +1724,6 @@ class TestSIPProtocol:
         await asyncio.wait_for(protocol.disconnected_event.wait(), timeout=1.0)
         assert protocol.disconnected_event.is_set()
 
-    async def test_create_server__accepts_incoming_connection(self):
-        """loop.create_server with a SIP factory accepts incoming TCP connections."""
-        connected = asyncio.Event()
-
-        class ServerSession(SIP):
-            def connection_made(self, transport) -> None:
-                connected.set()
-
-        loop = asyncio.get_running_loop()
-        server = await loop.create_server(
-            lambda: ServerSession(aor="sip:test@example.com"),
-            host="127.0.0.1",
-            port=0,
-        )
-        port = server.sockets[0].getsockname()[1]
-        reader, writer = await asyncio.open_connection("127.0.0.1", port)
-        await asyncio.wait_for(connected.wait(), timeout=1.0)
-        assert connected.is_set()
-        writer.close()
-        await writer.wait_closed()
-        server.close()
-        await server.wait_closed()
-
 
 # ---------------------------------------------------------------------------
 # Tests for SIP REGISTER / digest-auth / response handling
