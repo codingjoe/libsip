@@ -8,7 +8,7 @@ import ssl
 import time
 
 from voip.sip import messages
-from voip.sip.protocol import SessionInitiationProtocol
+from voip.sip.protocol import SessionInitiationProtocol, start_server
 from voip.sip.types import SipUri
 
 try:
@@ -22,6 +22,9 @@ except ImportError as e:
     raise ImportError(
         "The VoIP CLI requires extra dependencies. Install via `pip install voip[cli]`."
     ) from e
+
+
+logger = logging.getLogger("voip")
 
 
 #: Standard SIP/TCP port — plain text, no TLS (RFC 3261 §18.2).
@@ -171,6 +174,16 @@ def voip(ctx, verbose: int = 0):
     ),
 )
 @click.option(
+    "--listen",
+    envvar="SIP_LISTEN",
+    default=None,
+    metavar="HOST[:PORT]",
+    help=(
+        "Start a SIP server listening for incoming connections instead of "
+        "connecting outbound to a carrier.  Example: --listen 0.0.0.0:5060"
+    ),
+)
+@click.option(
     "--stun-server",
     envvar="STUN_SERVER",
     default="stun.cloudflare.com:3478",
@@ -196,7 +209,7 @@ def voip(ctx, verbose: int = 0):
     help="Disable TLS certificate verification (insecure; for testing only).",
 )
 @click.pass_context
-def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls):
+def sip(ctx, aor, password, username, proxy, listen, stun_server, no_tls, no_verify_tls):
     """Session Initiation Protocol (SIP)."""
     ctx.ensure_object(dict)
     try:
@@ -218,6 +231,12 @@ def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls)
         port = parsed_aor.port if parsed_aor.port is not None else default_port
         proxy_addr = (parsed_aor.host, port)
 
+    listen_addr = (
+        _parse_hostport(ctx, None, listen, default_port=SIP_TCP_PORT)
+        if listen is not None
+        else None
+    )
+
     use_tls = not no_tls and proxy_addr[1] != SIP_TCP_PORT
     # Build the canonical AOR; IPv6 hosts must be enclosed in brackets per RFC 2732.
     host_in_aor = (
@@ -232,6 +251,7 @@ def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls)
         username=effective_username,
         password=password,
         proxy_addr=proxy_addr,
+        listen_addr=listen_addr,
         stun_server=stun_server,
         use_tls=use_tls,
         no_verify_tls=no_verify_tls,
@@ -244,7 +264,12 @@ async def _connect_sip(
     use_tls: bool,
     no_verify_tls: bool,
 ) -> None:
-    """Connect to a SIP proxy and wait indefinitely."""
+    """Connect to a SIP proxy with automatic reconnection on failure.
+
+    Retries with exponential back-off (1 s → 2 s → … → 60 s) after each
+    failed connection or dropped session so the process stays running without
+    manual intervention.
+    """
     loop = asyncio.get_running_loop()
     ssl_context: ssl.SSLContext | None = None
     if use_tls:
@@ -252,13 +277,57 @@ async def _connect_sip(
         if no_verify_tls:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
-    await loop.create_connection(
+    backoff_secs = 1
+    while True:
+        try:
+            _, protocol = await loop.create_connection(
+                session_factory,
+                host=str(proxy_addr[0]),
+                port=proxy_addr[1],
+                ssl=ssl_context,
+            )
+            backoff_secs = 1
+            await protocol._disconnected_event.wait()
+            logger.info(
+                "SIP connection closed; reconnecting in %s s", backoff_secs
+            )
+        except (OSError, ssl.SSLError) as exc:
+            logger.warning(
+                "SIP connection failed (%s); retrying in %s s", exc, backoff_secs
+            )
+        await asyncio.sleep(backoff_secs)
+        backoff_secs = min(backoff_secs * 2, 60)
+
+
+async def _serve_sip(
+    session_factory,
+    listen_addr: tuple[str | ipaddress.IPv4Address | ipaddress.IPv6Address, int],
+) -> None:
+    """Start a SIP server and listen indefinitely for incoming connections."""
+    host, port = listen_addr
+    server = await start_server(
         session_factory,
-        host=str(proxy_addr[0]),
-        port=proxy_addr[1],
-        ssl=ssl_context,
+        host=host,
+        port=port,
     )
-    await asyncio.Future()
+    async with server:
+        logger.info("SIP server listening on %s:%s", host, port)
+        await server.serve_forever()
+
+
+async def _run_sip(
+    session_factory,
+    proxy_addr: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address | str, int],
+    listen_addr: tuple[str | ipaddress.IPv4Address | ipaddress.IPv6Address, int]
+    | None,
+    use_tls: bool,
+    no_verify_tls: bool,
+) -> None:
+    """Start SIP in server mode when *listen_addr* is set, else connect outbound."""
+    if listen_addr is not None:
+        await _serve_sip(session_factory, listen_addr)
+    else:
+        await _connect_sip(session_factory, proxy_addr, use_tls, no_verify_tls)
 
 
 @sip.command()
@@ -278,7 +347,7 @@ def echo(ctx):
             asyncio.create_task(self.answer(request=request, call_class=EchoCall))
 
     async def run():
-        await _connect_sip(
+        await _run_sip(
             lambda: EchoSession(
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
@@ -287,6 +356,7 @@ def echo(ctx):
                 rtp_stun_server_address=obj["stun_server"],
             ),
             proxy_addr,
+            obj.get("listen_addr"),
             obj["use_tls"],
             obj["no_verify_tls"],
         )
@@ -336,7 +406,7 @@ def transcribe(ctx, stt_model):
             )
 
     async def run():
-        await _connect_sip(
+        await _run_sip(
             lambda: TranscribeSession(
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
@@ -345,6 +415,7 @@ def transcribe(ctx, stt_model):
                 rtp_stun_server_address=obj["stun_server"],
             ),
             proxy_addr,
+            obj.get("listen_addr"),
             obj["use_tls"],
             obj["no_verify_tls"],
         )
@@ -439,7 +510,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
             )
 
     async def run():
-        await _connect_sip(
+        await _run_sip(
             lambda: AgentSession(
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
@@ -448,6 +519,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
                 rtp_stun_server_address=obj["stun_server"],
             ),
             proxy_addr,
+            obj.get("listen_addr"),
             obj["use_tls"],
             obj["no_verify_tls"],
         )

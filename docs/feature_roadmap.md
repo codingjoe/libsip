@@ -8,6 +8,10 @@ SIP User Agent Client (UAC) over TLS/TCP ([RFC 3261]). Handles incoming
 `INVITE`, `BYE`, `ACK`, `CANCEL`, and `OPTIONS` requests, carrier
 `REGISTER` with digest authentication ([RFC 8760]: MD5, SHA-256,
 SHA-512/256), and double-CRLF keepalive ping/pong ([RFC 5626 §4.4.1]).
+Client-initiated keepalive pings, `Supported: outbound` and `;ob` Contact
+parameter ([RFC 5626 §5]), and automatic reconnection with exponential
+back-off ensure robust long-running sessions.  The `start_server` helper
+enables accepting inbound SIP connections directly, without a carrier.
 
 ### Media Transport (RTP/SRTP)
 

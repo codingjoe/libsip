@@ -16,6 +16,7 @@ import logging
 import re
 import secrets
 import socket
+import ssl
 import typing
 import uuid
 
@@ -36,7 +37,7 @@ from .types import CallerID, DigestAlgorithm, DigestQoP, SIPStatus
 
 logger = logging.getLogger("voip.sip")
 
-__all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol"]
+__all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol", "start_server"]
 
 
 def _format_host(host: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
@@ -155,10 +156,14 @@ class SessionInitiationProtocol(asyncio.Protocol):
         init=False, default=None
     )
     _initialize_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
+    _keepalive_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
     _buffer: bytearray = dataclasses.field(init=False, default_factory=bytearray)
+    _disconnected_event: asyncio.Event = dataclasses.field(
+        init=False, default_factory=asyncio.Event
+    )
     #: RFC 3261 §8.1.2 — outbound SIP proxy address ``(host, port)``.
     #: When ``None`` the caller connects directly to the registrar server.
     #: The address may differ from the registrar domain derived from
@@ -171,6 +176,10 @@ class SessionInitiationProtocol(asyncio.Protocol):
     password: str | None = None
     #: STUN server used for RTP NAT traversal (SIP uses TLS/TCP; no STUN needed).
     rtp_stun_server_address: tuple[str, int] | None = ("stun.cloudflare.com", 3478)
+    #: RFC 5626 §4.4.1 keep-alive ping interval in seconds.
+    #: Pings are sent as double-CRLF (``\\r\\n\\r\\n``) over the TLS/TCP connection.
+    #: RFC 5626 §10 recommends at most 90 seconds; 30 s is a safe default for most NATs.
+    keepalive_interval_secs: float = 30.0
     call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
     #: Local TCP socket address (host, port) — set when connection is established.
@@ -194,9 +203,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
         self.local_address = (ipaddress.ip_address(host), port)
         self._is_tls = transport.get_extra_info("ssl_object") is not None
         try:
-            self._initialize_task = asyncio.get_running_loop().create_task(
-                self._initialize()
-            )
+            loop = asyncio.get_running_loop()
+            self._initialize_task = loop.create_task(self._initialize())
+            self._keepalive_task = loop.create_task(self._run_keepalive())
         except RuntimeError:
             pass  # no running loop in synchronous test setups
 
@@ -214,6 +223,21 @@ class SessionInitiationProtocol(asyncio.Protocol):
             local_addr=(rtp_bind, 0),
         )
         await self.register()
+
+    async def _run_keepalive(self) -> None:
+        r"""Periodically send RFC 5626 §4.4.1 keep-alive pings over the connection.
+
+        Sends a double-CRLF (``\r\n\r\n``) every
+        [`keepalive_interval_secs`][voip.sip.protocol.SessionInitiationProtocol.keepalive_interval_secs]
+        seconds to keep the TCP connection and any intermediate NAT mappings
+        alive.  The remote peer responds with a single CRLF (``\r\n``).
+        """
+        while True:
+            await asyncio.sleep(self.keepalive_interval_secs)
+            if self.transport is None:
+                return
+            logger.debug("Sending RFC 5626 §4.4.1 keep-alive ping")
+            self.transport.write(b"\r\n\r\n")
 
     def data_received(self, data: bytes) -> None:
         self._buffer.extend(data)
@@ -694,7 +718,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             "To": headers.get("To", "") + (f";tag={tag}" if tag else ""),
         }
 
-    def _build_contact(self, user: str | None = None) -> str:
+    def _build_contact(self, user: str | None = None, *, ob: bool = False) -> str:
         """Return a ``Contact:`` header value for this UA.
 
         The URI scheme mirrors `aor`: a ``sips:`` AOR produces a
@@ -702,18 +726,27 @@ class SessionInitiationProtocol(asyncio.Protocol):
         TLS produces ``sip:`` with ``transport=tls``; plain TCP produces plain
         ``sip:``.
 
+        When *ob* is ``True`` the ``ob`` URI parameter ([RFC 5626 §5]) is
+        appended inside the angle brackets to advertise outbound keep-alive
+        support to the registrar.
+
+        [RFC 5626 §5]: https://datatracker.ietf.org/doc/html/rfc5626#section-5
+
         Args:
             user: SIP user part (e.g. ``"alice"``).  When provided the Contact
                 is of the form ``<scheme:user@host:port>``; otherwise just
                 ``<scheme:host:port>``.
+            ob: Include the ``ob`` URI parameter (RFC 5626 §5) to indicate
+                outbound keep-alive support.
         """
         aor_scheme = self.aor.partition(":")[0]  # "sip" or "sips"
         host_port = f"{_format_host(self.local_address[0])}:{self.local_address[1]}"
         addr = f"{user}@{host_port}" if user else host_port
+        ob_param = ";ob" if ob else ""
         if aor_scheme == "sips":
-            return f"<sips:{addr}>"
+            return f"<sips:{addr}{ob_param}>"
         tls_param = ";transport=tls" if self._is_tls else ""
-        return f"<sip:{addr}{tls_param}>"
+        return f"<sip:{addr}{tls_param}{ob_param}>"
 
     def ringing(self, request: Request) -> None:
         """Send a 180 Ringing provisional response to the caller.
@@ -861,9 +894,10 @@ class SessionInitiationProtocol(asyncio.Protocol):
             "To": self.aor,
             "Call-ID": self.call_id,
             "CSeq": f"{self.cseq} REGISTER",
-            "Contact": self._build_contact(user),
+            "Contact": self._build_contact(user, ob=True),
             "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
+            "Supported": "outbound",  # RFC 5626 §5 — outbound keep-alive support
         }
         if authorization is not None:
             headers["Authorization"] = authorization
@@ -945,7 +979,70 @@ class SessionInitiationProtocol(asyncio.Protocol):
         """Handle a lost TLS/TCP connection."""
         if exc is not None:
             logger.exception("Connection lost", exc_info=exc)
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
         self.transport = None
+        self._disconnected_event.set()
+
+
+async def start_server(
+    session_factory: typing.Callable[[], SessionInitiationProtocol],
+    host: str | ipaddress.IPv4Address | ipaddress.IPv6Address | None = None,
+    port: int = 5060,
+    *,
+    ssl_context: ssl.SSLContext | None = None,
+) -> asyncio.Server:
+    """Start a SIP TCP server that accepts incoming connections.
+
+    Each accepted TCP connection receives a new protocol instance created by
+    *session_factory*.  Pass an [`ssl.SSLContext`][ssl.SSLContext] to enable
+    TLS (recommended on port 5061).
+
+    Example:
+        ```python
+        import asyncio
+        import ssl
+
+        from voip.sip.protocol import SIP, start_server
+
+
+        class MySession(SIP):
+            def call_received(self, request) -> None:
+                asyncio.create_task(self.answer(request=request, call_class=MyCall))
+
+
+        async def main():
+            server = await start_server(
+                lambda: MySession(aor="sip:bob@0.0.0.0"),
+                host="0.0.0.0",
+                port=5060,
+            )
+            async with server:
+                await server.serve_forever()
+
+
+        asyncio.run(main())
+        ```
+
+    Args:
+        session_factory: Callable returning a new
+            [`SessionInitiationProtocol`][voip.sip.protocol.SessionInitiationProtocol]
+            instance for each incoming connection.
+        host: Interface to bind to.  ``None`` binds to all interfaces.
+        port: TCP port to listen on (default: 5060).
+        ssl_context: Optional TLS context.  When provided, the server
+            accepts TLS connections (recommended on port 5061).
+
+    Returns:
+        A running [`asyncio.Server`][asyncio.Server] instance.
+    """
+    return await asyncio.get_running_loop().create_server(
+        session_factory,
+        host=str(host) if host is not None else None,
+        port=port,
+        ssl=ssl_context,
+    )
 
 
 #: Short alias for `SessionInitiationProtocol`.
