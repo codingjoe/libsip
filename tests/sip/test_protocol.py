@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+import datetime
 import hashlib
 import ipaddress
 import re
@@ -1651,6 +1652,75 @@ class TestSIPProtocol:
         await asyncio.sleep(0.05)
         assert len(protocol._sent) == 1
 
+    async def test_run_keepalive__sends_double_crlf(self):
+        """Keep-alive task sends double-CRLF after the configured interval."""
+        protocol = SIP(
+            outbound_proxy=("127.0.0.1", 5061),
+            aor="sip:test@example.com",
+            rtp_stun_server_address=None,
+            keepalive_interval=datetime.timedelta(seconds=0.01),
+        )
+        transport = make_mock_transport()
+        protocol.connection_made(transport)
+        transport.write.reset_mock()
+        await asyncio.sleep(0.05)
+        transport.write.assert_any_call(b"\r\n\r\n")
+        protocol._keepalive_task.cancel()
+        protocol._initialize_task.cancel()
+
+    async def test_run_keepalive__stops_when_transport_cleared(self):
+        """Keep-alive loop exits cleanly when the transport is set to None."""
+        protocol = SIP(
+            outbound_proxy=("127.0.0.1", 5061),
+            aor="sip:test@example.com",
+            rtp_stun_server_address=None,
+            keepalive_interval=datetime.timedelta(seconds=0.01),
+        )
+        transport = make_mock_transport()
+        protocol.connection_made(transport)
+        transport.write.reset_mock()
+        protocol.transport = None
+        await asyncio.sleep(0.05)
+        transport.write.assert_not_called()
+        protocol._initialize_task.cancel()
+
+    async def test_connection_lost__cancels_and_clears_keepalive_task(self):
+        """connection_lost cancels the keepalive task and clears _keepalive_task."""
+        protocol = SIP(
+            outbound_proxy=("127.0.0.1", 5061),
+            aor="sip:test@example.com",
+            rtp_stun_server_address=None,
+        )
+
+        async def _long_running() -> None:
+            await asyncio.sleep(100)
+
+        task = asyncio.get_running_loop().create_task(_long_running())
+        protocol._keepalive_task = task
+        protocol.connection_lost(None)
+        assert protocol._keepalive_task is None
+        await asyncio.sleep(0)
+        assert task.done()
+
+    async def test_connection_lost__sets_disconnected_event(self):
+        """connection_lost sets the disconnected_event."""
+        protocol = SIP(outbound_proxy=("127.0.0.1", 5061), aor="sip:test@example.com")
+        assert not protocol.disconnected_event.is_set()
+        protocol.connection_lost(None)
+        assert protocol.disconnected_event.is_set()
+
+    async def test_disconnected_event__resolves_after_connection_lost(self):
+        """disconnected_event resolves once connection_lost is called."""
+        protocol = SIP(outbound_proxy=("127.0.0.1", 5061), aor="sip:test@example.com")
+
+        async def lose_connection() -> None:
+            await asyncio.sleep(0.01)
+            protocol.connection_lost(None)
+
+        asyncio.create_task(lose_connection())
+        await asyncio.wait_for(protocol.disconnected_event.wait(), timeout=1.0)
+        assert protocol.disconnected_event.is_set()
+
 
 # ---------------------------------------------------------------------------
 # Tests for SIP REGISTER / digest-auth / response handling
@@ -1759,9 +1829,11 @@ class TestRegistration:
         (data,) = transport.write.call_args[0]
         assert b"From: sip:alice@example.com" in data
         assert b"To: sip:alice@example.com" in data
-        # sip: AOR over TLS → sip:;transport=tls Contact
-        assert b"Contact: <sip:alice@127.0.0.1:5061;transport=tls>" in data
+        # sip: AOR over TLS → sip:;transport=tls Contact with RFC 5626 ;ob parameter
+        assert b"Contact: <sip:alice@127.0.0.1:5061;transport=tls;ob>" in data
         assert b"Expires: 3600" in data
+        # RFC 5626 §5 outbound keep-alive support advertised
+        assert b"Supported: outbound" in data
 
     async def test_register__increments_cseq(self):
         """CSeq increments with each REGISTER sent."""
@@ -1936,7 +2008,7 @@ class TestRegistration:
         assert branch1 != branch2
 
     async def test_register__contact_uses_local_addr(self):
-        """Contact header uses sip:;transport=tls when AOR is sip: over TLS."""
+        """Contact header uses sip:;transport=tls;ob when AOR is sip: over TLS."""
         p = make_register_session()
         p.local_address = (ipaddress.IPv4Address("10.0.0.5"), 5061)
         transport = make_mock_transport("10.0.0.5", 5061)
@@ -1944,10 +2016,10 @@ class TestRegistration:
         p._is_tls = True
         await p.register()
         (data,) = transport.write.call_args[0]
-        assert b"Contact: <sip:alice@10.0.0.5:5061;transport=tls>" in data
+        assert b"Contact: <sip:alice@10.0.0.5:5061;transport=tls;ob>" in data
 
     async def test_register__contact_uses_sips_when_aor_is_sips(self):
-        """Contact header uses sips: when AOR scheme is sips:."""
+        """Contact header uses sips: with ;ob when AOR scheme is sips:."""
         p = make_register_session(aor="sips:alice@example.com")
         p.local_address = (ipaddress.IPv4Address("10.0.0.5"), 5061)
         transport = make_mock_transport("10.0.0.5", 5061)
@@ -1955,7 +2027,7 @@ class TestRegistration:
         p._is_tls = True
         await p.register()
         (data,) = transport.write.call_args[0]
-        assert b"Contact: <sips:alice@10.0.0.5:5061>" in data
+        assert b"Contact: <sips:alice@10.0.0.5:5061;ob>" in data
 
     async def test_register__contact_wraps_ipv6_in_brackets(self):
         """Contact header wraps an IPv6 local address in square brackets."""
@@ -1966,7 +2038,7 @@ class TestRegistration:
         p._is_tls = True
         await p.register()
         (data,) = transport.write.call_args[0]
-        assert b"Contact: <sips:alice@[2001:db8::1]:5061>" in data
+        assert b"Contact: <sips:alice@[2001:db8::1]:5061;ob>" in data
 
     async def test_register__via_wraps_ipv6_in_brackets(self):
         """Via header wraps an IPv6 local address in square brackets."""
@@ -2084,6 +2156,30 @@ class TestRegistration:
                     ),
                     ("192.0.2.2", 5060),
                 )
+
+    def test_build_contact__default__no_ob_param(self):
+        """Contact without ob=True has no ;ob parameter."""
+        p = make_register_session()
+        p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
+        p._is_tls = True
+        contact = p._build_contact("alice")
+        assert ";ob" not in contact
+
+    def test_build_contact__ob_true__includes_ob_uri_param(self):
+        """Contact with ob=True includes the ;ob URI parameter (RFC 5626 §5)."""
+        p = make_register_session()
+        p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
+        p._is_tls = True
+        assert p._build_contact("alice", ob=True) == (
+            "<sip:alice@127.0.0.1:5061;transport=tls;ob>"
+        )
+
+    def test_build_contact__sips_with_ob__includes_ob_before_closing_bracket(self):
+        """sips: Contact with ob=True places ;ob inside the angle brackets."""
+        p = make_register_session(aor="sips:alice@example.com")
+        p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
+        p._is_tls = True
+        assert p._build_contact("alice", ob=True) == "<sips:alice@127.0.0.1:5061;ob>"
 
 
 # ---------------------------------------------------------------------------

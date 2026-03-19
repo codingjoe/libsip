@@ -24,6 +24,9 @@ except ImportError as e:
     ) from e
 
 
+logger = logging.getLogger("voip")
+
+
 #: Standard SIP/TCP port — plain text, no TLS (RFC 3261 §18.2).
 SIP_TCP_PORT = 5060
 #: Standard SIP/TLS port (RFC 3261 §26.2.2).
@@ -244,7 +247,12 @@ async def _connect_sip(
     use_tls: bool,
     no_verify_tls: bool,
 ) -> None:
-    """Connect to a SIP proxy and wait indefinitely."""
+    """Connect to a SIP proxy with automatic reconnection on failure.
+
+    Retries with exponential back-off (1 s → 2 s → … → 60 s) after each
+    failed connection or dropped session so the process stays running without
+    manual intervention.
+    """
     loop = asyncio.get_running_loop()
     ssl_context: ssl.SSLContext | None = None
     if use_tls:
@@ -252,13 +260,24 @@ async def _connect_sip(
         if no_verify_tls:
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
-    await loop.create_connection(
-        session_factory,
-        host=str(proxy_addr[0]),
-        port=proxy_addr[1],
-        ssl=ssl_context,
-    )
-    await asyncio.Future()
+    backoff_secs = 1
+    while True:
+        try:
+            _, protocol = await loop.create_connection(
+                session_factory,
+                host=str(proxy_addr[0]),
+                port=proxy_addr[1],
+                ssl=ssl_context,
+            )
+            backoff_secs = 1
+            await protocol.disconnected_event.wait()
+            logger.info("SIP connection closed; reconnecting in %s s", backoff_secs)
+        except (OSError, ssl.SSLError) as exc:
+            logger.warning(
+                "SIP connection failed (%s); retrying in %s s", exc, backoff_secs
+            )
+        await asyncio.sleep(backoff_secs)
+        backoff_secs = min(backoff_secs * 2, 60)
 
 
 @sip.command()

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import dataclasses
+import datetime
 import hashlib
 import ipaddress
 import json
@@ -134,6 +135,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
         ALLOW:
             RFC 3261 §11 – methods supported by this UA (used in Allow header).
 
+    Args:
+        keepalive_interval: Keep-alive ping interval. Should be between 30 and 90 seconds.
+
     """
 
     #: RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
@@ -155,10 +159,14 @@ class SessionInitiationProtocol(asyncio.Protocol):
         init=False, default=None
     )
     _initialize_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
+    _keepalive_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
     )
     _buffer: bytearray = dataclasses.field(init=False, default_factory=bytearray)
+    disconnected_event: asyncio.Event = dataclasses.field(
+        init=False, default_factory=asyncio.Event
+    )
     #: RFC 3261 §8.1.2 — outbound SIP proxy address ``(host, port)``.
     #: When ``None`` the caller connects directly to the registrar server.
     #: The address may differ from the registrar domain derived from
@@ -171,6 +179,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     password: str | None = None
     #: STUN server used for RTP NAT traversal (SIP uses TLS/TCP; no STUN needed).
     rtp_stun_server_address: tuple[str, int] | None = ("stun.cloudflare.com", 3478)
+    keepalive_interval: datetime.timedelta = datetime.timedelta(seconds=30)
     call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
     #: Local TCP socket address (host, port) — set when connection is established.
@@ -194,9 +203,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
         self.local_address = (ipaddress.ip_address(host), port)
         self._is_tls = transport.get_extra_info("ssl_object") is not None
         try:
-            self._initialize_task = asyncio.get_running_loop().create_task(
-                self._initialize()
-            )
+            loop = asyncio.get_running_loop()
+            self._initialize_task = loop.create_task(self._initialize())
+            self._keepalive_task = loop.create_task(self._run_keepalive())
         except RuntimeError:
             pass  # no running loop in synchronous test setups
 
@@ -214,6 +223,14 @@ class SessionInitiationProtocol(asyncio.Protocol):
             local_addr=(rtp_bind, 0),
         )
         await self.register()
+
+    async def _run_keepalive(self) -> None:
+        while True:
+            await asyncio.sleep(self.keepalive_interval.total_seconds())
+            if self.transport is None:
+                return
+            logger.debug("Sending RFC 5626 §4.4.1 keep-alive ping")
+            self.transport.write(b"\r\n\r\n")
 
     def data_received(self, data: bytes) -> None:
         self._buffer.extend(data)
@@ -694,7 +711,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             "To": headers.get("To", "") + (f";tag={tag}" if tag else ""),
         }
 
-    def _build_contact(self, user: str | None = None) -> str:
+    def _build_contact(self, user: str | None = None, *, ob: bool = False) -> str:
         """Return a ``Contact:`` header value for this UA.
 
         The URI scheme mirrors `aor`: a ``sips:`` AOR produces a
@@ -702,18 +719,27 @@ class SessionInitiationProtocol(asyncio.Protocol):
         TLS produces ``sip:`` with ``transport=tls``; plain TCP produces plain
         ``sip:``.
 
+        When *ob* is ``True`` the ``ob`` URI parameter ([RFC 5626 §5]) is
+        appended inside the angle brackets to advertise outbound keep-alive
+        support to the registrar.
+
+        [RFC 5626 §5]: https://datatracker.ietf.org/doc/html/rfc5626#section-5
+
         Args:
             user: SIP user part (e.g. ``"alice"``).  When provided the Contact
                 is of the form ``<scheme:user@host:port>``; otherwise just
                 ``<scheme:host:port>``.
+            ob: Include the ``ob`` URI parameter (RFC 5626 §5) to indicate
+                outbound keep-alive support.
         """
         aor_scheme = self.aor.partition(":")[0]  # "sip" or "sips"
         host_port = f"{_format_host(self.local_address[0])}:{self.local_address[1]}"
         addr = f"{user}@{host_port}" if user else host_port
+        ob_uri_param = ";ob" if ob else ""
         if aor_scheme == "sips":
-            return f"<sips:{addr}>"
+            return f"<sips:{addr}{ob_uri_param}>"
         tls_param = ";transport=tls" if self._is_tls else ""
-        return f"<sip:{addr}{tls_param}>"
+        return f"<sip:{addr}{tls_param}{ob_uri_param}>"
 
     def ringing(self, request: Request) -> None:
         """Send a 180 Ringing provisional response to the caller.
@@ -861,9 +887,10 @@ class SessionInitiationProtocol(asyncio.Protocol):
             "To": self.aor,
             "Call-ID": self.call_id,
             "CSeq": f"{self.cseq} REGISTER",
-            "Contact": self._build_contact(user),
+            "Contact": self._build_contact(user, ob=True),
             "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
+            "Supported": "outbound",  # RFC 5626 §5 — outbound keep-alive support
         }
         if authorization is not None:
             headers["Authorization"] = authorization
@@ -945,7 +972,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
         """Handle a lost TLS/TCP connection."""
         if exc is not None:
             logger.exception("Connection lost", exc_info=exc)
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
         self.transport = None
+        self.disconnected_event.set()
 
 
 #: Short alias for `SessionInitiationProtocol`.
