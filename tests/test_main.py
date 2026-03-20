@@ -437,7 +437,6 @@ class TestTranscribeCLI:
         async def run():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
 
@@ -487,7 +486,6 @@ class TestTranscribeCLI:
         async def _run_whisper():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args
@@ -662,7 +660,6 @@ class TestAgentCLI:
         async def _run_agent():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args
@@ -712,7 +709,6 @@ class TestAgentCLI:
         async def _run_ollama():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 _, kwargs = mock_answer.call_args
                 assert kwargs.get("llm_model") == "mistral"
@@ -760,7 +756,6 @@ class TestAgentCLI:
         async def _run_voice():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 _, kwargs = mock_answer.call_args
                 assert kwargs.get("voice") == "ellie"
@@ -865,7 +860,6 @@ class TestEchoCLI:
         async def run():
             with patch.object(protocol, "answer") as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol._pending_invites.add(request.headers["Call-ID"])
                 protocol.call_received(request)
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args

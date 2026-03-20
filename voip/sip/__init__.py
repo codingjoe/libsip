@@ -6,6 +6,7 @@ Session Initiation Protocol (SIP) implementation of [RFC 3261].
 
 from .messages import Message, Request, Response
 from .protocol import SessionInitiationProtocol
+from .transactions import Transaction
 from .types import CallerID, SIPMethod, SIPStatus, SipUri
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "Request",
     "Response",
     "SessionInitiationProtocol",
+    "Transaction",
     "CallerID",
     "SipUri",
     "SIPStatus",

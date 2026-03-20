@@ -20,19 +20,10 @@ import typing
 import uuid
 
 from voip.rtp import RealtimeTransportProtocol, RTPCall
-from voip.sdp.messages import SessionDescription
-from voip.sdp.types import (
-    Attribute,
-    ConnectionData,
-    MediaDescription,
-    Origin,
-    RTPPayloadFormat,
-    Timing,
-)
-from voip.srtp import SRTPSession
 
 from .exceptions import RegistrationError
 from .messages import Message, Request, Response
+from .transactions import Transaction
 from .types import (
     CallerID,
     DigestAlgorithm,
@@ -44,7 +35,7 @@ from .types import (
 
 logger = logging.getLogger("voip.sip")
 
-__all__ = ["SIP", "SessionInitiationProtocol"]
+__all__ = ["SIP", "SessionInitiationProtocol", "Transaction"]
 
 
 @dataclasses.dataclass(kw_only=True, slots=True)
@@ -88,8 +79,14 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
     #: RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
     VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
+    #: Transaction class used to handle incoming INVITE dialogs.
+    #: Override in subclasses to inject a custom `Transaction` subclass.
+    transaction_class: typing.ClassVar[type[Transaction]] = Transaction
 
     _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
+    _transactions: dict[str, Transaction] = dataclasses.field(
+        init=False, default_factory=dict
+    )
     _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
         init=False, default=None
     )
@@ -376,12 +373,19 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def invite_received(self, request: Request) -> None:
         """Handle an INVITE request.
 
-        Calls [`call_received`][voip.sip.protocol.SessionInitiationProtocol.call_received].
+        Creates an INVITE server transaction, then calls
+        [`Transaction.call_received`][voip.sip.transactions.Transaction.call_received]
+        and
+        [`call_received`][voip.sip.protocol.SessionInitiationProtocol.call_received].
+        Retransmitted INVITEs (same Via branch) are silently ignored.
         Override to customise INVITE handling.
 
         Args:
             request: The SIP INVITE request.
         """
+        branch = request.via_branch
+        if branch in self._transactions:
+            return  # retransmission — already dispatched
         call_id = request.headers.get("Call-ID", "")
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
@@ -394,17 +398,28 @@ class SessionInitiationProtocol(asyncio.Protocol):
             ),
             extra={"caller": repr(caller), "call_id": call_id},
         )
-        self._to_tags[call_id] = secrets.token_hex(8)
+        to_tag = secrets.token_hex(8)
+        transaction = self.transaction_class(
+            branch=branch,
+            invite=request,
+            to_tag=to_tag,
+            sip=self,
+        )
+        self._transactions[branch] = transaction
+        self._to_tags[call_id] = to_tag
+        transaction.call_received()
         self.call_received(request)
 
     def ack_received(self, request: Request) -> None:
-        """Handle an ACK confirming dialog establishment.
+        """Handle an ACK confirming dialog establishment (RFC 3261 §17.2.1).
 
-        Override in subclasses to react to the ACK.
+        Removes the INVITE server transaction from the registry.  Override
+        in subclasses to react to the ACK.
 
         Args:
             request: The SIP ACK request.
         """
+        self._transactions.pop(request.via_branch, None)
 
     def bye_received(self, request: Request) -> None:
         """Handle a BYE terminating a dialog.
@@ -475,19 +490,21 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 },
             ),
         )
-        terminated = Response(
-            status_code=SIPStatus.REQUEST_TERMINATED,
-            phrase=SIPStatus.REQUEST_TERMINATED.phrase,
-            headers=self._with_to_tag(
-                {
-                    key: value
-                    for key, value in request.headers.items()
-                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                },
-                call_id,
-            ),
-        )
-        self.send(terminated)
+        if self._transactions.pop(request.via_branch, None) is not None:
+            self.send(
+                Response(
+                    status_code=SIPStatus.REQUEST_TERMINATED,
+                    phrase=SIPStatus.REQUEST_TERMINATED.phrase,
+                    headers=self._with_to_tag(
+                        {
+                            key: value
+                            for key, value in request.headers.items()
+                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                        },
+                        call_id,
+                    ),
+                )
+            )
         self._to_tags.pop(call_id, None)
         self._cleanup_rtp_call(call_id)
 
@@ -529,144 +546,23 @@ class SessionInitiationProtocol(asyncio.Protocol):
             await self.answer(request=request, call_class=MyCall)
             ```
 
+        Delegates to [`Transaction.answer`][voip.sip.transactions.Transaction.answer].
+
         Args:
             request: The SIP INVITE request (from `call_received`).
             call_class: A `Call` subclass whose `negotiate_codec` selects the codec.
-                The class is constructed with ``rtp``, ``sip``, ``caller``,
-                and ``media`` keyword arguments.
-            call_kwargs: Optional additional keyword arguments to pass to the call class constructor.
+            call_kwargs: Optional additional keyword arguments passed to the call class.
 
         Raises:
-            NotImplementedError: When `negotiate_codec` raises (no supported codec in the remote SDP offer).
+            NotImplementedError: When `negotiate_codec` raises (no supported codec).
         """
-        call_id = request.headers.get("Call-ID", "")
-        if self._rtp_protocol is None:
-            if self._initialize_task is not None:
-                await self._initialize_task
-            if self._rtp_protocol is None:
-                logger.error("RTP mux not ready; cannot answer call")
-                return
-        peer = self.transport.get_extra_info("peername") if self.transport else None
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {
-                    "event": "call_answered",
-                    "caller": repr(caller),
-                    "ip": peer[0] if peer else None,
-                    "call_id": call_id,
-                }
-            ),
-            extra={
-                "caller": repr(caller),
-                "ip": peer[0] if peer else None,
-                "call_id": call_id,
-            },
-        )
-        remote_audio = next(
-            (
-                m
-                for m in (request.body.media if request.body else [])
-                if m.media == "audio"
-            ),
-            None,
-        )
-        if remote_audio is not None:
-            negotiated_media = call_class.negotiate_codec(remote_audio)
-        else:
-            negotiated_media = MediaDescription(
-                media="audio",
-                port=0,
-                proto="RTP/SAVP",
-                fmt=[RTPPayloadFormat.from_pt(0)],
-            )
-
-        use_srtp = negotiated_media.proto == "RTP/SAVP"
-        srtp_session = SRTPSession.generate() if use_srtp else None
-
-        call_handler = call_class(
-            rtp=self._rtp_protocol,
-            sip=self,
-            caller=caller,
-            media=negotiated_media,
-            srtp=srtp_session,
-            **call_kwargs,
-        )
-        if remote_audio is not None and remote_audio.port != 0:
-            media_conn = remote_audio.connection
-            session_conn = request.body.connection if request.body else None
-            conn = media_conn or session_conn
-            if conn is not None:
-                remote_ip = conn.connection_address
-            else:
-                remote_ip = peer[0] if peer else "0.0.0.0"  # noqa: S104
-            remote_rtp_addr: tuple[str, int] | None = (remote_ip, remote_audio.port)
-        else:
-            remote_rtp_addr = None
-        self._rtp_protocol.register_call(remote_rtp_addr, call_handler)
-        self._call_rtp_addrs[call_id] = remote_rtp_addr
-
-        if remote_rtp_addr is not None:
-            self._rtp_protocol.send(b"\x00", remote_rtp_addr)
-
-        record_route = request.headers.get("Record-Route")
-        sess_id = str(secrets.randbelow(2**32) + 1)
-        rtp_public = await self._rtp_protocol.public_address
-        sdp_media_attributes = [Attribute(name="sendrecv")]
-        if srtp_session is not None:
-            sdp_media_attributes.append(
-                Attribute(name="crypto", value=srtp_session.sdes_attribute)
-            )
-        final_response = Response(
-            status_code=SIPStatus.OK,
-            phrase=SIPStatus.OK.phrase,
-            headers={
-                **self._with_to_tag(
-                    {
-                        key: value
-                        for key, value in request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
-                    call_id,
-                ),
-                **({"Record-Route": record_route} if record_route else {}),
-                "Contact": self._build_contact(),
-                "Allow": self.allow_header,
-                "Supported": "replaces",
-                "Content-Type": "application/sdp",
-            },
-            body=SessionDescription(
-                origin=Origin(
-                    username="-",
-                    sess_id=sess_id,
-                    sess_version=sess_id,
-                    nettype="IN",
-                    addrtype="IP6"
-                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                    else "IP4",
-                    unicast_address=str(rtp_public[0]),
-                ),
-                timings=[Timing(start_time=0, stop_time=0)],
-                connection=ConnectionData(
-                    nettype="IN",
-                    addrtype="IP6"
-                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                    else "IP4",
-                    connection_address=str(rtp_public[0]),
-                ),
-                media=[
-                    MediaDescription(
-                        media="audio",
-                        port=rtp_public[1],
-                        proto=negotiated_media.proto,
-                        fmt=negotiated_media.fmt,
-                        attributes=sdp_media_attributes,
-                    )
-                ],
-            ),
-        )
-        self.send(final_response)
-        self._to_tags.pop(call_id, None)
+        match self._transactions.get(request.via_branch):
+            case None:
+                logger.error(
+                    "No pending INVITE found for branch %s", request.via_branch
+                )
+            case transaction:
+                await transaction.answer(call_class=call_class, **call_kwargs)
 
     def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
         """Return headers with the To tag appended (RFC 3261 §8.2.6.2)."""
@@ -711,31 +607,18 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
         Call this from `call_received` before answering to indicate
         that the call is being processed (e.g. while a user is alerted).
+        Delegates to [`Transaction.ringing`][voip.sip.transactions.Transaction.ringing].
 
         Args:
             request: The SIP INVITE request (from `call_received`).
         """
-        call_id = request.headers.get("Call-ID", "")
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {"event": "call_ringing", "caller": repr(caller), "call_id": call_id}
-            ),
-            extra={"caller": repr(caller), "call_id": call_id},
-        )
-        response = Response(
-            status_code=SIPStatus.RINGING,
-            phrase=SIPStatus.RINGING.phrase,
-            headers=self._with_to_tag(
-                {
-                    key: value
-                    for key, value in request.headers.items()
-                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                },
-                call_id,
-            ),
-        )
-        self.send(response)
+        match self._transactions.get(request.via_branch):
+            case None:
+                logger.error(
+                    "No pending INVITE found for branch %s", request.via_branch
+                )
+            case transaction:
+                transaction.ringing()
 
     def reject(
         self,
@@ -744,46 +627,19 @@ class SessionInitiationProtocol(asyncio.Protocol):
     ) -> None:
         """Reject an incoming call.
 
+        Delegates to [`Transaction.reject`][voip.sip.transactions.Transaction.reject].
+
         Args:
             request: The SIP INVITE request (from `call_received`).
             status_code: SIP response status code (default: 486 Busy Here).
         """
-        call_id = request.headers.get("Call-ID", "")
-        peer = self.transport.get_extra_info("peername") if self.transport else None
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {
-                    "event": "call_rejected",
-                    "caller": repr(caller),
-                    "ip": peer[0] if peer else None,
-                    "call_id": call_id,
-                    "status": status_code,
-                    "reason": status_code.phrase,
-                }
-            ),
-            extra={
-                "caller": repr(caller),
-                "ip": peer[0] if peer else None,
-                "call_id": call_id,
-                "status": status_code,
-            },
-        )
-        self.send(
-            Response(
-                status_code=status_code,
-                phrase=status_code.phrase,
-                headers=self._with_to_tag(
-                    {
-                        key: value
-                        for key, value in request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
-                    call_id,
-                ),
-            )
-        )
-        self._to_tags.pop(call_id, None)
+        match self._transactions.get(request.via_branch):
+            case None:
+                logger.error(
+                    "No pending INVITE found for branch %s", request.via_branch
+                )
+            case transaction:
+                transaction.reject(status_code=status_code)
 
     @property
     def registrar_uri(self) -> str:

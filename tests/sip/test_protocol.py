@@ -2681,3 +2681,109 @@ class TestDigestResponse:
                 uri="sip:example.com",
                 algorithm="BLAKE2b",
             )
+
+
+# ---------------------------------------------------------------------------
+# Coverage: remaining uncovered branches in protocol.py
+# ---------------------------------------------------------------------------
+
+
+class TestDataReceived:
+    def test_data_received__invalid_content_length__treated_as_zero(self):
+        """Non-integer Content-Length is treated as 0 (graceful fallback)."""
+        protocol = ConcreteProtocol()
+        protocol.transport = FakeTransport(peer_addr=("192.0.2.1", 5060))
+        # A response whose Content-Length is "banana" (not an integer)
+        data = b"SIP/2.0 200 OK\r\nContent-Length: banana\r\n\r\n"
+        protocol.data_received(data)
+        # The message is still parsed (content_length falls back to 0)
+        assert len(protocol.responses) == 1
+
+    def test_data_received__incomplete_body__defers_until_complete(self):
+        """Partial body is buffered; dispatch only happens once the full body arrives."""
+        protocol = ConcreteProtocol()
+        protocol.transport = FakeTransport(peer_addr=("192.0.2.1", 5060))
+        # Send headers claiming a 10-byte body, but no body yet
+        protocol.data_received(b"SIP/2.0 200 OK\r\nContent-Length: 10\r\n\r\n")
+        assert len(protocol.responses) == 0  # body not yet received
+        protocol.data_received(b"0123456789")  # now the body arrives
+        assert len(protocol.responses) == 1
+
+    def test_data_received__no_transport__addr_is_none(self):
+        """data_received calls packet_received with addr=None when transport is missing."""
+        protocol = ConcreteProtocol()
+        # No transport set — addr is derived from transport, which is absent.
+        data = b"SIP/2.0 200 OK\r\n\r\n"
+        protocol.data_received(data)
+        assert len(protocol.responses) == 1
+        _, called_addr = protocol.responses[0]
+        assert called_addr is None
+
+
+class TestClose:
+    def test_close__closes_tcp_and_rtp_transports(self):
+        """close() closes both the TCP transport and the RTP mux when present."""
+        from unittest.mock import MagicMock  # noqa: PLC0415
+
+        protocol = SessionInitiationProtocol(
+            outbound_proxy=("127.0.0.1", 5061), aor="sip:test@example.com"
+        )
+        tcp_transport = MagicMock()
+        protocol.transport = tcp_transport
+        rtp_transport = MagicMock()
+        protocol._rtp_transport = rtp_transport
+        protocol.close()
+        tcp_transport.close.assert_called_once()
+        rtp_transport.close.assert_called_once()
+
+
+class TestRegistrarURIEdgeCases:
+    def test_registrar_uri__empty_aor__raises(self):
+        """registrar_uri raises ValueError when AOR is empty."""
+        protocol = SessionInitiationProtocol(outbound_proxy=("127.0.0.1", 5061), aor="")
+        with pytest.raises(ValueError, match="AOR is not configured"):
+            _ = protocol.registrar_uri
+
+
+class TestResponseReceivedEdgeCases:
+    async def test_response_received__401_no_credentials__logs_error(self, caplog):
+        """401 without configured credentials logs an error and stops."""
+        import logging  # noqa: PLC0415
+
+        p = SessionInitiationProtocol(
+            outbound_proxy=("192.0.2.2", 5061),
+            aor="sip:alice@example.com",
+        )
+        p.connection_made(make_mock_transport())
+        challenge = 'Digest realm="example.com", nonce="n"'
+        with caplog.at_level(logging.ERROR, logger="voip.sip"):
+            p.response_received(
+                Response(
+                    status_code=401,
+                    phrase="Unauthorized",
+                    headers={"WWW-Authenticate": challenge, "CSeq": "1 REGISTER"},
+                ),
+                ("192.0.2.2", 5061),
+            )
+        assert any("not configured" in r.message for r in caplog.records)
+
+
+class TestRegisterWithoutProxy:
+    async def test_register__without_outbound_proxy__logs_registrar_directly(
+        self, caplog
+    ):
+        """register() without outbound_proxy logs direct registrar debug message."""
+        import logging  # noqa: PLC0415
+
+        p = SessionInitiationProtocol(
+            outbound_proxy=None,
+            aor="sip:alice@example.com",
+            username="alice",
+            password="secret",  # noqa: S106
+        )
+        p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
+        p.transport = make_mock_transport()
+        p.is_secure = True
+        with caplog.at_level(logging.DEBUG, logger="voip.sip"):
+            await p.register()
+        assert any("Sending REGISTER to registrar" in r.message for r in caplog.records)
