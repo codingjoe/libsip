@@ -18,6 +18,9 @@ import typing
 import urllib.parse
 from collections.abc import Iterator
 
+if typing.TYPE_CHECKING:
+    pass
+
 
 @dataclasses.dataclass(slots=True, eq=True)
 class SipUri:
@@ -533,3 +536,54 @@ class DigestQoP(enum.StrEnum):
 
     AUTH = "auth"
     AUTH_INT = "auth-int"
+
+
+def _format_host(host: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+    """Return *host* wrapped in brackets when it is an IPv6 address.
+
+    RFC 3261 §19.1.1 and RFC 2732 require IPv6 addresses in SIP URIs and
+    Via/Contact headers to be enclosed in square brackets.
+
+    Args:
+        host: Host as a typed IP address object or bare host string.
+
+    Returns:
+        ``[host]`` for IPv6 addresses, *host* unchanged otherwise.
+    """
+    if isinstance(host, ipaddress.IPv6Address):
+        return f"[{host}]"
+    if isinstance(host, ipaddress.IPv4Address):
+        return str(host)
+    try:
+        addr = ipaddress.ip_address(host)
+        return f"[{addr}]" if isinstance(addr, ipaddress.IPv6Address) else host
+    except ValueError:
+        return host
+
+
+def _mask_caller(header: str) -> str:
+    """Return a privacy-safe label from a SIP From/To header value.
+
+    Strips the `tag=` parameter, extracts the display name or SIP user part,
+    and replaces all but the last four characters with `*`.
+
+    Examples:
+    ```
+    >>> _mask_caller('"08001234567" <sip:08001234567@example.com>;tag=abc')
+    '*******4567'
+    >>> _mask_caller('sip:alice@example.com')
+    '*lice'
+    ```
+    """
+    # Drop the tag and any subsequent parameters
+    value = header.split(";")[0].strip()
+    # Extract display name: "Name" <sip:…> or Name <sip:…>
+    m = re.match(r'^"?([^"<]+?)"?\s*<', value)
+    name = m.group(1).strip() if m else None
+    if not name:
+        # Bare or angle-bracket URI: sip:user@host or <sip:user@host>
+        m = re.search(r"sips?:([^@>;\s]+)", value)
+        name = m.group(1) if m else value
+    if len(name) > 4:
+        return "*" * (len(name) - 4) + name[-4:]
+    return name

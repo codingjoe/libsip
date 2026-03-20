@@ -159,6 +159,27 @@ class TestRequest:
         assert b"Content-Length:" in serialized
         assert b"v=0" in serialized
 
+    def test_via_branch__with_branch(self):
+        """via_branch returns the branch parameter from the Via header."""
+        request = Request(
+            method="INVITE",
+            uri="sip:bob@biloxi.com",
+            headers={"Via": "SIP/2.0/UDP pc33.atlanta.com;branch=z9hG4bKabc123"},
+        )
+        assert request.via_branch == "z9hG4bKabc123"
+
+    def test_via_branch__fallback_to_call_id(self):
+        """via_branch falls back to Call-ID when no branch is present (RFC 2543)."""
+        request = Request(
+            method="INVITE",
+            uri="sip:bob@biloxi.com",
+            headers={
+                "Via": "SIP/2.0/UDP pc33.atlanta.com",
+                "Call-ID": "legacy-call-1",
+            },
+        )
+        assert request.via_branch == "legacy-call-1"
+
 
 class TestResponse:
     def test_response__bytes(self):

@@ -7,7 +7,6 @@ See also: https://datatracker.ietf.org/doc/html/rfc3261
 from __future__ import annotations
 
 import asyncio
-import collections
 import dataclasses
 import datetime
 import hashlib
@@ -32,71 +31,20 @@ from voip.sdp.types import (
 )
 from voip.srtp import SRTPSession
 
+from .exceptions import RegistrationError
 from .messages import Message, Request, Response
-from .types import CallerID, DigestAlgorithm, DigestQoP, SIPStatus
+from .types import (
+    CallerID,
+    DigestAlgorithm,
+    DigestQoP,
+    SIPMethod,
+    SIPStatus,
+    _format_host,
+)
 
 logger = logging.getLogger("voip.sip")
 
-__all__ = ["RegistrationError", "SIP", "SessionInitiationProtocol"]
-
-
-def _format_host(host: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
-    """Return *host* wrapped in brackets when it is an IPv6 address.
-
-    RFC 3261 §19.1.1 and RFC 2732 require IPv6 addresses in SIP URIs and
-    Via/Contact headers to be enclosed in square brackets.
-
-    Args:
-        host: Host as a typed IP address object or bare host string.
-
-    Returns:
-        ``[host]`` for IPv6 addresses, *host* unchanged otherwise.
-    """
-    if isinstance(host, ipaddress.IPv6Address):
-        return f"[{host}]"
-    if isinstance(host, ipaddress.IPv4Address):
-        return str(host)
-    try:
-        addr = ipaddress.ip_address(host)
-        return f"[{addr}]" if isinstance(addr, ipaddress.IPv6Address) else host
-    except ValueError:
-        return host
-
-
-class RegistrationError(Exception):
-    """Raised when a SIP REGISTER request fails with an unexpected response.
-
-    The exception message includes the response status code and reason phrase
-    from the server, e.g. ``"403 Forbidden"`` or ``"500 Server Error"``.
-    """
-
-
-def _mask_caller(header: str) -> str:
-    """Return a privacy-safe label from a SIP From/To header value.
-
-    Strips the `tag=` parameter, extracts the display name or SIP user part,
-    and replaces all but the last four characters with `*`.
-
-    Examples:
-    ```
-    >>> _mask_caller('"08001234567" <sip:08001234567@example.com>;tag=abc')
-    '*******4567'
-    >>> _mask_caller('sip:alice@example.com')
-    '*lice'
-    ```
-    """
-    # Drop the tag and any subsequent parameters
-    value = header.split(";")[0].strip()
-    # Extract display name: "Name" <sip:…> or Name <sip:…>
-    m = re.match(r'^"?([^"<]+?)"?\s*<', value)
-    name = m.group(1).strip() if m else None
-    if not name:
-        # Bare or angle-bracket URI: sip:user@host or <sip:user@host>
-        m = re.search(r"sips?:([^@>;\s]+)", value)
-        name = m.group(1) if m else value
-    if len(name) > 4:
-        return "*" * (len(name) - 4) + name[-4:]
-    return name
+__all__ = ["SIP", "SessionInitiationProtocol"]
 
 
 @dataclasses.dataclass(kw_only=True, slots=True)
@@ -132,8 +80,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
     Attributes:
         VIA_BRANCH_PREFIX:
             RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
-        ALLOW:
-            RFC 3261 §11 – methods supported by this UA (used in Allow header).
 
     Args:
         keepalive_interval: Keep-alive ping interval. Should be between 30 and 90 seconds.
@@ -143,14 +89,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
     #: RFC 3261 §8.1.1.7 Via branch magic cookie (indicates RFC 3261 compliance).
     VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
 
-    #: RFC 3261 §11 – methods supported by this UA (used in Allow header).
-    ALLOW: typing.ClassVar[str] = "INVITE, ACK, BYE, CANCEL, OPTIONS"
-
-    _pending_invites: set[str] = dataclasses.field(init=False, default_factory=set)
-    _answered_calls: collections.OrderedDict[str, None] = dataclasses.field(
-        init=False, default_factory=collections.OrderedDict
-    )
-    answered_call_backlog: int = 1000
     _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
     _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
         init=False, default=None
@@ -188,7 +126,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     )
     transport: asyncio.Transport | None = dataclasses.field(init=False, default=None)
     #: True when the underlying transport is TLS-wrapped; False for plain TCP.
-    _is_tls: bool = dataclasses.field(init=False, default=False)
+    is_secure: bool = dataclasses.field(init=False, default=False)
 
     def __post_init__(self):
         self.call_id = f"{uuid.uuid4()}@{socket.gethostname()}"
@@ -201,7 +139,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         sockname = transport.get_extra_info("sockname")
         host, port = sockname[0], sockname[1]
         self.local_address = (ipaddress.ip_address(host), port)
-        self._is_tls = transport.get_extra_info("ssl_object") is not None
+        self.is_secure = transport.get_extra_info("ssl_object") is not None
         try:
             loop = asyncio.get_running_loop()
             self._initialize_task = loop.create_task(self._initialize())
@@ -288,125 +226,69 @@ class SessionInitiationProtocol(asyncio.Protocol):
         if call_id in self._call_rtp_addrs and self._rtp_protocol is not None:
             self._rtp_protocol.unregister_call(self._call_rtp_addrs.pop(call_id))
 
-    def _mark_call_answered(self, call_id: str) -> None:
-        """Record *call_id* as answered, evicting the oldest entry if the LRU is full."""
-        if call_id in self._answered_calls:
-            self._answered_calls.move_to_end(call_id)
-        else:
-            if len(self._answered_calls) >= self.answered_call_backlog:
-                self._answered_calls.popitem(last=False)
-            self._answered_calls[call_id] = None
+    @property
+    def allowed_methods(self) -> frozenset[SIPMethod]:
+        """SIP methods supported by this UA.
+
+        A method is included when the class defines a ``<method_lower>_received``
+        handler (e.g. ``register_received`` enables REGISTER).
+
+        Returns:
+            Frozenset of [`SIPMethod`][voip.sip.types.SIPMethod] values.
+        """
+        return frozenset(
+            m for m in SIPMethod if hasattr(type(self), f"{m.lower()}_received")
+        )
+
+    @property
+    def allow_header(self) -> str:
+        """Comma-separated Allow header value in SIPMethod enum order."""
+        return ", ".join(m for m in SIPMethod if m in self.allowed_methods)
+
+    def method_not_allowed(self, request: Request) -> None:
+        """Respond with 405 Method Not Allowed.
+
+        Override to customise the error response or add logging.
+
+        Args:
+            request: The unhandled SIP request.
+        """
+        logger.warning("SIP method %r is not supported", request.method)
+        dialog_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key in ("Via", "To", "From", "Call-ID", "CSeq")
+        }
+        self.send(
+            Response(
+                status_code=SIPStatus.METHOD_NOT_ALLOWED,
+                phrase=SIPStatus.METHOD_NOT_ALLOWED.phrase,
+                headers={**dialog_headers, "Allow": self.allow_header},
+            ),
+        )
 
     def request_received(self, request: Request, addr: tuple[str, int]) -> None:
-        """Dispatch a received SIP request to the appropriate handler."""
-        call_id = request.headers.get("Call-ID", "")
-        peer_ip = addr[0] if addr else None
-        match request.method:
-            case "INVITE":
-                caller = CallerID(request.headers.get("From", ""))
-                logger.info(
-                    json.dumps(
-                        {
-                            "event": "incoming_call",
-                            "caller": repr(caller),
-                            "ip": peer_ip,
-                            "call_id": call_id,
-                        }
-                    ),
-                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
-                )
-                if call_id in self._answered_calls:
-                    logger.debug(
-                        "Ignoring INVITE retransmission for Call-ID %r", call_id
-                    )
-                    return
-                # Mark immediately (before async answering) so retransmissions
-                # that arrive while RTP setup is in progress are suppressed.
-                self._mark_call_answered(call_id)
-                self._pending_invites.add(call_id)
-                self._to_tags[call_id] = secrets.token_hex(8)
-                self.call_received(request)
-            case "ACK":
-                self.ack_received(request)
-            case "BYE":
-                self._answered_calls.pop(call_id, None)
-                caller = CallerID(request.headers.get("From", ""))
-                logger.info(
-                    json.dumps(
-                        {
-                            "event": "call_ended",
-                            "caller": repr(caller),
-                            "ip": peer_ip,
-                            "call_id": call_id,
-                        }
-                    ),
-                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
-                )
-                self.send(
-                    Response(
-                        status_code=SIPStatus.OK,
-                        phrase=SIPStatus.OK.phrase,
-                        headers=self._with_to_tag(
-                            {
-                                key: value
-                                for key, value in request.headers.items()
-                                if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                            },
-                            call_id,
-                        ),
-                    ),
-                )
-                self._to_tags.pop(call_id, None)
-                self._cleanup_rtp_call(call_id)
-                self.bye_received(request)
-            case "CANCEL":
-                caller = CallerID(request.headers.get("From", ""))
-                logger.info(
-                    json.dumps(
-                        {
-                            "event": "call_cancelled",
-                            "caller": repr(caller),
-                            "ip": peer_ip,
-                            "call_id": call_id,
-                        }
-                    ),
-                    extra={"caller": repr(caller), "ip": peer_ip, "call_id": call_id},
-                )
-                self.send(
-                    Response(
-                        status_code=SIPStatus.OK,
-                        phrase=SIPStatus.OK.phrase,
-                        headers={
-                            key: value
-                            for key, value in request.headers.items()
-                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                        },
-                    ),
-                )
-                if call_id in self._pending_invites:
-                    self._pending_invites.discard(call_id)
-                    self.send(
-                        Response(
-                            status_code=SIPStatus.REQUEST_TERMINATED,
-                            phrase=SIPStatus.REQUEST_TERMINATED.phrase,
-                            headers=self._with_to_tag(
-                                {
-                                    key: value
-                                    for key, value in request.headers.items()
-                                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                                },
-                                call_id,
-                            ),
-                        ),
-                    )
-                self._answered_calls.pop(call_id, None)
-                self._to_tags.pop(call_id, None)
-                self._cleanup_rtp_call(call_id)
-                self.cancel_received(request)
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported SIP request method: {request.method}"
-                )
+        """Dispatch an inbound SIP request to the appropriate handler.
+
+        Args:
+            request: The parsed SIP request.
+            addr: The remote address the request arrived from.
+        """
+        if request.method == SIPMethod.INVITE:
+            trying = Response(
+                status_code=SIPStatus.TRYING,
+                phrase=SIPStatus.TRYING.phrase,
+                headers={
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+            )
+            self.send(trying)
+        handler = getattr(
+            self, f"{request.method.lower()}_received", self.method_not_allowed
+        )
+        handler(request)
 
     def response_received(
         self, response: Response, addr: tuple[str, int] | None
@@ -417,7 +299,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         """
         if response.status_code == SIPStatus.OK and response.headers.get(
             "CSeq", ""
-        ).split()[-1:] == ["REGISTER"]:
+        ).split()[-1:] == [SIPMethod.REGISTER]:
             logger.info("Registration successful")
             self.registered()
             return
@@ -454,7 +336,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 password=self.password,
                 realm=realm,
                 nonce=nonce,
-                method="REGISTER",
+                method=SIPMethod.REGISTER,
                 uri=self.registrar_uri,
                 algorithm=algorithm,
                 qop=qop,
@@ -491,6 +373,30 @@ class SessionInitiationProtocol(asyncio.Protocol):
             request: The SIP INVITE request.
         """
 
+    def invite_received(self, request: Request) -> None:
+        """Handle an INVITE request.
+
+        Calls [`call_received`][voip.sip.protocol.SessionInitiationProtocol.call_received].
+        Override to customise INVITE handling.
+
+        Args:
+            request: The SIP INVITE request.
+        """
+        call_id = request.headers.get("Call-ID", "")
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "incoming_call",
+                    "caller": repr(caller),
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
+        )
+        self._to_tags[call_id] = secrets.token_hex(8)
+        self.call_received(request)
+
     def ack_received(self, request: Request) -> None:
         """Handle an ACK confirming dialog establishment.
 
@@ -508,6 +414,34 @@ class SessionInitiationProtocol(asyncio.Protocol):
         Args:
             request: The SIP BYE request.
         """
+        call_id = request.headers.get("Call-ID", "")
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "call_ended",
+                    "caller": repr(caller),
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
+        )
+        self.send(
+            Response(
+                status_code=SIPStatus.OK,
+                phrase=SIPStatus.OK.phrase,
+                headers=self._with_to_tag(
+                    {
+                        key: value
+                        for key, value in request.headers.items()
+                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                    },
+                    call_id,
+                ),
+            ),
+        )
+        self._to_tags.pop(call_id, None)
+        self._cleanup_rtp_call(call_id)
 
     def cancel_received(self, request: Request) -> None:
         """Handle a CANCEL request for a pending INVITE.
@@ -518,6 +452,66 @@ class SessionInitiationProtocol(asyncio.Protocol):
         Args:
             request: The SIP CANCEL request.
         """
+        call_id = request.headers.get("Call-ID", "")
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "call_cancelled",
+                    "caller": repr(caller),
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
+        )
+        self.send(
+            Response(
+                status_code=SIPStatus.OK,
+                phrase=SIPStatus.OK.phrase,
+                headers={
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+            ),
+        )
+        terminated = Response(
+            status_code=SIPStatus.REQUEST_TERMINATED,
+            phrase=SIPStatus.REQUEST_TERMINATED.phrase,
+            headers=self._with_to_tag(
+                {
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+                call_id,
+            ),
+        )
+        self.send(terminated)
+        self._to_tags.pop(call_id, None)
+        self._cleanup_rtp_call(call_id)
+
+    def options_received(self, request: Request) -> None:
+        """Respond to an OPTIONS capabilities query (RFC 3261 §11).
+
+        Override in subclasses to customise the response (e.g. add ``Accept``
+        or ``Supported`` headers).
+
+        Args:
+            request: The SIP OPTIONS request.
+        """
+        dialog_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key in ("Via", "To", "From", "Call-ID", "CSeq")
+        }
+        self.send(
+            Response(
+                status_code=SIPStatus.OK,
+                phrase=SIPStatus.OK.phrase,
+                headers={**dialog_headers, "Allow": self.allow_header},
+            ),
+        )
 
     async def answer(
         self, request: Request, *, call_class: type[RTPCall], **call_kwargs: typing.Any
@@ -546,13 +540,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             NotImplementedError: When `negotiate_codec` raises (no supported codec in the remote SDP offer).
         """
         call_id = request.headers.get("Call-ID", "")
-        if call_id not in self._pending_invites:
-            logger.error("No pending INVITE found for Call-ID %r", call_id)
-            return
-        self._pending_invites.discard(call_id)
-        # Ensure the RTP mux has been created before answering.  Under normal
-        # operation _initialize() completes before any INVITE arrives, but an
-        # early INVITE must wait for the mux.  Skip if already available.
         if self._rtp_protocol is None:
             if self._initialize_task is not None:
                 await self._initialize_task
@@ -584,9 +571,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             ),
             None,
         )
-        # Codec negotiation is delegated to the call class.  If the remote SDP
-        # offers no supported codec, negotiate_codec raises NotImplementedError
-        # and the exception propagates — the call is not answered.
         if remote_audio is not None:
             negotiated_media = call_class.negotiate_codec(remote_audio)
         else:
@@ -597,11 +581,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 fmt=[RTPPayloadFormat.from_pt(0)],
             )
 
-        # Generate a fresh SRTP session only when the negotiated transport is SRTP.
         use_srtp = negotiated_media.proto == "RTP/SAVP"
         srtp_session = SRTPSession.generate() if use_srtp else None
 
-        # Instantiate the per-call handler and register it with the shared mux.
         call_handler = call_class(
             rtp=self._rtp_protocol,
             sip=self,
@@ -610,18 +592,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             srtp=srtp_session,
             **call_kwargs,
         )
-        # Determine the remote RTP address for routing.
-        # Per RFC 4566 §5.7 the effective connection address is taken from the
-        # media-level c= line first, then the session-level c= line, then the
-        # SIP peer IP as last resort.
-        #
-        # When the media port is 0, the stream is inactive (RFC 4566 §5.14);
-        # registering an address and hole-punching are skipped, and we fall
-        # through to ``remote_rtp_addr = None`` so the mux wildcard is used
-        # (if any traffic arrives at all).
-        #
-        # When no SDP was present in the INVITE we also use the wildcard so
-        # the mux delivers all unmatched traffic to this handler.
         if remote_audio is not None and remote_audio.port != 0:
             media_conn = remote_audio.connection
             session_conn = request.body.connection if request.body else None
@@ -636,9 +606,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
         self._rtp_protocol.register_call(remote_rtp_addr, call_handler)
         self._call_rtp_addrs[call_id] = remote_rtp_addr
 
-        # NAT hole-punch: send a dummy datagram to the carrier's RTP address so
-        # that our router creates a return-path mapping allowing the carrier's
-        # media packets to reach our UDP socket (RFC 4787 / address-restricted NAT).
         if remote_rtp_addr is not None:
             self._rtp_protocol.send(b"\x00", remote_rtp_addr)
 
@@ -650,57 +617,55 @@ class SessionInitiationProtocol(asyncio.Protocol):
             sdp_media_attributes.append(
                 Attribute(name="crypto", value=srtp_session.sdes_attribute)
             )
-        self.send(
-            Response(
-                status_code=SIPStatus.OK,
-                phrase=SIPStatus.OK.phrase,
-                headers={
-                    **self._with_to_tag(
-                        {
-                            key: value
-                            for key, value in request.headers.items()
-                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                        },
-                        call_id,
-                    ),
-                    **({"Record-Route": record_route} if record_route else {}),
-                    "Contact": self._build_contact(),
-                    "Allow": self.ALLOW,
-                    "Supported": "replaces",
-                    "Content-Type": "application/sdp",
-                },
-                body=SessionDescription(
-                    origin=Origin(
-                        username="-",
-                        sess_id=sess_id,
-                        sess_version=sess_id,
-                        nettype="IN",
-                        addrtype="IP6"
-                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                        else "IP4",
-                        unicast_address=str(rtp_public[0]),
-                    ),
-                    timings=[Timing(start_time=0, stop_time=0)],
-                    connection=ConnectionData(
-                        nettype="IN",
-                        addrtype="IP6"
-                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                        else "IP4",
-                        connection_address=str(rtp_public[0]),
-                    ),
-                    media=[
-                        MediaDescription(
-                            media="audio",
-                            port=rtp_public[1],
-                            proto=negotiated_media.proto,
-                            fmt=negotiated_media.fmt,
-                            attributes=sdp_media_attributes,
-                        )
-                    ],
+        final_response = Response(
+            status_code=SIPStatus.OK,
+            phrase=SIPStatus.OK.phrase,
+            headers={
+                **self._with_to_tag(
+                    {
+                        key: value
+                        for key, value in request.headers.items()
+                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                    },
+                    call_id,
                 ),
+                **({"Record-Route": record_route} if record_route else {}),
+                "Contact": self._build_contact(),
+                "Allow": self.allow_header,
+                "Supported": "replaces",
+                "Content-Type": "application/sdp",
+            },
+            body=SessionDescription(
+                origin=Origin(
+                    username="-",
+                    sess_id=sess_id,
+                    sess_version=sess_id,
+                    nettype="IN",
+                    addrtype="IP6"
+                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
+                    else "IP4",
+                    unicast_address=str(rtp_public[0]),
+                ),
+                timings=[Timing(start_time=0, stop_time=0)],
+                connection=ConnectionData(
+                    nettype="IN",
+                    addrtype="IP6"
+                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
+                    else "IP4",
+                    connection_address=str(rtp_public[0]),
+                ),
+                media=[
+                    MediaDescription(
+                        media="audio",
+                        port=rtp_public[1],
+                        proto=negotiated_media.proto,
+                        fmt=negotiated_media.fmt,
+                        attributes=sdp_media_attributes,
+                    )
+                ],
             ),
         )
-        self._mark_call_answered(call_id)
+        self.send(final_response)
         self._to_tags.pop(call_id, None)
 
     def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
@@ -738,7 +703,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         ob_uri_param = ";ob" if ob else ""
         if aor_scheme == "sips":
             return f"<sips:{addr}{ob_uri_param}>"
-        tls_param = ";transport=tls" if self._is_tls else ""
+        tls_param = ";transport=tls" if self.is_secure else ""
         return f"<sip:{addr}{tls_param}{ob_uri_param}>"
 
     def ringing(self, request: Request) -> None:
@@ -751,9 +716,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             request: The SIP INVITE request (from `call_received`).
         """
         call_id = request.headers.get("Call-ID", "")
-        if call_id not in self._pending_invites:
-            logger.error("No pending INVITE found for Call-ID %r", call_id)
-            return
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
             json.dumps(
@@ -761,20 +723,19 @@ class SessionInitiationProtocol(asyncio.Protocol):
             ),
             extra={"caller": repr(caller), "call_id": call_id},
         )
-        self.send(
-            Response(
-                status_code=SIPStatus.RINGING,
-                phrase=SIPStatus.RINGING.phrase,
-                headers=self._with_to_tag(
-                    {
-                        key: value
-                        for key, value in request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
-                    call_id,
-                ),
+        response = Response(
+            status_code=SIPStatus.RINGING,
+            phrase=SIPStatus.RINGING.phrase,
+            headers=self._with_to_tag(
+                {
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+                call_id,
             ),
         )
+        self.send(response)
 
     def reject(
         self,
@@ -788,10 +749,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             status_code: SIP response status code (default: 486 Busy Here).
         """
         call_id = request.headers.get("Call-ID", "")
-        if call_id not in self._pending_invites:
-            logger.error("No pending INVITE found for Call-ID %r", call_id)
-            return
-        self._pending_invites.discard(call_id)
         peer = self.transport.get_extra_info("peername") if self.transport else None
         caller = CallerID(request.headers.get("From", ""))
         logger.info(
@@ -824,7 +781,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     },
                     call_id,
                 ),
-            ),
+            )
         )
         self._to_tags.pop(call_id, None)
 
@@ -882,11 +839,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
         aor_rest = self.aor.partition(":")[2] if self.aor else ""
         user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         headers = {
-            "Via": f"SIP/2.0/{'TLS' if self._is_tls else 'TCP'} {_format_host(self.local_address[0])}:{self.local_address[1]};rport;branch={branch}",
+            "Via": f"SIP/2.0/{'TLS' if self.is_secure else 'TCP'} {_format_host(self.local_address[0])}:{self.local_address[1]};rport;branch={branch}",
             "From": self.aor,
             "To": self.aor,
             "Call-ID": self.call_id,
-            "CSeq": f"{self.cseq} REGISTER",
+            "CSeq": f"{self.cseq} {SIPMethod.REGISTER}",
             "Contact": self._build_contact(user, ob=True),
             "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
@@ -897,7 +854,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         if proxy_authorization is not None:
             headers["Proxy-Authorization"] = proxy_authorization
         self.send(
-            Request(method="REGISTER", uri=self.registrar_uri, headers=headers),
+            Request(method=SIPMethod.REGISTER, uri=self.registrar_uri, headers=headers),
         )
 
     def registered(self) -> None:
