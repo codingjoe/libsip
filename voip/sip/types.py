@@ -9,14 +9,21 @@ __all__ = [
     "CallerID",
     "DigestAlgorithm",
     "DigestQoP",
+    "InviteServerTransaction",
+    "NonInviteServerTransaction",
     "SipUri",
     "SIPStatus",
     "SIPMethod",
+    "Transaction",
+    "TransactionState",
 ]
 
 import typing
 import urllib.parse
 from collections.abc import Iterator
+
+if typing.TYPE_CHECKING:
+    from voip.sip.messages import Response
 
 
 @dataclasses.dataclass(slots=True, eq=True)
@@ -533,3 +540,152 @@ class DigestQoP(enum.StrEnum):
 
     AUTH = "auth"
     AUTH_INT = "auth-int"
+
+
+class TransactionState(enum.Enum):
+    """RFC 3261 §17 SIP transaction state machine states."""
+
+    TRYING = "TRYING"
+    PROCEEDING = "PROCEEDING"
+    COMPLETED = "COMPLETED"
+    CONFIRMED = "CONFIRMED"
+    TERMINATED = "TERMINATED"
+
+
+@dataclasses.dataclass
+class Transaction:
+    """RFC 3261 §17 SIP transaction.
+
+    Base for all SIP transactions. Tracks the Via branch, Call-ID, initiating
+    method, FSM state, and the last response sent so retransmitted requests can
+    be answered without re-invoking the application layer.
+
+    Use [`InviteServerTransaction`][voip.sip.types.InviteServerTransaction] for
+    INVITE server transactions and
+    [`NonInviteServerTransaction`][voip.sip.types.NonInviteServerTransaction] for
+    all other server transactions.
+
+    Args:
+        branch: Via branch parameter (or Call-ID fallback for RFC 2543 requests).
+        call_id: Call-ID header value of the initiating request.
+        method: SIP method of the initiating request.
+        state: Current FSM state.
+        last_response: Last response sent; ``None`` before any response is sent.
+    """
+
+    branch: str
+    call_id: str
+    method: str
+    state: TransactionState
+    last_response: Response | None = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass
+class InviteServerTransaction(Transaction):
+    """RFC 3261 §17.2.1 INVITE server transaction FSM.
+
+    State machine: PROCEEDING → COMPLETED → CONFIRMED → TERMINATED.
+
+    Override `proceeding`, `complete`, `confirm`, or `terminate` in subclasses
+    to hook into state transitions.
+    """
+
+    state: TransactionState = dataclasses.field(default=TransactionState.PROCEEDING)
+
+    def proceeding(self, response: Response) -> None:
+        """Record a provisional (1xx) response.
+
+        The caller is responsible for passing a provisional response.
+
+        Args:
+            response: The provisional SIP response to record.
+
+        Raises:
+            ValueError: When the current state is not PROCEEDING.
+        """
+        if self.state != TransactionState.PROCEEDING:
+            raise ValueError(
+                f"Cannot send provisional response in state {self.state!r}"
+            )
+        self.last_response = response
+
+    def complete(self, response: Response) -> None:
+        """Record a final response and transition to COMPLETED.
+
+        The caller is responsible for passing a final response.
+
+        Args:
+            response: The final SIP response to record.
+
+        Raises:
+            ValueError: When the current state is not PROCEEDING.
+        """
+        if self.state != TransactionState.PROCEEDING:
+            raise ValueError(f"Cannot send final response in state {self.state!r}")
+        self.last_response = response
+        self.state = TransactionState.COMPLETED
+
+    def confirm(self) -> None:
+        """Transition to CONFIRMED on ACK receipt.
+
+        Raises:
+            ValueError: When the current state is not COMPLETED.
+        """
+        if self.state != TransactionState.COMPLETED:
+            raise ValueError(f"Cannot confirm in state {self.state!r}")
+        self.state = TransactionState.CONFIRMED
+
+    def terminate(self) -> None:
+        """Transition to TERMINATED."""
+        self.state = TransactionState.TERMINATED
+
+
+@dataclasses.dataclass
+class NonInviteServerTransaction(Transaction):
+    """RFC 3261 §17.2.2 Non-INVITE server transaction FSM.
+
+    State machine: TRYING → PROCEEDING → COMPLETED → TERMINATED.
+
+    Override `proceeding`, `complete`, or `terminate` in subclasses to hook
+    into state transitions.
+    """
+
+    state: TransactionState = dataclasses.field(default=TransactionState.TRYING)
+
+    def proceeding(self, response: Response) -> None:
+        """Record a provisional (1xx) response and transition to PROCEEDING.
+
+        The caller is responsible for passing a provisional response.
+
+        Args:
+            response: The provisional SIP response to record.
+
+        Raises:
+            ValueError: When the current state is not TRYING or PROCEEDING.
+        """
+        if self.state not in (TransactionState.TRYING, TransactionState.PROCEEDING):
+            raise ValueError(
+                f"Cannot send provisional response in state {self.state!r}"
+            )
+        self.last_response = response
+        self.state = TransactionState.PROCEEDING
+
+    def complete(self, response: Response) -> None:
+        """Record a final response and transition to COMPLETED.
+
+        The caller is responsible for passing a final response.
+
+        Args:
+            response: The final SIP response to record.
+
+        Raises:
+            ValueError: When the current state is not TRYING or PROCEEDING.
+        """
+        if self.state not in (TransactionState.TRYING, TransactionState.PROCEEDING):
+            raise ValueError(f"Cannot send final response in state {self.state!r}")
+        self.last_response = response
+        self.state = TransactionState.COMPLETED
+
+    def terminate(self) -> None:
+        """Transition to TERMINATED."""
+        self.state = TransactionState.TERMINATED

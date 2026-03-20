@@ -479,7 +479,7 @@ class TestACKHandler:
             },
         )
         protocol.request_received(invite, addr)
-        assert "z9hG4bKack1" in protocol._server_transactions
+        assert "z9hG4bKack1" in protocol._transactions
         ack = Request(
             method="ACK",
             uri="sip:bob@biloxi.com",
@@ -492,7 +492,7 @@ class TestACKHandler:
             },
         )
         protocol.request_received(ack, addr)
-        assert "z9hG4bKack1" not in protocol._server_transactions
+        assert "z9hG4bKack1" not in protocol._transactions
 
 
 
@@ -921,7 +921,7 @@ class TestCANCELHandler:
         protocol.request_received(invite, addr)
         assert "cancel-cleanup-1" in protocol._to_tags
         # INVITE transaction key falls back to Call-ID when no branch present
-        assert "cancel-cleanup-1" in protocol._server_transactions
+        assert "cancel-cleanup-1" in protocol._transactions
         cancel = Request(
             method="CANCEL",
             uri="sip:bob@biloxi.com",
@@ -934,7 +934,7 @@ class TestCANCELHandler:
             },
         )
         protocol.request_received(cancel, addr)
-        assert "cancel-cleanup-1" not in protocol._server_transactions
+        assert "cancel-cleanup-1" not in protocol._transactions
         assert "cancel-cleanup-1" not in protocol._to_tags
 
     def test_cancel__no_pending_invite_skips_487(self):
@@ -1164,7 +1164,7 @@ class TestSIPProtocol:
         protocol.request_received(request, addr)
         assert len(received) == 1
         assert received[0] is request
-        assert "z9hG4bK1234" in protocol._server_transactions
+        assert "z9hG4bK1234" in protocol._transactions
 
     async def test_request_received__invite__sends_100_trying(self):
         """request_received sends 100 Trying for a new INVITE (RFC 3261 §17.2.1)."""

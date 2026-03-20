@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import dataclasses
+import re
 import typing
 
 from voip.sdp.messages import SessionDescription
@@ -101,6 +102,19 @@ class Request(Message):
 
     def _first_line(self) -> str:
         return f"{self.method} {self.uri} {self.version}"
+
+    @property
+    def via_branch(self) -> str:
+        """Branch parameter from the top Via header (RFC 3261 §20.42).
+
+        Falls back to the Call-ID when the Via header contains no branch
+        (RFC 2543 compatibility).
+        """
+        via = self.headers.get("Via", "")
+        m = re.search(r"\bbranch=([^\s;,]+)", via)
+        if m:
+            return m.group(1)
+        return self.headers.get("Call-ID", "")
 
 
 @dataclasses.dataclass(kw_only=True)
