@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -435,9 +435,11 @@ class TestTranscribeCLI:
         )
 
         async def run():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 mock_answer.assert_called_once()
 
         asyncio.run(run())
@@ -484,9 +486,11 @@ class TestTranscribeCLI:
         )
 
         async def _run_whisper():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args
                 assert "call_class" in kwargs
@@ -658,9 +662,11 @@ class TestAgentCLI:
         )
 
         async def _run_agent():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args
                 assert "call_class" in kwargs
@@ -707,9 +713,11 @@ class TestAgentCLI:
         )
 
         async def _run_ollama():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 _, kwargs = mock_answer.call_args
                 assert kwargs.get("llm_model") == "mistral"
 
@@ -754,9 +762,11 @@ class TestAgentCLI:
         )
 
         async def _run_voice():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 _, kwargs = mock_answer.call_args
                 assert kwargs.get("voice") == "ellie"
 
@@ -858,9 +868,11 @@ class TestEchoCLI:
         )
 
         async def run():
-            with patch.object(protocol, "answer") as mock_answer:
+            with patch.object(
+                protocol.transaction_class, "answer", new_callable=AsyncMock
+            ) as mock_answer:
                 protocol.connection_made(make_mock_transport())
-                protocol.call_received(request)
+                protocol.request_received(request, ("192.0.2.1", 5060))
                 mock_answer.assert_called_once()
                 _, kwargs = mock_answer.call_args
                 assert "call_class" in kwargs

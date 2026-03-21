@@ -190,16 +190,16 @@ class RealtimeTransportProtocol(STUNProtocol):
     calls: dict[tuple[str, int] | None, RTPCall] = dataclasses.field(
         init=False, default_factory=dict
     )
-    public_address: asyncio.Future[
-        tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int]
-    ] = dataclasses.field(init=False, default_factory=asyncio.Future)
+    public_address: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] | None = (
+        dataclasses.field(init=False, default=None)
+    )
 
     def stun_connection_made(
         self,
         transport: asyncio.DatagramTransport,
         addr: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int],
     ) -> None:
-        self.public_address.set_result(addr)
+        self.public_address = addr
 
     def register_call(
         self,

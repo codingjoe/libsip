@@ -9,6 +9,7 @@ import time
 
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
+from voip.sip.transactions import Transaction
 from voip.sip.types import SipUri
 
 try:
@@ -289,12 +290,13 @@ def echo(ctx):
     obj = ctx.obj
     proxy_addr = obj["proxy_addr"]
 
+    class EchoTransaction(Transaction):
+        def invite_received(self, request: messages.Request) -> messages.Response:
+            return self.answer(call_class=EchoCall)
+
     class EchoSession(ConsoleMessageProtocol):
         verbose = obj.get("verbose", 0)
-
-        def call_received(self, request) -> None:
-            self.ringing(request=request)
-            asyncio.create_task(self.answer(request=request, call_class=EchoCall))
+        transaction_class = EchoTransaction
 
     async def run():
         await _connect_sip(
@@ -341,18 +343,19 @@ def transcribe(ctx, stt_model):
         def transcription_received(self, text: str) -> None:
             click.echo(click.style(text, fg="green", bold=True))
 
-    class TranscribeSession(ConsoleMessageProtocol):
-        verbose = obj.get("verbose", 0)
-
-        def call_received(self, request) -> None:
-            self.ringing(request=request)
+    class TranscribeTransaction(Transaction):
+        def invite_received(self, request: messages.Request) -> None:
+            self.ringing()
             asyncio.create_task(
                 self.answer(
-                    request=request,
                     call_class=TranscribingCall,
                     stt_model=WhisperModel(stt_model),
                 )
             )
+
+    class TranscribeSession(ConsoleMessageProtocol):
+        verbose = obj.get("verbose", 0)
+        transaction_class = TranscribeTransaction
 
     async def run():
         await _connect_sip(
@@ -441,21 +444,20 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
             self.msg_count = len(self._messages)
             await super().respond()
 
+    class AgentTransaction(Transaction):
+        def invite_received(self, request: messages.Request) -> messages.Response:
+            self.ringing()
+            return self.answer(
+                call_class=AgentCallWithOutput,
+                stt_model=WhisperModel(stt_model),
+                llm_model=llm_model,
+                voice=voice,
+                system_prompt=system_prompt,
+            )
+
     class AgentSession(ConsoleMessageProtocol):
         verbose = obj.get("verbose", 0)
-
-        def call_received(self, request) -> None:
-            self.ringing(request=request)
-            asyncio.create_task(
-                self.answer(
-                    request=request,
-                    call_class=AgentCallWithOutput,
-                    stt_model=WhisperModel(stt_model),
-                    llm_model=llm_model,
-                    voice=voice,
-                    system_prompt=system_prompt,
-                )
-            )
+        transaction_class = AgentTransaction
 
     async def run():
         await _connect_sip(

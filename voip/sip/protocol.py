@@ -19,7 +19,7 @@ import socket
 import typing
 import uuid
 
-from voip.rtp import RealtimeTransportProtocol, RTPCall
+from voip.rtp import RealtimeTransportProtocol
 
 from .exceptions import RegistrationError
 from .messages import Message, Request, Response
@@ -48,9 +48,12 @@ class SessionInitiationProtocol(asyncio.Protocol):
     persistent TLS/TCP connection.
 
     ```python
-    class MySession(SessionInitiationProtocol):
+    class MyTransaction(Transaction):
         def call_received(self, request: Request) -> None:
-            self.answer(request=request, call_class=MyCall)
+            asyncio.create_task(self.answer(call_class=MyCall))
+
+    class MySession(SessionInitiationProtocol):
+        transaction_class = MyTransaction
     ```
 
     To register with a carrier on startup, pass the registration parameters:
@@ -83,7 +86,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
     #: Override in subclasses to inject a custom `Transaction` subclass.
     transaction_class: typing.ClassVar[type[Transaction]] = Transaction
 
-    _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
     _transactions: dict[str, Transaction] = dataclasses.field(
         init=False, default_factory=dict
     )
@@ -112,6 +114,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     aor: str
     username: str | None = None
     password: str | None = None
+    rtp = RealtimeTransportProtocol
     #: STUN server used for RTP NAT traversal (SIP uses TLS/TCP; no STUN needed).
     rtp_stun_server_address: tuple[str, int] | None = ("stun.cloudflare.com", 3478)
     keepalive_interval: datetime.timedelta = datetime.timedelta(seconds=30)
@@ -282,10 +285,34 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 },
             )
             self.send(trying)
-        handler = getattr(
-            self, f"{request.method.lower()}_received", self.method_not_allowed
+        try:
+            tx = self._transactions[request.via_branch]
+        except KeyError:
+            call_id = request.headers.get("Call-ID", "")
+            caller = CallerID(request.headers.get("From", ""))
+            to_tag = secrets.token_hex(8)
+            tx = self.transaction_class(
+                branch=request.via_branch,
+                invite=request,
+                to_tag=to_tag,
+                sip=self,
+            )
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "incoming_call",
+                        "caller": repr(caller),
+                        "call_id": call_id,
+                    }
+                ),
+                extra={"caller": repr(caller), "call_id": call_id},
+            )
+            self._transactions[request.via_branch] = tx
+        handler: typing.Callable[[Request], Response | None] = getattr(
+            tx, f"{request.method.lower()}_received", self.method_not_allowed
         )
-        handler(request)
+        if response := handler(request):
+            self.send(response)
 
     def response_received(
         self, response: Response, addr: tuple[str, int] | None
@@ -356,222 +383,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             return
         raise RegistrationError(f"{response.status_code} {response.phrase}")
 
-    def call_received(self, request: Request) -> None:
-        """Handle an incoming call.
-
-        Override in subclasses to accept or reject the call:
-
-        ```python
-        def call_received(self, request: Request) -> None:
-            self.answer(request=request, call_class=MyCall)
-        ```
-
-        Args:
-            request: The SIP INVITE request.
-        """
-
-    def invite_received(self, request: Request) -> None:
-        """Handle an INVITE request.
-
-        Creates an INVITE server transaction, then calls
-        [`Transaction.call_received`][voip.sip.transactions.Transaction.call_received]
-        and
-        [`call_received`][voip.sip.protocol.SessionInitiationProtocol.call_received].
-        Retransmitted INVITEs (same Via branch) are silently ignored.
-        Override to customise INVITE handling.
-
-        Args:
-            request: The SIP INVITE request.
-        """
-        branch = request.via_branch
-        if branch in self._transactions:
-            return  # retransmission — already dispatched
-        call_id = request.headers.get("Call-ID", "")
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {
-                    "event": "incoming_call",
-                    "caller": repr(caller),
-                    "call_id": call_id,
-                }
-            ),
-            extra={"caller": repr(caller), "call_id": call_id},
-        )
-        to_tag = secrets.token_hex(8)
-        transaction = self.transaction_class(
-            branch=branch,
-            invite=request,
-            to_tag=to_tag,
-            sip=self,
-        )
-        self._transactions[branch] = transaction
-        self._to_tags[call_id] = to_tag
-        transaction.call_received()
-        self.call_received(request)
-
-    def ack_received(self, request: Request) -> None:
-        """Handle an ACK confirming dialog establishment (RFC 3261 §17.2.1).
-
-        Removes the INVITE server transaction from the registry.  Override
-        in subclasses to react to the ACK.
-
-        Args:
-            request: The SIP ACK request.
-        """
-        self._transactions.pop(request.via_branch, None)
-
-    def bye_received(self, request: Request) -> None:
-        """Handle a BYE terminating a dialog.
-
-        Override in subclasses to tear down the call.
-
-        Args:
-            request: The SIP BYE request.
-        """
-        call_id = request.headers.get("Call-ID", "")
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {
-                    "event": "call_ended",
-                    "caller": repr(caller),
-                    "call_id": call_id,
-                }
-            ),
-            extra={"caller": repr(caller), "call_id": call_id},
-        )
-        self.send(
-            Response(
-                status_code=SIPStatus.OK,
-                phrase=SIPStatus.OK.phrase,
-                headers=self._with_to_tag(
-                    {
-                        key: value
-                        for key, value in request.headers.items()
-                        if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                    },
-                    call_id,
-                ),
-            ),
-        )
-        self._to_tags.pop(call_id, None)
-        self._cleanup_rtp_call(call_id)
-
-    def cancel_received(self, request: Request) -> None:
-        """Handle a CANCEL request for a pending INVITE.
-
-        Override in subclasses to react to caller cancellation before the call
-        is answered.
-
-        Args:
-            request: The SIP CANCEL request.
-        """
-        call_id = request.headers.get("Call-ID", "")
-        caller = CallerID(request.headers.get("From", ""))
-        logger.info(
-            json.dumps(
-                {
-                    "event": "call_cancelled",
-                    "caller": repr(caller),
-                    "call_id": call_id,
-                }
-            ),
-            extra={"caller": repr(caller), "call_id": call_id},
-        )
-        self.send(
-            Response(
-                status_code=SIPStatus.OK,
-                phrase=SIPStatus.OK.phrase,
-                headers={
-                    key: value
-                    for key, value in request.headers.items()
-                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                },
-            ),
-        )
-        if self._transactions.pop(request.via_branch, None) is not None:
-            self.send(
-                Response(
-                    status_code=SIPStatus.REQUEST_TERMINATED,
-                    phrase=SIPStatus.REQUEST_TERMINATED.phrase,
-                    headers=self._with_to_tag(
-                        {
-                            key: value
-                            for key, value in request.headers.items()
-                            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-                        },
-                        call_id,
-                    ),
-                )
-            )
-        self._to_tags.pop(call_id, None)
-        self._cleanup_rtp_call(call_id)
-
-    def options_received(self, request: Request) -> None:
-        """Respond to an OPTIONS capabilities query (RFC 3261 §11).
-
-        Override in subclasses to customise the response (e.g. add ``Accept``
-        or ``Supported`` headers).
-
-        Args:
-            request: The SIP OPTIONS request.
-        """
-        dialog_headers = {
-            key: value
-            for key, value in request.headers.items()
-            if key in ("Via", "To", "From", "Call-ID", "CSeq")
-        }
-        self.send(
-            Response(
-                status_code=SIPStatus.OK,
-                phrase=SIPStatus.OK.phrase,
-                headers={**dialog_headers, "Allow": self.allow_header},
-            ),
-        )
-
-    async def answer(
-        self, request: Request, *, call_class: type[RTPCall], **call_kwargs: typing.Any
-    ) -> None:
-        """Answer an incoming call by setting up RTP and sending 200 OK with SDP.
-
-        Example:
-            This coroutine can be awaited directly or wrapped in a task:
-
-            ```python
-            # inside a sync call_received:
-            asyncio.create_task(self.answer(request=request, call_class=MyCall))
-
-            # inside an async call_received:
-            await self.answer(request=request, call_class=MyCall)
-            ```
-
-        Delegates to [`Transaction.answer`][voip.sip.transactions.Transaction.answer].
-
-        Args:
-            request: The SIP INVITE request (from `call_received`).
-            call_class: A `Call` subclass whose `negotiate_codec` selects the codec.
-            call_kwargs: Optional additional keyword arguments passed to the call class.
-
-        Raises:
-            NotImplementedError: When `negotiate_codec` raises (no supported codec).
-        """
-        match self._transactions.get(request.via_branch):
-            case None:
-                logger.error(
-                    "No pending INVITE found for branch %s", request.via_branch
-                )
-            case transaction:
-                await transaction.answer(call_class=call_class, **call_kwargs)
-
-    def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
-        """Return headers with the To tag appended (RFC 3261 §8.2.6.2)."""
-        tag = self._to_tags.get(call_id, "")
-        return {
-            **headers,
-            "To": headers.get("To", "") + (f";tag={tag}" if tag else ""),
-        }
-
     def _build_contact(self, user: str | None = None, *, ob: bool = False) -> str:
         """Return a ``Contact:`` header value for this UA.
 
@@ -601,45 +412,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             return f"<sips:{addr}{ob_uri_param}>"
         tls_param = ";transport=tls" if self.is_secure else ""
         return f"<sip:{addr}{tls_param}{ob_uri_param}>"
-
-    def ringing(self, request: Request) -> None:
-        """Send a 180 Ringing provisional response to the caller.
-
-        Call this from `call_received` before answering to indicate
-        that the call is being processed (e.g. while a user is alerted).
-        Delegates to [`Transaction.ringing`][voip.sip.transactions.Transaction.ringing].
-
-        Args:
-            request: The SIP INVITE request (from `call_received`).
-        """
-        match self._transactions.get(request.via_branch):
-            case None:
-                logger.error(
-                    "No pending INVITE found for branch %s", request.via_branch
-                )
-            case transaction:
-                transaction.ringing()
-
-    def reject(
-        self,
-        request: Request,
-        status_code: SIPStatus = SIPStatus.BUSY_HERE,
-    ) -> None:
-        """Reject an incoming call.
-
-        Delegates to [`Transaction.reject`][voip.sip.transactions.Transaction.reject].
-
-        Args:
-            request: The SIP INVITE request (from `call_received`).
-            status_code: SIP response status code (default: 486 Busy Here).
-        """
-        match self._transactions.get(request.via_branch):
-            case None:
-                logger.error(
-                    "No pending INVITE found for branch %s", request.via_branch
-                )
-            case transaction:
-                transaction.reject(status_code=status_code)
 
     @property
     def registrar_uri(self) -> str:

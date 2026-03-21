@@ -107,14 +107,119 @@ class Transaction:
             + (f";tag={self.to_tag}" if self.to_tag else ""),
         }
 
-    def call_received(self) -> None:
+    def invite_received(self, request: Request) -> Response:
         """Handle the incoming call.
 
         Override in subclasses to decide whether to answer, ring, or reject.
-        The base implementation is a no-op.
+        Implementations are expected to produce a response by calling
+        `ringing`, `answer`, or `reject`. The base implementation is a no-op.
+
+        Args:
+            request: The SIP INVITE request.
         """
 
-    def ringing(self) -> None:
+    def ack_received(self, request: Request) -> Response:
+        """Handle an ACK confirming dialog establishment (RFC 3261 §17.2.1).
+
+        Removes the INVITE server transaction from the registry.  Override
+        in subclasses to react to the ACK.
+
+        Args:
+            request: The SIP ACK request.
+        """
+
+    def bye_received(self, request: Request) -> Response:
+        """Handle a BYE terminating a dialog.
+
+        Override in subclasses to tear down the call.
+
+        Args:
+            request: The SIP BYE request.
+        """
+        call_id = request.headers.get("Call-ID", "")
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "call_ended",
+                    "caller": repr(caller),
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
+        )
+        return Response(
+            status_code=SIPStatus.OK,
+            phrase=SIPStatus.OK.phrase,
+            headers=self._with_to_tag(
+                {
+                    key: value
+                    for key, value in request.headers.items()
+                    if key in ("Via", "To", "From", "Call-ID", "CSeq")
+                },
+                call_id,
+            ),
+        )
+
+    def cancel_received(self, request: Request) -> Response:
+        """Handle a CANCEL request for a pending INVITE.
+
+        Override in subclasses to react to caller cancellation before the call
+        is answered.
+
+        Args:
+            request: The SIP CANCEL request.
+        """
+        call_id = request.headers.get("Call-ID", "")
+        caller = CallerID(request.headers.get("From", ""))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "call_cancelled",
+                    "caller": repr(caller),
+                    "call_id": call_id,
+                }
+            ),
+            extra={"caller": repr(caller), "call_id": call_id},
+        )
+        return Response(
+            status_code=SIPStatus.OK,
+            phrase=SIPStatus.OK.phrase,
+            headers={
+                key: value
+                for key, value in request.headers.items()
+                if key in ("Via", "To", "From", "Call-ID", "CSeq")
+            },
+        )
+
+    def options_received(self, request: Request) -> Response:
+        """Respond to an OPTIONS capabilities query (RFC 3261 §11).
+
+        Override in subclasses to customise the response (e.g. add ``Accept``
+        or ``Supported`` headers).
+
+        Args:
+            request: The SIP OPTIONS request.
+        """
+        dialog_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key in ("Via", "To", "From", "Call-ID", "CSeq")
+        }
+        return Response(
+            status_code=SIPStatus.OK,
+            phrase=SIPStatus.OK.phrase,
+            headers={**dialog_headers, "Allow": self.allow_header},
+        )
+
+    def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:
+        """Return headers with the To tag appended (RFC 3261 §8.2.6.2)."""
+        return {
+            **headers,
+            "To": headers.get("To", "") + f";tag={self.to_tag}",
+        }
+
+    def ringing(self) -> Response:
         """Send a 180 Ringing provisional response [RFC 3261 §21.1.2].
 
         Call before `answer` to notify the caller that the UA is alerting the
@@ -130,15 +235,13 @@ class Transaction:
             ),
             extra={"caller": repr(caller), "call_id": call_id},
         )
-        self.sip.send(
-            Response(
-                status_code=SIPStatus.RINGING,
-                phrase=SIPStatus.RINGING.phrase,
-                headers=self.tagged_headers,
-            )
+        return Response(
+            status_code=SIPStatus.RINGING,
+            phrase=SIPStatus.RINGING.phrase,
+            headers=self.tagged_headers,
         )
 
-    def reject(self, status_code: SIPStatus = SIPStatus.BUSY_HERE) -> None:
+    def reject(self, status_code: SIPStatus = SIPStatus.BUSY_HERE) -> Response:
         """Reject the incoming call.
 
         Args:
@@ -169,18 +272,15 @@ class Transaction:
                 "status": status_code,
             },
         )
-        self.sip.send(
-            Response(
-                status_code=status_code,
-                phrase=status_code.phrase,
-                headers=self.tagged_headers,
-            )
+        return Response(
+            status_code=status_code,
+            phrase=status_code.phrase,
+            headers=self.tagged_headers,
         )
-        self.sip._to_tags.pop(call_id, None)
 
-    async def answer(
+    def answer(
         self, *, call_class: type[RTPCall], **call_kwargs: typing.Any
-    ) -> None:
+    ) -> Response:
         """Answer the call by setting up RTP and sending 200 OK with SDP.
 
         Example:
@@ -204,12 +304,6 @@ class Transaction:
                 codec in the remote SDP offer).
         """
         call_id = self.invite.headers.get("Call-ID", "")
-        if self.sip._rtp_protocol is None:
-            if self.sip._initialize_task is not None:
-                await self.sip._initialize_task
-            if self.sip._rtp_protocol is None:
-                logger.error("RTP mux not ready; cannot answer call")
-                return
         peer = (
             self.sip.transport.get_extra_info("peername")
             if self.sip.transport
@@ -281,56 +375,53 @@ class Transaction:
 
         record_route = self.invite.headers.get("Record-Route")
         session_id = str(secrets.randbelow(2**32) + 1)
-        rtp_public = await self.sip._rtp_protocol.public_address
+        rtp_public = self.sip._rtp_protocol.public_address
         sdp_media_attributes = [Attribute(name="sendrecv")]
         if srtp_session is not None:
             sdp_media_attributes.append(
                 Attribute(name="crypto", value=srtp_session.sdes_attribute)
             )
-        self.sip.send(
-            Response(
-                status_code=SIPStatus.OK,
-                phrase=SIPStatus.OK.phrase,
-                headers={
-                    **self.tagged_headers,
-                    **({"Record-Route": record_route} if record_route else {}),
-                    "Contact": self.sip._build_contact(),
-                    "Allow": self.sip.allow_header,
-                    "Supported": "replaces",
-                    "Content-Type": "application/sdp",
-                },
-                body=SessionDescription(
-                    origin=Origin(
-                        username="-",
-                        sess_id=session_id,
-                        sess_version=session_id,
-                        nettype="IN",
-                        addrtype="IP6"
-                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                        else "IP4",
-                        unicast_address=str(rtp_public[0]),
-                    ),
-                    timings=[Timing(start_time=0, stop_time=0)],
-                    connection=ConnectionData(
-                        nettype="IN",
-                        addrtype="IP6"
-                        if isinstance(rtp_public[0], ipaddress.IPv6Address)
-                        else "IP4",
-                        connection_address=str(rtp_public[0]),
-                    ),
-                    media=[
-                        MediaDescription(
-                            media="audio",
-                            port=rtp_public[1],
-                            proto=negotiated_media.proto,
-                            fmt=negotiated_media.fmt,
-                            attributes=sdp_media_attributes,
-                        )
-                    ],
+        return Response(
+            status_code=SIPStatus.OK,
+            phrase=SIPStatus.OK.phrase,
+            headers={
+                **self.tagged_headers,
+                **({"Record-Route": record_route} if record_route else {}),
+                "Contact": self.sip._build_contact(),
+                "Allow": self.sip.allow_header,
+                "Supported": "replaces",
+                "Content-Type": "application/sdp",
+            },
+            body=SessionDescription(
+                origin=Origin(
+                    username="-",
+                    sess_id=session_id,
+                    sess_version=session_id,
+                    nettype="IN",
+                    addrtype="IP6"
+                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
+                    else "IP4",
+                    unicast_address=str(rtp_public[0]),
                 ),
-            )
+                timings=[Timing(start_time=0, stop_time=0)],
+                connection=ConnectionData(
+                    nettype="IN",
+                    addrtype="IP6"
+                    if isinstance(rtp_public[0], ipaddress.IPv6Address)
+                    else "IP4",
+                    connection_address=str(rtp_public[0]),
+                ),
+                media=[
+                    MediaDescription(
+                        media="audio",
+                        port=rtp_public[1],
+                        proto=negotiated_media.proto,
+                        fmt=negotiated_media.fmt,
+                        attributes=sdp_media_attributes,
+                    )
+                ],
+            ),
         )
-        self.sip._to_tags.pop(call_id, None)
 
     async def make_call(
         self,
@@ -338,7 +429,7 @@ class Transaction:
         *,
         call_class: type[RTPCall],
         **call_kwargs: typing.Any,
-    ) -> None:
+    ) -> Request:
         """Initiate an outgoing call to `target`.
 
         Args:

@@ -147,7 +147,8 @@ class TestTransactionProperties:
 class TestTransactionCallReceived:
     def test_call_received__is_noop(self):
         """Default call_received does not raise."""
-        _make_transaction().call_received()  # must not raise
+        transaction = _make_transaction()
+        transaction.invite_received(transaction.invite)  # must not raise
 
 
 class TestTransactionRinging:
