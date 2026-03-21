@@ -84,7 +84,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
     #: Transaction class used to handle incoming INVITE dialogs.
     #: Override in subclasses to inject a custom `Transaction` subclass.
-    transaction_class: typing.ClassVar[type[Transaction]] = Transaction
+    transaction_class: type[Transaction]
 
     _transactions: dict[str, Transaction] = dataclasses.field(
         init=False, default_factory=dict

@@ -94,10 +94,11 @@ def _parse_stun_server(ctx, param, value: str | None) -> tuple[str, int] | None:
     return str(host), port
 
 
+@dataclasses.dataclass(kw_only=True, slots=True)
 class ConsoleMessageProtocol(SessionInitiationProtocol):
     """Pretty print SIP messages to stdout using pygments."""
 
-    __slots__ = ("verbose",)
+    verbose: int = 0
 
     def request_received(self, request: messages.Request, addr: tuple[str, int]):
         self.pprint(request)
@@ -294,13 +295,11 @@ def echo(ctx):
         def invite_received(self, request: messages.Request) -> messages.Response:
             return self.answer(call_class=EchoCall)
 
-    class EchoSession(ConsoleMessageProtocol):
-        verbose = obj.get("verbose", 0)
-        transaction_class = EchoTransaction
-
     async def run():
         await _connect_sip(
-            lambda: EchoSession(
+            lambda: ConsoleMessageProtocol(
+                verbose=obj.get("verbose", 0),
+                transaction_class=EchoTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
                 username=obj["username"],
@@ -344,22 +343,18 @@ def transcribe(ctx, stt_model):
             click.echo(click.style(text, fg="green", bold=True))
 
     class TranscribeTransaction(Transaction):
-        def invite_received(self, request: messages.Request) -> None:
+        def invite_received(self, request: messages.Request) -> messages.Response:
             self.ringing()
-            asyncio.create_task(
-                self.answer(
-                    call_class=TranscribingCall,
-                    stt_model=WhisperModel(stt_model),
-                )
+            return self.answer(
+                call_class=TranscribingCall,
+                stt_model=WhisperModel(stt_model),
             )
-
-    class TranscribeSession(ConsoleMessageProtocol):
-        verbose = obj.get("verbose", 0)
-        transaction_class = TranscribeTransaction
 
     async def run():
         await _connect_sip(
-            lambda: TranscribeSession(
+            lambda: ConsoleMessageProtocol(
+                verbose=obj.get("verbose", 0),
+                transaction_class=TranscribeTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
                 username=obj["username"],
@@ -455,13 +450,11 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
                 system_prompt=system_prompt,
             )
 
-    class AgentSession(ConsoleMessageProtocol):
-        verbose = obj.get("verbose", 0)
-        transaction_class = AgentTransaction
-
     async def run():
         await _connect_sip(
-            lambda: AgentSession(
+            lambda: ConsoleMessageProtocol(
+                verbose=obj.get("verbose", 0),
+                transaction_class=AgentTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
                 username=obj["username"],
