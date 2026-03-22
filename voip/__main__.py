@@ -156,6 +156,21 @@ def voip(ctx, verbose: int = 0):
 @voip.group()
 @click.argument("aor", metavar="AOR", envvar="SIP_AOR")
 @click.option(
+    "--proxy",
+    metavar="HOST[:PORT]",
+    help="Outbound SIP proxy (defaults to AOR host).",
+)
+@click.option(
+    "--username",
+    envvar="SIP_USERNAME",
+    help="SIP username (overrides AOR user).",
+)
+@click.option(
+    "--password",
+    envvar="SIP_PASSWORD",
+    help="SIP password.",
+)
+@click.option(
     "--stun-server",
     envvar="STUN_SERVER",
     default="stun.cloudflare.com:3478",
@@ -181,7 +196,7 @@ def voip(ctx, verbose: int = 0):
     help="Disable TLS certificate verification (insecure; for testing only).",
 )
 @click.pass_context
-def sip(ctx, aor, stun_server, no_tls, no_verify_tls):
+def sip(ctx, aor, proxy, username, password, stun_server, no_tls, no_verify_tls):
     """Session Initiation Protocol (SIP)."""
     ctx.ensure_object(dict)
     try:
@@ -189,8 +204,22 @@ def sip(ctx, aor, stun_server, no_tls, no_verify_tls):
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="AOR") from exc
 
+    if username:
+        parsed_aor.user = username
+    if password:
+        parsed_aor.password = password
+
+    if proxy:
+        proxy_addr = _parse_hostport(ctx, None, proxy)
+    else:
+        try:
+            proxy_addr = _parse_hostport(ctx, None, parsed_aor.parameters["maddr"])
+        except KeyError:
+            proxy_addr = (parsed_aor.host, parsed_aor.port)
+
     ctx.obj.update(
         aor=parsed_aor,
+        proxy_addr=proxy_addr,
         stun_server=stun_server,
         use_tls=not no_tls,
         no_verify_tls=no_verify_tls,
@@ -269,8 +298,6 @@ def echo(ctx):
                 transaction_class=EchoTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
-                username=obj["username"],
-                password=obj["password"],
                 rtp=rtp_protocol,
             ),
             proxy_addr,
@@ -328,8 +355,6 @@ def transcribe(ctx, stt_model):
                 transaction_class=TranscribeTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
-                username=obj["username"],
-                password=obj["password"],
                 rtp=rtp_protocol,
             ),
             proxy_addr,
@@ -384,10 +409,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
 
     obj = ctx.obj
     aor = obj["aor"]
-    try:
-        proxy_addr = _parse_hostport(None, None, value=aor.parameters["maddr"])
-    except KeyError:
-        proxy_addr = aor.host
+    proxy_addr = obj["proxy_addr"]
 
     @dataclasses.dataclass(kw_only=True, slots=True)
     class AgentCallWithOutput(AgentCall):

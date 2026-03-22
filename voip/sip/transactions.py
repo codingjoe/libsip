@@ -209,7 +209,7 @@ class Transaction:
         return Response(
             status_code=SIPStatus.OK,
             phrase=SIPStatus.OK.phrase,
-            headers={**dialog_headers, "Allow": self.allow_header},
+            headers={**dialog_headers, "Allow": self.sip.allow_header},
         )
 
     def _with_to_tag(self, headers: dict[str, str], call_id: str) -> dict[str, str]:

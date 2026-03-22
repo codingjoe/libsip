@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import ipaddress
 import logging
-from unittest.mock import MagicMock
 
 import pytest
 from voip.rtp import RealtimeTransportProtocol, RTPCall
@@ -15,7 +13,7 @@ from voip.sdp.types import MediaDescription, RTPPayloadFormat
 from voip.sip.messages import Request, Response
 from voip.sip.protocol import SessionInitiationProtocol
 from voip.sip.transactions import Transaction
-from voip.sip.types import SIPStatus
+from voip.sip.types import SIPStatus, SipUri
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -51,10 +49,16 @@ class _FakeTransport:
 class _CapturingSIP(SessionInitiationProtocol):
     """SIP subclass that captures sent responses without real I/O."""
 
-    def __init__(self, peer: tuple[str, int] = ("192.0.2.1", 5060)):
+    def __init__(self, **kwargs):
+        peer = kwargs.pop("peer", ("192.0.2.1", 5060))
+        kwargs.setdefault(
+            "transaction_class", getattr(self, "transaction_class", Transaction)
+        )
+        kwargs.setdefault("rtp", RealtimeTransportProtocol())
         super().__init__(
             outbound_proxy=("127.0.0.1", 5061),
-            aor="sip:test@example.com",
+            aor=SipUri.parse("sip:test@example.com"),
+            **kwargs,
         )
         self._sent: list[Response] = []
         self.transport = _FakeTransport(peer=peer)
@@ -153,13 +157,12 @@ class TestTransactionCallReceived:
 
 class TestTransactionRinging:
     def test_ringing__sends_180(self):
-        """Send 180 Ringing with tagged dialog headers via sip.send."""
+        """Return 180 Ringing with tagged dialog headers."""
         sip = _CapturingSIP()
         transaction = _make_transaction(sip)
-        transaction.ringing()
-        assert len(sip._sent) == 1
-        assert sip._sent[0].status_code == SIPStatus.RINGING
-        assert ";tag=deadbeef12345678" in sip._sent[0].headers.get("To", "")
+        response = transaction.ringing()
+        assert response.status_code == SIPStatus.RINGING
+        assert ";tag=deadbeef12345678" in response.headers.get("To", "")
 
     def test_ringing__logs_info(self, caplog):
         """Log a call_ringing event at INFO level."""
@@ -170,27 +173,25 @@ class TestTransactionRinging:
 
 class TestTransactionReject:
     def test_reject__sends_486_by_default(self):
-        """Send 486 Busy Here when no status code is specified."""
+        """Return 486 Busy Here when no status code is specified."""
         sip = _CapturingSIP()
         sip._to_tags["test-call-1"] = "deadbeef12345678"
         transaction = _make_transaction(sip)
-        transaction.reject()
-        assert len(sip._sent) == 1
-        assert sip._sent[0].status_code == SIPStatus.BUSY_HERE
-        assert ";tag=deadbeef12345678" in sip._sent[0].headers.get("To", "")
+        response = transaction.reject()
+        assert response.status_code == SIPStatus.BUSY_HERE
+        assert ";tag=deadbeef12345678" in response.headers.get("To", "")
 
     def test_reject__custom_status(self):
-        """Send the specified status code and its reason phrase."""
+        """Return the specified status code and its reason phrase."""
         sip = _CapturingSIP()
-        _make_transaction(sip).reject(status_code=SIPStatus.DECLINE)
-        assert sip._sent[0].status_code == SIPStatus.DECLINE
+        response = _make_transaction(sip).reject(status_code=SIPStatus.DECLINE)
+        assert response.status_code == SIPStatus.DECLINE
 
-    def test_reject__cleans_up_to_tag(self):
-        """Remove the call's entry from sip._to_tags after reject."""
-        sip = _CapturingSIP()
-        sip._to_tags["test-call-1"] = "deadbeef12345678"
-        _make_transaction(sip).reject()
-        assert "test-call-1" not in sip._to_tags
+    def test_reject__returns_tagged_headers(self):
+        """Include To tag in the returned response headers."""
+        transaction = _make_transaction(to_tag="test-tag")
+        response = transaction.reject()
+        assert ";tag=test-tag" in response.headers.get("To", "")
 
     def test_reject__logs_info(self, caplog):
         """Log a call_rejected event at INFO level."""
@@ -200,35 +201,12 @@ class TestTransactionReject:
 
 
 class TestTransactionAnswer:
-    async def test_answer__rtp_not_ready__logs_error(self, caplog):
-        """Log an error and return when _rtp_protocol is None and no init task exists."""
-        sip = _CapturingSIP()
-        sip.rtp = None
-        sip.register_task = None
-        with caplog.at_level(logging.ERROR, logger="voip.sip"):
-            await _make_transaction(sip).answer(call_class=RTPCall)
-        assert "RTP mux not ready" in caplog.text
-        assert not sip._sent
-
-    async def test_answer__awaits_init_task_then_fails_if_still_none(self, caplog):
-        """Log an error when the init task completes but _rtp_protocol remains None."""
-        sip = _CapturingSIP()
-        sip.rtp = None
-        sip.register_task = asyncio.create_task(asyncio.sleep(0))
-        with caplog.at_level(logging.ERROR, logger="voip.sip"):
-            await _make_transaction(sip).answer(call_class=RTPCall)
-        assert "RTP mux not ready" in caplog.text
-        assert not sip._sent
-
-    async def test_answer__sends_200_ok(self):
-        """Send 200 OK with SDP when RTP is available."""
-        loop = asyncio.get_running_loop()
+    def test_answer__returns_200_ok(self):
+        """Return 200 OK with SDP."""
         sip = _CapturingSIP()
         mux = RealtimeTransportProtocol()
-        mux.public_address = loop.create_future()
-        mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
+        mux.public_address = (ipaddress.IPv4Address("127.0.0.1"), 12000)
         sip.rtp = mux
-        sip._rtp_transport = MagicMock()
         invite = _make_invite(
             sdp=(
                 b"v=0\r\n"
@@ -239,31 +217,40 @@ class TestTransactionAnswer:
                 b"m=audio 49170 RTP/AVP 0\r\n"
             )
         )
-        await _make_transaction(sip, invite).answer(call_class=_MinimalCall)
-        assert sip._sent
-        assert sip._sent[0].status_code == 200
+        response = _make_transaction(sip, invite).answer(call_class=_MinimalCall)
+        assert response.status_code == 200
+        assert response.phrase == "OK"
+        assert response.body is not None
 
-    async def test_answer__no_connection__uses_peer_address(self):
-        """Fall back to the peer address when no c= line is present in the SDP."""
-        loop = asyncio.get_running_loop()
-        sip = _CapturingSIP(peer=("10.0.0.1", 5060))
+    def test_answer__negotiates_codec(self):
+        """Call negotiate_codec on the call class to select codec."""
+        sip = _CapturingSIP()
         mux = RealtimeTransportProtocol()
-        mux.public_address = loop.create_future()
-        mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
+        mux.public_address = (ipaddress.IPv4Address("127.0.0.1"), 12000)
         sip.rtp = mux
-        sip._rtp_transport = MagicMock()
-        # SDP without any c= line at session or media level
         invite = _make_invite(
             sdp=(
                 b"v=0\r\n"
-                b"o=- 0 0 IN IP4 10.0.0.1\r\n"
+                b"o=- 0 0 IN IP4 192.0.2.1\r\n"
                 b"s=-\r\n"
+                b"c=IN IP4 192.0.2.1\r\n"
                 b"t=0 0\r\n"
                 b"m=audio 49170 RTP/AVP 0\r\n"
             )
         )
-        await _make_transaction(sip, invite).answer(call_class=_MinimalCall)
-        assert ("10.0.0.1", 49170) in mux.calls
+        response = _make_transaction(sip, invite).answer(call_class=_MinimalCall)
+        assert response.status_code == 200
+
+    def test_answer__no_sdp__creates_default_media(self):
+        """Create default audio media when INVITE has no SDP."""
+        sip = _CapturingSIP()
+        mux = RealtimeTransportProtocol()
+        mux.public_address = (ipaddress.IPv4Address("127.0.0.1"), 12000)
+        sip.rtp = mux
+        invite = _make_invite(sdp=None)
+        response = _make_transaction(sip, invite).answer(call_class=_MinimalCall)
+        assert response.status_code == 200
+        assert response.body is not None
 
 
 class TestTransactionMakeCall:

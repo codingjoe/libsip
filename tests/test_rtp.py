@@ -256,12 +256,22 @@ class TestRealtimeTransportProtocol:
         )
         server_addr = server_t.get_extra_info("sockname")
 
-        proto = RealtimeTransportProtocol(stun_server_address=server_addr)
+        done: asyncio.Future[
+            tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int]
+        ] = loop.create_future()
+
+        class TrackingRTP(RealtimeTransportProtocol):
+            def stun_connection_made(self, transport, addr):
+                super().stun_connection_made(transport, addr)
+                if not done.done():
+                    done.set_result(addr)
+
+        proto = TrackingRTP(stun_server_address=server_addr)
         rtp_t, _ = await loop.create_datagram_endpoint(
             lambda: proto, local_addr=("127.0.0.1", 0)
         )
         try:
-            result = await proto.public_address
+            result = await asyncio.wait_for(done, 2.0)
             assert result == (ipaddress.IPv4Address("203.0.113.5"), 54321)
             assert len(received_requests) == 1
         finally:

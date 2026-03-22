@@ -90,6 +90,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     _transactions: dict[str, Transaction] = dataclasses.field(
         init=False, default_factory=dict
     )
+    _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)
     rtp: RealtimeTransportProtocol
     _keepalive_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
@@ -212,7 +213,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
             Frozenset of [`SIPMethod`][voip.sip.types.SIPMethod] values.
         """
         return frozenset(
-            m for m in SIPMethod if hasattr(type(self), f"{m.lower()}_received")
+            m
+            for m in SIPMethod
+            if hasattr(self.transaction_class, f"{m.lower()}_received")
         )
 
     @property
@@ -262,10 +265,16 @@ class SessionInitiationProtocol(asyncio.Protocol):
             self.send(trying)
         try:
             tx = self._transactions[request.via_branch]
+            if request.method == SIPMethod.INVITE:
+                return  # INVITE retransmission handled by transaction layer
         except KeyError:
             call_id = request.headers.get("Call-ID", "")
             caller = CallerID(request.headers.get("From", ""))
-            to_tag = secrets.token_hex(8)
+            try:
+                to_tag = self._to_tags[call_id]
+            except KeyError:
+                to_tag = secrets.token_hex(8)
+                self._to_tags[call_id] = to_tag
             tx = self.transaction_class(
                 branch=request.via_branch,
                 invite=request,
@@ -288,6 +297,17 @@ class SessionInitiationProtocol(asyncio.Protocol):
         )
         if response := handler(request):
             self.send(response)
+        if request.method == SIPMethod.CANCEL:
+            # RFC 3261 §9.2: CANCEL also triggers a 487 for the INVITE.
+            # We look up the transaction by the CANCEL's branch (which is the same).
+            if tx and tx.invite.method == SIPMethod.INVITE:
+                terminated = tx.reject(status_code=SIPStatus.REQUEST_TERMINATED)
+                self.send(terminated)
+        if request.method == SIPMethod.BYE:
+            self._cleanup_rtp_call(request.headers.get("Call-ID", ""))
+        if request.method in (SIPMethod.ACK, SIPMethod.CANCEL, SIPMethod.BYE):
+            self._transactions.pop(request.via_branch, None)
+            self._to_tags.pop(request.headers.get("Call-ID", ""), None)
 
     def response_received(
         self, response: Response, addr: tuple[str, int] | None
