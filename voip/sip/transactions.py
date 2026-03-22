@@ -30,12 +30,12 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger("voip.sip")
 
 __all__ = [
-    "Transaction",
+    "InviteTransaction",
 ]
 
 
 @dataclasses.dataclass(kw_only=True, slots=True)
-class Transaction:
+class InviteTransaction:
     """SIP INVITE server transaction [RFC 3261 §17.2].
 
     Encapsulates the state and behavior of a single INVITE dialog.

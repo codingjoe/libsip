@@ -18,7 +18,7 @@ from voip.sip.protocol import (
     SIP,
     SessionInitiationProtocol,
 )
-from voip.sip.transactions import Transaction
+from voip.sip.transactions import InviteTransaction
 from voip.sip.types import (
     CallerID,
     DigestAlgorithm,
@@ -127,7 +127,7 @@ class FakeProtocol(SessionInitiationProtocol):
         super().__init__(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
         )
         self.connection_made(FakeTransport())
         self._sent_responses: list[tuple[Response, None]] = []
@@ -145,7 +145,7 @@ class ConcreteProtocol(SessionInitiationProtocol):
         super().__init__(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
         )
         self.requests = []
         self.responses = []
@@ -274,7 +274,7 @@ class TestCallerID:
         protocol = SessionInitiationProtocol(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         protocol.connection_lost(None)  # should not raise
@@ -284,7 +284,7 @@ class TestCallerID:
         protocol = SessionInitiationProtocol(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         protocol.connection_lost(Exception("Connection reset"))  # should not raise
@@ -294,14 +294,14 @@ class TestWithToTag:
     def test__with_to_tag__adds_tag(self):
         """Append the To tag to the To header."""
         invite = make_invite()
-        tx = Transaction(branch="b1", invite=invite, to_tag="abc123", sip=None)
+        tx = InviteTransaction(branch="b1", invite=invite, to_tag="abc123", sip=None)
         result = tx._with_to_tag({"To": "sip:bob@biloxi.com"}, "call-1")
         assert result["To"] == "sip:bob@biloxi.com;tag=abc123"
 
     def test__with_to_tag__missing_to_header(self):
         """Return an empty To header when none is present."""
         invite = make_invite()
-        tx = Transaction(branch="b1", invite=invite, to_tag="abc123", sip=None)
+        tx = InviteTransaction(branch="b1", invite=invite, to_tag="abc123", sip=None)
         result = tx._with_to_tag({}, "unknown")
         assert result["To"] == ";tag=abc123"
 
@@ -983,13 +983,13 @@ class TestCANCELHandler:
         """Invoke cancel_received hook after handling a CANCEL request."""
         received = []
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def cancel_received(self, req):
                 received.append(req)
                 return super().cancel_received(req)
 
         protocol = FakeProtocol()
-        protocol.transaction_class = MyTransaction
+        protocol.transaction_class = MyInviteTransaction
         addr = ("192.0.2.1", 5060)
         cancel = Request(
             method="CANCEL",
@@ -1041,7 +1041,7 @@ def make_register_session(
     return SessionInitiationProtocol(
         outbound_proxy=server_addr,
         aor=parsed_aor,
-        transaction_class=Transaction,
+        transaction_class=InviteTransaction,
         rtp=RealtimeTransportProtocol(),
     )
 
@@ -1147,7 +1147,8 @@ class TestSIPProtocol:
 
         def __init__(self, **kwargs):
             kwargs.setdefault(
-                "transaction_class", getattr(self, "transaction_class", Transaction)
+                "transaction_class",
+                getattr(self, "transaction_class", InviteTransaction),
             )
             kwargs.setdefault("rtp", RealtimeTransportProtocol())
             super().__init__(
@@ -1165,7 +1166,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         transport = make_mock_transport()
@@ -1177,7 +1178,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         transport = make_mock_transport()
@@ -1191,17 +1192,17 @@ class TestSIPProtocol:
         """Dispatch an INVITE to Transaction.call_received and create an INVITE server transaction."""
         received = []
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def invite_received(self, request):
                 received.append(request)
 
         class MySIP(SIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP(
             outbound_proxy=("127.0.0.1", 5060),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=MyTransaction,
+            transaction_class=MyInviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         protocol.connection_made(make_mock_transport())
@@ -1226,17 +1227,17 @@ class TestSIPProtocol:
         """A retransmitted INVITE is deduplicated at the transaction layer."""
         received = []
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def invite_received(self, request):
                 received.append(request)
 
         class MySIP(SIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP(
             outbound_proxy=("127.0.0.1", 5060),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=MyTransaction,
+            transaction_class=MyInviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         protocol.connection_made(make_mock_transport())
@@ -1250,17 +1251,17 @@ class TestSIPProtocol:
         """invite_received calls Transaction.call_received with the request."""
         received = []
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def invite_received(self, request):
                 received.append(request)
 
         class MySIP(SIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP(
             outbound_proxy=("127.0.0.1", 5060),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=MyTransaction,
+            transaction_class=MyInviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         protocol.connection_made(make_mock_transport())
@@ -1783,7 +1784,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         transport = make_mock_transport()
@@ -1835,7 +1836,7 @@ class TestSIPProtocol:
     def test_allowed_methods__with_handler__includes_method(self):
         """Include a method in allowed_methods when the transaction class has a handler."""
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def register_received(self, request: Request) -> None:
                 pass
 
@@ -1843,7 +1844,7 @@ class TestSIPProtocol:
                 pass
 
         class MySIP(self._CapturingSIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP()
         assert SIPMethod.REGISTER in protocol.allowed_methods
@@ -1874,12 +1875,12 @@ class TestSIPProtocol:
     def test_request_received__options__allow_grows_with_handlers(self):
         """Allow header in OPTIONS response reflects detected handlers on the transaction."""
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def register_received(self, request: Request) -> None:
                 pass
 
         class MySIP(self._CapturingSIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP()
         request = Request(
@@ -1902,14 +1903,14 @@ class TestSIPProtocol:
         """Transaction override of options_received replaces the base implementation."""
         called = []
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             def options_received(self, request: Request) -> None:
                 called.append(request)
                 return None
 
         class MySIP(self._CapturingSIP):
             def __init__(self, **kwargs):
-                kwargs.setdefault("transaction_class", MyTransaction)
+                kwargs.setdefault("transaction_class", MyInviteTransaction)
                 super().__init__(**kwargs)
 
         protocol = MySIP()
@@ -2006,13 +2007,15 @@ class TestSIPProtocol:
         received = []
         handler_name = f"{method.lower()}_received"
 
-        class MyTransaction(Transaction):
+        class MyInviteTransaction(InviteTransaction):
             pass
 
-        setattr(MyTransaction, handler_name, lambda self, req: received.append(req))
+        setattr(
+            MyInviteTransaction, handler_name, lambda self, req: received.append(req)
+        )
 
         class MySIP(self._CapturingSIP):
-            transaction_class = MyTransaction
+            transaction_class = MyInviteTransaction
 
         protocol = MySIP()
         request = Request(
@@ -2033,12 +2036,12 @@ class TestSIPProtocol:
     async def test_answer__via_call_received__schedules_answer(self):
         """answer() is synchronous; returning it from Transaction.invite_received works."""
 
-        class AutoAnswerTransaction(Transaction):
+        class AutoAnswerInviteTransaction(InviteTransaction):
             def invite_received(self, request):
                 return self.answer(call_class=_MinimalCall)
 
         class MySIP(self._CapturingSIP):
-            transaction_class = AutoAnswerTransaction
+            transaction_class = AutoAnswerInviteTransaction
 
         protocol = MySIP()
         protocol.transport = make_mock_transport()
@@ -2064,7 +2067,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
             keepalive_interval=datetime.timedelta(seconds=0.01),
         )
@@ -2080,7 +2083,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
             keepalive_interval=datetime.timedelta(seconds=0.01),
         )
@@ -2096,7 +2099,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
 
@@ -2115,7 +2118,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         assert not protocol.disconnected_event.is_set()
@@ -2127,7 +2130,7 @@ class TestSIPProtocol:
         protocol = SIP(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
 
@@ -2169,7 +2172,7 @@ class TestRegistration:
         p = _SessionNoRTP(
             outbound_proxy=("192.0.2.2", 5061),
             aor=SipUri.parse("sip:alice@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         transport = make_mock_transport()
@@ -2240,7 +2243,7 @@ class TestRegistration:
         p = ConcreteSession(
             outbound_proxy=("192.0.2.2", 5060),
             aor=SipUri.parse("sip:alice@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         p.aor.user = "a"
@@ -2457,7 +2460,7 @@ class TestRegistration:
         p = ConcreteSession(
             outbound_proxy=("192.0.2.2", 5061),
             aor=SipUri.parse("sip:alice@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         p.aor.user = "a"
@@ -2472,17 +2475,17 @@ class TestRegistration:
         """INVITE dispatching still works after registration."""
         received = []
 
-        class CapturingTransaction(Transaction):
+        class CapturingInviteTransaction(InviteTransaction):
             def invite_received(self, request):
                 received.append(request)
 
         class ConcreteSession(SessionInitiationProtocol):
-            transaction_class = CapturingTransaction
+            transaction_class = CapturingInviteTransaction
 
         p = ConcreteSession(
             outbound_proxy=("192.0.2.2", 5060),
             aor=SipUri.parse("sip:alice@example.com"),
-            transaction_class=CapturingTransaction,
+            transaction_class=CapturingInviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         p.aor.user = "a"
@@ -2781,7 +2784,7 @@ class TestClose:
         protocol = SessionInitiationProtocol(
             outbound_proxy=("127.0.0.1", 5061),
             aor=SipUri.parse("sip:test@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         tcp_transport = MagicMock()
@@ -2798,7 +2801,7 @@ class TestResponseReceivedEdgeCases:
         p = SessionInitiationProtocol(
             outbound_proxy=("192.0.2.2", 5061),
             aor=SipUri.parse("sip:alice@example.com"),
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         p.connection_made(make_mock_transport())
@@ -2828,7 +2831,7 @@ class TestRegisterWithoutProxy:
         p = SessionInitiationProtocol(
             outbound_proxy=None,
             aor=aor,
-            transaction_class=Transaction,
+            transaction_class=InviteTransaction,
             rtp=RealtimeTransportProtocol(),
         )
         p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)

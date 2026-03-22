@@ -24,7 +24,7 @@ from voip.rtp import RealtimeTransportProtocol
 from . import types
 from .exceptions import RegistrationError
 from .messages import Message, Request, Response
-from .transactions import Transaction
+from .transactions import InviteTransaction
 from .types import (
     CallerID,
     DigestAlgorithm,
@@ -36,7 +36,7 @@ from .types import (
 
 logger = logging.getLogger("voip.sip")
 
-__all__ = ["SIP", "SessionInitiationProtocol", "Transaction"]
+__all__ = ["SIP", "SessionInitiationProtocol", "InviteTransaction"]
 
 
 @dataclasses.dataclass(kw_only=True, slots=True)
@@ -85,9 +85,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
     VIA_BRANCH_PREFIX: typing.ClassVar[str] = "z9hG4bK"
     #: Transaction class used to handle incoming INVITE dialogs.
     #: Override in subclasses to inject a custom `Transaction` subclass.
-    transaction_class: type[Transaction]
+    transaction_class: type[InviteTransaction]
 
-    _transactions: dict[str, Transaction] = dataclasses.field(
+    _transactions: dict[str, InviteTransaction] = dataclasses.field(
         init=False, default_factory=dict
     )
     _to_tags: dict[str, str] = dataclasses.field(init=False, default_factory=dict)

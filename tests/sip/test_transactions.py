@@ -12,7 +12,7 @@ from voip.sdp.messages import SessionDescription
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
 from voip.sip.messages import Request, Response
 from voip.sip.protocol import SessionInitiationProtocol
-from voip.sip.transactions import Transaction
+from voip.sip.transactions import InviteTransaction
 from voip.sip.types import SIPStatus, SipUri
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ class _CapturingSIP(SessionInitiationProtocol):
     def __init__(self, **kwargs):
         peer = kwargs.pop("peer", ("192.0.2.1", 5060))
         kwargs.setdefault(
-            "transaction_class", getattr(self, "transaction_class", Transaction)
+            "transaction_class", getattr(self, "transaction_class", InviteTransaction)
         )
         kwargs.setdefault("rtp", RealtimeTransportProtocol())
         super().__init__(
@@ -108,10 +108,10 @@ def _make_transaction(
     sip: _CapturingSIP | None = None,
     invite: Request | None = None,
     to_tag: str = "deadbeef12345678",
-) -> Transaction:
+) -> InviteTransaction:
     sip = sip or _CapturingSIP()
     invite = invite or _make_invite()
-    return Transaction(
+    return InviteTransaction(
         branch=invite.via_branch,
         invite=invite,
         to_tag=to_tag,

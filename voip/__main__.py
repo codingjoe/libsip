@@ -12,7 +12,7 @@ from cryptography.x509 import IPAddress
 from voip.rtp import RealtimeTransportProtocol
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
-from voip.sip.transactions import Transaction
+from voip.sip.transactions import InviteTransaction
 from voip.sip.types import SipUri
 
 try:
@@ -283,7 +283,7 @@ def echo(ctx):
     obj = ctx.obj
     proxy_addr = obj["proxy_addr"]
 
-    class EchoTransaction(Transaction):
+    class EchoInviteTransaction(InviteTransaction):
         def invite_received(self, request: messages.Request) -> messages.Response:
             return self.answer(call_class=EchoCall)
 
@@ -295,7 +295,7 @@ def echo(ctx):
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
-                transaction_class=EchoTransaction,
+                transaction_class=EchoInviteTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
                 rtp=rtp_protocol,
@@ -336,7 +336,7 @@ def transcribe(ctx, stt_model):
         def transcription_received(self, text: str) -> None:
             click.echo(click.style(text, fg="green", bold=True))
 
-    class TranscribeTransaction(Transaction):
+    class TranscribeInviteTransaction(InviteTransaction):
         def invite_received(self, request: messages.Request) -> messages.Response:
             self.ringing()
             return self.answer(
@@ -352,7 +352,7 @@ def transcribe(ctx, stt_model):
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
-                transaction_class=TranscribeTransaction,
+                transaction_class=TranscribeInviteTransaction,
                 outbound_proxy=proxy_addr,
                 aor=obj["aor"],
                 rtp=rtp_protocol,
@@ -436,7 +436,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
             self.msg_count = len(self._messages)
             await super().respond()
 
-    class AgentTransaction(Transaction):
+    class AgentInviteTransaction(InviteTransaction):
         def invite_received(self, request: messages.Request) -> messages.Response:
             self.ringing()
             return self.answer(
@@ -455,7 +455,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
-                transaction_class=AgentTransaction,
+                transaction_class=AgentInviteTransaction,
                 outbound_proxy=proxy_addr,
                 aor=aor,
                 rtp=rtp_protocol,
