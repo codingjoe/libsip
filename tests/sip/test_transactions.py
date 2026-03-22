@@ -203,8 +203,8 @@ class TestTransactionAnswer:
     async def test_answer__rtp_not_ready__logs_error(self, caplog):
         """Log an error and return when _rtp_protocol is None and no init task exists."""
         sip = _CapturingSIP()
-        sip._rtp_protocol = None
-        sip._initialize_task = None
+        sip.rtp = None
+        sip.register_task = None
         with caplog.at_level(logging.ERROR, logger="voip.sip"):
             await _make_transaction(sip).answer(call_class=RTPCall)
         assert "RTP mux not ready" in caplog.text
@@ -213,8 +213,8 @@ class TestTransactionAnswer:
     async def test_answer__awaits_init_task_then_fails_if_still_none(self, caplog):
         """Log an error when the init task completes but _rtp_protocol remains None."""
         sip = _CapturingSIP()
-        sip._rtp_protocol = None
-        sip._initialize_task = asyncio.create_task(asyncio.sleep(0))
+        sip.rtp = None
+        sip.register_task = asyncio.create_task(asyncio.sleep(0))
         with caplog.at_level(logging.ERROR, logger="voip.sip"):
             await _make_transaction(sip).answer(call_class=RTPCall)
         assert "RTP mux not ready" in caplog.text
@@ -227,7 +227,7 @@ class TestTransactionAnswer:
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
-        sip._rtp_protocol = mux
+        sip.rtp = mux
         sip._rtp_transport = MagicMock()
         invite = _make_invite(
             sdp=(
@@ -250,7 +250,7 @@ class TestTransactionAnswer:
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
-        sip._rtp_protocol = mux
+        sip.rtp = mux
         sip._rtp_transport = MagicMock()
         # SDP without any c= line at session or media level
         invite = _make_invite(

@@ -7,6 +7,9 @@ import re
 import ssl
 import time
 
+from cryptography.x509 import IPAddress
+
+from voip.rtp import RealtimeTransportProtocol
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
 from voip.sip.transactions import Transaction
@@ -153,29 +156,6 @@ def voip(ctx, verbose: int = 0):
 @voip.group()
 @click.argument("aor", metavar="AOR", envvar="SIP_AOR")
 @click.option(
-    "--password",
-    envvar="SIP_PASSWORD",
-    required=True,
-    help="SIP password (not parsed from AOR for security).",
-)
-@click.option(
-    "--username",
-    envvar="SIP_USERNAME",
-    default=None,
-    help="Override SIP username (defaults to user part of AOR).",
-)
-@click.option(
-    "--proxy",
-    envvar="SIP_PROXY",
-    default=None,
-    metavar="HOST[:PORT]",
-    help=(
-        "Outbound proxy address (RFC 3261 §8.1.2). "
-        "Defaults to the host and port from AOR. "
-        "Use this when the proxy differs from the registrar domain."
-    ),
-)
-@click.option(
     "--stun-server",
     envvar="STUN_SERVER",
     default="stun.cloudflare.com:3478",
@@ -201,7 +181,7 @@ def voip(ctx, verbose: int = 0):
     help="Disable TLS certificate verification (insecure; for testing only).",
 )
 @click.pass_context
-def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls):
+def sip(ctx, aor, stun_server, no_tls, no_verify_tls):
     """Session Initiation Protocol (SIP)."""
     ctx.ensure_object(dict)
     try:
@@ -209,37 +189,25 @@ def sip(ctx, aor, password, username, proxy, stun_server, no_tls, no_verify_tls)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="AOR") from exc
 
-    effective_username = username or parsed_aor.user
-    if not effective_username:
-        raise click.BadParameter(
-            "AOR must contain a user part (e.g. sip:alice@example.com).",
-            param_hint="AOR",
-        )
-
-    if proxy is not None:
-        proxy_addr = _parse_hostport(ctx, None, proxy)
-    else:
-        default_port = SIP_TCP_PORT if parsed_aor.scheme == "sip" else SIP_TLS_PORT
-        port = parsed_aor.port if parsed_aor.port is not None else default_port
-        proxy_addr = (parsed_aor.host, port)
-
-    use_tls = not no_tls and proxy_addr[1] != SIP_TCP_PORT
-    # Build the canonical AOR; IPv6 hosts must be enclosed in brackets per RFC 2732.
-    host_in_aor = (
-        f"[{parsed_aor.host}]"
-        if isinstance(parsed_aor.host, ipaddress.IPv6Address)
-        else str(parsed_aor.host)
-    )
-    normalized_aor = f"{parsed_aor.scheme}:{effective_username}@{host_in_aor}"
-
     ctx.obj.update(
-        aor=normalized_aor,
-        username=effective_username,
-        password=password,
-        proxy_addr=proxy_addr,
+        aor=parsed_aor,
         stun_server=stun_server,
-        use_tls=use_tls,
+        use_tls=not no_tls,
         no_verify_tls=no_verify_tls,
+    )
+
+
+async def _connect_rtp(
+    proxy_addr: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address | str, int],
+    rtp_stun_server_address: tuple[IPAddress, int] | None,
+) -> tuple[asyncio.DatagramTransport, RealtimeTransportProtocol]:
+    loop = asyncio.get_running_loop()
+    rtp_bind = (
+        "::" if isinstance(proxy_addr[0], ipaddress.IPv6Address) else "0.0.0.0"  # noqa: S104
+    )
+    return await loop.create_datagram_endpoint(
+        lambda: RealtimeTransportProtocol(stun_server_address=rtp_stun_server_address),
+        local_addr=(rtp_bind, 0),
     )
 
 
@@ -249,12 +217,6 @@ async def _connect_sip(
     use_tls: bool,
     no_verify_tls: bool,
 ) -> None:
-    """Connect to a SIP proxy with automatic reconnection on failure.
-
-    Retries with exponential back-off (1 s → 2 s → … → 60 s) after each
-    failed connection or dropped session so the process stays running without
-    manual intervention.
-    """
     loop = asyncio.get_running_loop()
     ssl_context: ssl.SSLContext | None = None
     if use_tls:
@@ -264,6 +226,7 @@ async def _connect_sip(
             ssl_context.verify_mode = ssl.CERT_NONE
     backoff_secs = 1
     while True:
+        print(f"Connecting to {proxy_addr[0]}:{proxy_addr[1]}...")
         try:
             _, protocol = await loop.create_connection(
                 session_factory,
@@ -296,6 +259,10 @@ def echo(ctx):
             return self.answer(call_class=EchoCall)
 
     async def run():
+        _, rtp_protocol = await _connect_rtp(
+            proxy_addr,
+            obj["stun_server"],
+        )
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
@@ -304,7 +271,7 @@ def echo(ctx):
                 aor=obj["aor"],
                 username=obj["username"],
                 password=obj["password"],
-                rtp_stun_server_address=obj["stun_server"],
+                rtp=rtp_protocol,
             ),
             proxy_addr,
             obj["use_tls"],
@@ -351,6 +318,10 @@ def transcribe(ctx, stt_model):
             )
 
     async def run():
+        _, rtp_protocol = await _connect_rtp(
+            proxy_addr,
+            obj["stun_server"],
+        )
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
@@ -359,7 +330,7 @@ def transcribe(ctx, stt_model):
                 aor=obj["aor"],
                 username=obj["username"],
                 password=obj["password"],
-                rtp_stun_server_address=obj["stun_server"],
+                rtp=rtp_protocol,
             ),
             proxy_addr,
             obj["use_tls"],
@@ -412,7 +383,11 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
     from .ai import AgentCall  # noqa: PLC0415
 
     obj = ctx.obj
-    proxy_addr = obj["proxy_addr"]
+    aor = obj["aor"]
+    try:
+        proxy_addr = _parse_hostport(None, None, value=aor.parameters["maddr"])
+    except KeyError:
+        proxy_addr = aor.host
 
     @dataclasses.dataclass(kw_only=True, slots=True)
     class AgentCallWithOutput(AgentCall):
@@ -451,15 +426,17 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
             )
 
     async def run():
+        _, rtp_protocol = await _connect_rtp(
+            proxy_addr,
+            obj["stun_server"],
+        )
         await _connect_sip(
             lambda: ConsoleMessageProtocol(
                 verbose=obj.get("verbose", 0),
                 transaction_class=AgentTransaction,
                 outbound_proxy=proxy_addr,
-                aor=obj["aor"],
-                username=obj["username"],
-                password=obj["password"],
-                rtp_stun_server_address=obj["stun_server"],
+                aor=aor,
+                rtp=rtp_protocol,
             ),
             proxy_addr,
             obj["use_tls"],

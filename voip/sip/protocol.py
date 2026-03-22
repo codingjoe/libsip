@@ -21,6 +21,7 @@ import uuid
 
 from voip.rtp import RealtimeTransportProtocol
 
+from . import types
 from .exceptions import RegistrationError
 from .messages import Message, Request, Response
 from .transactions import Transaction
@@ -89,13 +90,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     _transactions: dict[str, Transaction] = dataclasses.field(
         init=False, default_factory=dict
     )
-    _rtp_protocol: RealtimeTransportProtocol | None = dataclasses.field(
-        init=False, default=None
-    )
-    _rtp_transport: asyncio.DatagramTransport | None = dataclasses.field(
-        init=False, default=None
-    )
-    _initialize_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
+    rtp: RealtimeTransportProtocol
     _keepalive_task: asyncio.Task | None = dataclasses.field(init=False, default=None)
     _call_rtp_addrs: dict[str, tuple[str, int] | None] = dataclasses.field(
         init=False, default_factory=dict
@@ -108,15 +103,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
     #: When ``None`` the caller connects directly to the registrar server.
     #: The address may differ from the registrar domain derived from
     #: `aor` (e.g. ``proxy.carrier.com`` vs ``carrier.com``).
+    aor: types.SipUri
     outbound_proxy: (
         tuple[ipaddress.IPv4Address | ipaddress.IPv6Address | str, int] | None
     ) = None
-    aor: str
-    username: str | None = None
-    password: str | None = None
     rtp = RealtimeTransportProtocol
-    #: STUN server used for RTP NAT traversal (SIP uses TLS/TCP; no STUN needed).
-    rtp_stun_server_address: tuple[str, int] | None = ("stun.cloudflare.com", 3478)
     keepalive_interval: datetime.timedelta = datetime.timedelta(seconds=30)
     call_id: str = dataclasses.field(init=False)
     cseq: int = dataclasses.field(init=False, default=0)
@@ -137,32 +128,18 @@ class SessionInitiationProtocol(asyncio.Protocol):
         # IPv6 sockets return a 4-tuple (host, port, flowinfo, scope_id);
         # we only need the first two elements.
         sockname = transport.get_extra_info("sockname")
+        print(sockname)
         host, port = sockname[0], sockname[1]
         self.local_address = (ipaddress.ip_address(host), port)
         self.is_secure = transport.get_extra_info("ssl_object") is not None
         try:
             loop = asyncio.get_running_loop()
-            self._initialize_task = loop.create_task(self._initialize())
-            self._keepalive_task = loop.create_task(self._run_keepalive())
+            loop.create_task(self.register())
+            self._keepalive_task = loop.create_task(self.send_keepalive())
         except RuntimeError:
             pass  # no running loop in synchronous test setups
 
-    async def _initialize(self) -> None:
-        loop = asyncio.get_running_loop()
-        rtp_bind = (
-            "::"
-            if isinstance(self.local_address[0], ipaddress.IPv6Address)
-            else "0.0.0.0"  # noqa: S104
-        )
-        self._rtp_transport, self._rtp_protocol = await loop.create_datagram_endpoint(
-            lambda: RealtimeTransportProtocol(
-                stun_server_address=self.rtp_stun_server_address
-            ),
-            local_addr=(rtp_bind, 0),
-        )
-        await self.register()
-
-    async def _run_keepalive(self) -> None:
+    async def send_keepalive(self) -> None:
         while True:
             await asyncio.sleep(self.keepalive_interval.total_seconds())
             if self.transport is None:
@@ -218,13 +195,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
         """Close the TLS/TCP transport and the RTP mux."""
         if self.transport is not None:
             self.transport.close()
-        if self._rtp_transport is not None:
-            self._rtp_transport.close()
 
     def _cleanup_rtp_call(self, call_id: str) -> None:
         """Remove the call handler registered with the shared RTP mux, if any."""
-        if call_id in self._call_rtp_addrs and self._rtp_protocol is not None:
-            self._rtp_protocol.unregister_call(self._call_rtp_addrs.pop(call_id))
+        if call_id in self._call_rtp_addrs and self.rtp is not None:
+            self.rtp.unregister_call(self._call_rtp_addrs.pop(call_id))
 
     @property
     def allowed_methods(self) -> frozenset[SIPMethod]:
@@ -331,7 +306,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             SIPStatus.UNAUTHORIZED,
             SIPStatus.PROXY_AUTHENTICATION_REQUIRED,
         ):
-            if not self.username or not self.password:
+            if not self.aor.user or not self.aor.password:
                 logger.error(
                     "Auth challenge received but username/password are not configured"
                 )
@@ -356,20 +331,20 @@ class SessionInitiationProtocol(asyncio.Protocol):
             nc = "00000001"
             cnonce = secrets.token_hex(8) if qop else None
             digest = self.digest_response(
-                username=self.username,
-                password=self.password,
+                username=self.aor.user,
+                password=self.aor.password,
                 realm=realm,
                 nonce=nonce,
                 method=SIPMethod.REGISTER,
-                uri=self.registrar_uri,
+                uri=self.aor.host,
                 algorithm=algorithm,
                 qop=qop,
                 nc=nc,
                 cnonce=cnonce,
             )
             auth_value = (
-                f'Digest username="{self.username}", realm="{realm}", '
-                f'nonce="{nonce}", uri="{self.registrar_uri}", '
+                f'Digest username="{self.aor.user}", realm="{realm}", '
+                f'nonce="{nonce}", uri="{self.aor.host}", '
                 f'response="{digest}", algorithm="{algorithm}"'
             )
             if qop:
@@ -383,7 +358,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
             return
         raise RegistrationError(f"{response.status_code} {response.phrase}")
 
-    def _build_contact(self, user: str | None = None, *, ob: bool = False) -> str:
+    @property
+    def contact(self) -> str:
         """Return a ``Contact:`` header value for this UA.
 
         The URI scheme mirrors `aor`: a ``sips:`` AOR produces a
@@ -404,35 +380,36 @@ class SessionInitiationProtocol(asyncio.Protocol):
             ob: Include the ``ob`` URI parameter (RFC 5626 §5) to indicate
                 outbound keep-alive support.
         """
-        aor_scheme = self.aor.partition(":")[0]  # "sip" or "sips"
         host_port = f"{_format_host(self.local_address[0])}:{self.local_address[1]}"
-        addr = f"{user}@{host_port}" if user else host_port
-        ob_uri_param = ";ob" if ob else ""
-        if aor_scheme == "sips":
+        addr = f"{self.aor.user}@{host_port}" if self.aor.user else host_port
+        ob_uri_param = ";ob"
+        if self.aor.scheme == "sips":
             return f"<sips:{addr}{ob_uri_param}>"
         tls_param = ";transport=tls" if self.is_secure else ""
         return f"<sip:{addr}{tls_param}{ob_uri_param}>"
 
+    def from_header(self, tag: str = "") -> str:
+        """Return a ``From:`` header value for this UA."""
+        from_uri = types.SipUri(
+            user=self.aor.user, host=self.aor.host, scheme=self.aor.scheme
+        )
+        if tag:
+            return f"{from_uri};tag={tag}"
+        return str(from_uri)
+
     @property
-    def registrar_uri(self) -> str:
-        """Registrar Request-URI derived from the AOR, preserving its scheme.
-
-        The scheme (``sip:`` or ``sips:``) is taken directly from `aor`
-        so the client honours whatever security contract the administrator has
-        configured.  The user part is stripped; only the host (and optional
-        port) is kept, per RFC 3261 §10.2.
-
-        Examples:
-        ```
-        sip:alice@example.com   →  sip:example.com
-        sips:alice@example.com  →  sips:example.com
-        ```
-        """
-        if not self.aor:
-            raise ValueError("AOR is not configured; cannot derive registrar URI")
-        scheme, _, rest = self.aor.partition(":")
-        _, _, hostport = rest.partition("@")
-        return f"{scheme}:{hostport}"
+    def to_header(self) -> str:
+        """Return a ``To:`` header value for this UA."""
+        params = {}
+        if transport := self.aor.parameters.get("transport"):
+            params["transport"] = transport
+        to_uri = types.SipUri(
+            user=self.aor.user,
+            host=self.aor.host,
+            scheme=self.aor.scheme,
+            parameters=params,
+        )
+        return str(to_uri)
 
     async def register(
         self,
@@ -452,27 +429,25 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 "Sending REGISTER via outbound proxy %s:%s to registrar %s (CSeq %s)",
                 self.outbound_proxy[0],
                 self.outbound_proxy[1],
-                self.registrar_uri,
+                self.aor.host,
                 self.cseq,
             )
         else:
             logger.debug(
                 "Sending REGISTER to registrar %s (CSeq %s)",
-                self.registrar_uri,
+                self.aor.host,
                 self.cseq,
             )
         branch = f"{self.VIA_BRANCH_PREFIX}{secrets.token_hex(16)}"
         logger.debug("REGISTER Via branch: %s", branch)
         # Extract SIP user part from AOR (e.g. "sips:alice@example.com" -> "alice")
-        aor_rest = self.aor.partition(":")[2] if self.aor else ""
-        user = aor_rest.partition("@")[0] if "@" in aor_rest else aor_rest
         headers = {
             "Via": f"SIP/2.0/{'TLS' if self.is_secure else 'TCP'} {_format_host(self.local_address[0])}:{self.local_address[1]};rport;branch={branch}",
-            "From": self.aor,
-            "To": self.aor,
+            "From": self.from_header(),
+            "To": self.to_header,
             "Call-ID": self.call_id,
             "CSeq": f"{self.cseq} {SIPMethod.REGISTER}",
-            "Contact": self._build_contact(user, ob=True),
+            "Contact": self.contact,
             "Expires": "3600",  # 1 hour
             "Max-Forwards": "70",
             "Supported": "outbound",  # RFC 5626 §5 — outbound keep-alive support
@@ -482,7 +457,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
         if proxy_authorization is not None:
             headers["Proxy-Authorization"] = proxy_authorization
         self.send(
-            Request(method=SIPMethod.REGISTER, uri=self.registrar_uri, headers=headers),
+            Request(
+                method=SIPMethod.REGISTER,
+                uri=types.SipUri(host=self.aor.host, scheme=self.aor.scheme),
+                headers=headers,
+            ),
         )
 
     def registered(self) -> None:

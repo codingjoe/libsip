@@ -536,7 +536,7 @@ class TestACKHandler:
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = fake_rtp_transport
         # Resolve the SIP protocol's own local address (for Contact header).
         protocol.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
@@ -784,7 +784,7 @@ class TestACKHandler:
         mux = RealtimeTransportProtocol()
         mux.public_address = loop.create_future()
         mux.public_address.set_result((ipaddress.IPv6Address("2001:db8::2"), 12000))
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = FakeTransport(("2001:db8::2", 12000))
         protocol.local_address = (ipaddress.IPv6Address("2001:db8::2"), 5061)
 
@@ -1225,7 +1225,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1247,7 +1247,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1268,7 +1268,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         return protocol
 
@@ -1309,7 +1309,7 @@ class TestSIPProtocol:
         assert b"crypto" not in body
 
         # The registered call handler must not have an SRTP session.
-        handler = next(iter(protocol._rtp_protocol.calls.values()))
+        handler = next(iter(protocol.rtp.calls.values()))
         assert handler.srtp is None
 
     async def test_answer__rtp_savp_offer_returns_rtp_savp(self):
@@ -1346,7 +1346,7 @@ class TestSIPProtocol:
         assert b"RTP/SAVP" in body
         assert b"crypto" in body
 
-        handler = next(iter(protocol._rtp_protocol.calls.values()))
+        handler = next(iter(protocol.rtp.calls.values()))
         assert handler.srtp is not None
 
     async def test_answer__copies_dialog_headers(self):
@@ -1360,7 +1360,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1393,7 +1393,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1420,7 +1420,7 @@ class TestSIPProtocol:
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1471,7 +1471,7 @@ class TestSIPProtocol:
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1514,7 +1514,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1538,7 +1538,7 @@ class TestSIPProtocol:
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = rtp_transport
 
         sdp_body1 = SessionDescription.parse(
@@ -1559,7 +1559,7 @@ class TestSIPProtocol:
         protocol.request_received(invite1, ("192.0.2.1", 5060))
         protocol._sent.clear()
         await protocol._transactions[invite1.via_branch].answer(call_class=_MinimalCall)
-        rtp_proto_1 = protocol._rtp_protocol
+        rtp_proto_1 = protocol.rtp
         rtp_transport_1 = protocol._rtp_transport
 
         sdp_body2 = SessionDescription.parse(
@@ -1581,7 +1581,7 @@ class TestSIPProtocol:
         protocol._sent.clear()
         await protocol._transactions[invite2.via_branch].answer(call_class=_MinimalCall)
 
-        assert protocol._rtp_protocol is rtp_proto_1
+        assert protocol.rtp is rtp_proto_1
         assert protocol._rtp_transport is rtp_transport_1
         assert ("1.2.3.4", 5000) in rtp_proto_1.calls
         assert ("5.6.7.8", 6000) in rtp_proto_1.calls
@@ -1598,7 +1598,7 @@ class TestSIPProtocol:
         rtp_transport, _ = await loop.create_datagram_endpoint(
             lambda: mux, local_addr=("127.0.0.1", 0)
         )
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1636,7 +1636,7 @@ class TestSIPProtocol:
         mux.public_address.set_result((ipaddress.IPv4Address("127.0.0.1"), 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1962,7 +1962,7 @@ class TestSIPProtocol:
         mux.public_address.set_result(("127.0.0.1", 12000))
         mock_rtp_transport = MagicMock()
         mock_rtp_transport.get_extra_info.return_value = ("127.0.0.1", 12000)
-        protocol._rtp_protocol = mux
+        protocol.rtp = mux
         protocol._rtp_transport = mock_rtp_transport
         request = make_invite()
         protocol.request_received(request, ("192.0.2.1", 5060))
@@ -1985,7 +1985,7 @@ class TestSIPProtocol:
         await asyncio.sleep(0.05)
         transport.write.assert_any_call(b"\r\n\r\n")
         protocol._keepalive_task.cancel()
-        protocol._initialize_task.cancel()
+        protocol.register_task.cancel()
 
     async def test_run_keepalive__stops_when_transport_cleared(self):
         """Keep-alive loop exits cleanly when the transport is set to None."""
@@ -2001,7 +2001,7 @@ class TestSIPProtocol:
         protocol.transport = None
         await asyncio.sleep(0.05)
         transport.write.assert_not_called()
-        protocol._initialize_task.cancel()
+        protocol.register_task.cancel()
 
     async def test_connection_lost__cancels_and_clears_keepalive_task(self):
         """connection_lost cancels the keepalive task and clears _keepalive_task."""
@@ -2484,7 +2484,7 @@ class TestRegistration:
         p = make_register_session()
         p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
         p.is_secure = True
-        contact = p._build_contact("alice")
+        contact = p.contact("alice")
         assert ";ob" not in contact
 
     def test_build_contact__ob_true__includes_ob_uri_param(self):
@@ -2492,7 +2492,7 @@ class TestRegistration:
         p = make_register_session()
         p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
         p.is_secure = True
-        assert p._build_contact("alice", ob=True) == (
+        assert p.contact("alice", ob=True) == (
             "<sip:alice@127.0.0.1:5061;transport=tls;ob>"
         )
 
@@ -2501,7 +2501,7 @@ class TestRegistration:
         p = make_register_session(aor="sips:alice@example.com")
         p.local_address = (ipaddress.IPv4Address("127.0.0.1"), 5061)
         p.is_secure = True
-        assert p._build_contact("alice", ob=True) == "<sips:alice@127.0.0.1:5061;ob>"
+        assert p.contact("alice", ob=True) == "<sips:alice@127.0.0.1:5061;ob>"
 
 
 # ---------------------------------------------------------------------------

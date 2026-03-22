@@ -57,7 +57,7 @@ class SipUri:
     scheme: str
     host: str | ipaddress.IPv6Address | ipaddress.IPv4Address
     user: str | None = None
-    password: str | None = None
+    password: str | None = dataclasses.field(default=None, repr=False)
     port: int | None = None
     parameters: dict[str, str | None] = dataclasses.field(default_factory=dict)
     headers: dict[str, str] = dataclasses.field(default_factory=dict)

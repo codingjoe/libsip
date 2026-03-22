@@ -347,7 +347,7 @@ class Transaction:
         srtp_session = SRTPSession.generate() if use_srtp else None
 
         call_handler = call_class(
-            rtp=self.sip._rtp_protocol,
+            rtp=self.sip.rtp,
             sip=self.sip,
             caller=caller,
             media=negotiated_media,
@@ -367,15 +367,15 @@ class Transaction:
             remote_rtp_address: tuple[str, int] | None = (remote_ip, remote_audio.port)
         else:
             remote_rtp_address = None
-        self.sip._rtp_protocol.register_call(remote_rtp_address, call_handler)
+        self.sip.rtp.register_call(remote_rtp_address, call_handler)
         self.sip._call_rtp_addrs[call_id] = remote_rtp_address
 
         if remote_rtp_address is not None:
-            self.sip._rtp_protocol.send(b"\x00", remote_rtp_address)
+            self.sip.rtp.send(b"\x00", remote_rtp_address)
 
         record_route = self.invite.headers.get("Record-Route")
         session_id = str(secrets.randbelow(2**32) + 1)
-        rtp_public = self.sip._rtp_protocol.public_address
+        rtp_public = self.sip.rtp.public_address
         sdp_media_attributes = [Attribute(name="sendrecv")]
         if srtp_session is not None:
             sdp_media_attributes.append(
@@ -387,7 +387,7 @@ class Transaction:
             headers={
                 **self.tagged_headers,
                 **({"Record-Route": record_route} if record_route else {}),
-                "Contact": self.sip._build_contact(),
+                "Contact": self.sip.contact,
                 "Allow": self.sip.allow_header,
                 "Supported": "replaces",
                 "Content-Type": "application/sdp",
