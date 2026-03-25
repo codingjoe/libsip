@@ -15,6 +15,12 @@ from voip.sip.types import DigestAlgorithm, DigestQoP, SIPMethod, SIPStatus, Sip
 from .conftest import INVITE_BYTES, INVITE_WITH_SDP_BYTES, CallFixture, FakeTransport
 
 # ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+TEST_PASSWORD = "secret"  # noqa: S105
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -323,7 +329,7 @@ class TestRegistrationTransaction:
         """Compute a deterministic SHA-256 digest response."""
         result = RegistrationTransaction.digest_response(
             username="alice",
-            password="secret",  # noqa: S106
+            password=TEST_PASSWORD,
             realm="example.com",
             nonce="nonce123",
             method="REGISTER",
@@ -337,7 +343,7 @@ class TestRegistrationTransaction:
         """Compute a deterministic MD5 digest response."""
         result = RegistrationTransaction.digest_response(
             username="alice",
-            password="secret",  # noqa: S106
+            password=TEST_PASSWORD,
             realm="example.com",
             nonce="nonce123",
             method="REGISTER",
@@ -350,7 +356,7 @@ class TestRegistrationTransaction:
         """Include nc and cnonce in the digest when qop=auth."""
         result = RegistrationTransaction.digest_response(
             username="alice",
-            password="secret",  # noqa: S106
+            password=TEST_PASSWORD,
             realm="example.com",
             nonce="nonce123",
             method="REGISTER",
@@ -366,7 +372,7 @@ class TestRegistrationTransaction:
         with pytest.raises(ValueError, match="cnonce"):
             RegistrationTransaction.digest_response(
                 username="alice",
-                password="secret",  # noqa: S106
+                password=TEST_PASSWORD,
                 realm="example.com",
                 nonce="nonce123",
                 method="REGISTER",
@@ -379,7 +385,7 @@ class TestRegistrationTransaction:
         """Compute a digest with a -sess algorithm when cnonce is provided."""
         result = RegistrationTransaction.digest_response(
             username="alice",
-            password="secret",  # noqa: S106
+            password=TEST_PASSWORD,
             realm="example.com",
             nonce="nonce123",
             method="REGISTER",
@@ -394,7 +400,7 @@ class TestRegistrationTransaction:
         with pytest.raises(ValueError, match="Unsupported"):
             RegistrationTransaction.digest_response(
                 username="alice",
-                password="secret",  # noqa: S106
+                password=TEST_PASSWORD,
                 realm="example.com",
                 nonce="nonce123",
                 method="REGISTER",

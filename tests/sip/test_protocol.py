@@ -99,7 +99,7 @@ class TestSessionInitiationProtocolSendKeepalive:
 
 class TestSessionInitiationProtocolDataReceived:
     def test_data_received__pong(self, sip):
-        r"""Handle \r\n as a PONG without sending a reply."""
+        r"""Receive a PONG (\r\n keepalive reply) without sending any reply."""
         initial_sent = len(sip.transport.sent)
         sip.data_received(b"\r\n")
         assert len(sip.transport.sent) == initial_sent
