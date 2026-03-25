@@ -44,7 +44,7 @@ FIELD_MAP: tuple[Field, ...] = (
 FIELD_BY_LETTER: dict[str, Field] = {field.letter: field for field in FIELD_MAP}
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class SessionDescription(ByteSerializableObject):
     """Session Description Protocol message [RFC 4566].
 

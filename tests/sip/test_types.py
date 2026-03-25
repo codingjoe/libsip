@@ -4,6 +4,7 @@ import ipaddress
 
 import pytest
 from voip.sip import SipUri
+from voip.sip.messages import Response
 
 
 class TestSipUri:
@@ -269,3 +270,11 @@ class TestSipUri:
     ):
         """Parse flag URI parameters and valueless headers."""
         assert SipUri.parse(uri_str) == expected_uri_obj
+
+
+def _ok() -> Response:
+    return Response(status_code=200, phrase="OK")
+
+
+def _trying() -> Response:
+    return Response(status_code=100, phrase="Trying")

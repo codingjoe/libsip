@@ -38,7 +38,7 @@ class Field(Protocol):
         """Parse a raw SDP line value."""
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class StrField:
     """Descriptor for SDP fields that parse and serialize as plain strings."""
 
@@ -52,7 +52,7 @@ class StrField:
         return value
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class IntField:
     """Descriptor for SDP fields that parse and serialize as integers."""
 
@@ -66,7 +66,7 @@ class IntField:
         return int(value)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Origin(ByteSerializableObject):
     """Origin field (o=) as defined by RFC 4566 §5.2."""
 
@@ -104,7 +104,7 @@ class Origin(ByteSerializableObject):
         )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class ConnectionData(ByteSerializableObject):
     """Connection data field (c=) as defined by RFC 4566 §5.7."""
 
@@ -131,7 +131,7 @@ class ConnectionData(ByteSerializableObject):
         )
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Bandwidth(ByteSerializableObject):
     """Bandwidth field (b=) as defined by RFC 4566 §5.8."""
 
@@ -153,7 +153,7 @@ class Bandwidth(ByteSerializableObject):
         return cls(bwtype=bwtype, bandwidth=int(bandwidth))
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Timing(ByteSerializableObject):
     """Timing field (t=) as defined by RFC 4566 §5.9."""
 
@@ -175,7 +175,7 @@ class Timing(ByteSerializableObject):
         return cls(start_time=int(start_time), stop_time=int(stop_time))
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Attribute(ByteSerializableObject):
     """Attribute field (a=) as defined by RFC 4566 §5.13."""
 

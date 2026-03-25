@@ -12,6 +12,8 @@ import uuid
 
 __all__ = ["STUNAttributeType", "STUNMessageType", "STUNProtocol"]
 
+from voip.types import NetworkAddress
+
 logger = logging.getLogger(__name__)
 
 MAGIC_COOKIE = 0x2112A442
@@ -151,7 +153,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
                 local otherwise.
         """  # noqa: D401
 
-    def send(self, data: bytes, addr: tuple[str, int]) -> None:
+    def send(self, data: bytes, addr: NetworkAddress) -> None:
         """Send a raw datagram through the shared UDP socket.
 
         Args:
@@ -176,7 +178,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
             ):
                 self._parse_stun_response(data)
             return
-        self.packet_received(data, addr)
+        self.packet_received(data, NetworkAddress(*addr))
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Clear the internal transport reference on disconnect."""
@@ -185,7 +187,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
     def error_received(self, exc: Exception) -> None:
         logger.warning("UDP transport error (ignored): %s", exc)
 
-    def packet_received(self, data: bytes, addr: tuple[str, int]) -> None:
+    def packet_received(self, data: bytes, addr: NetworkAddress) -> None:
         """Override in subclasses to handle non-STUN datagrams.
 
         Args:

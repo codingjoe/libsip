@@ -18,6 +18,11 @@ import typing
 import urllib.parse
 from collections.abc import Iterator
 
+from voip.types import NetworkAddress
+
+if typing.TYPE_CHECKING:
+    pass
+
 
 @dataclasses.dataclass(slots=True, eq=True)
 class SipUri:
@@ -54,7 +59,7 @@ class SipUri:
     scheme: str
     host: str | ipaddress.IPv6Address | ipaddress.IPv4Address
     user: str | None = None
-    password: str | None = None
+    password: str | None = dataclasses.field(default=None, repr=False)
     port: int | None = None
     parameters: dict[str, str | None] = dataclasses.field(default_factory=dict)
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
@@ -99,10 +104,6 @@ class SipUri:
             if host.startswith("[") and host.endswith("]"):
                 host = host[1:-1]
             host = urllib.parse.unquote(host)
-            try:
-                ipaddress.ip_address(host)
-            except ValueError:
-                pass  # Not an IP address, treat as a regular hostname
 
             return cls(
                 scheme=match.group("scheme").lower(),
@@ -169,6 +170,23 @@ class SipUri:
             )
         return "".join(parts)
 
+    @property
+    def maddr(self) -> NetworkAddress:
+        try:
+            return NetworkAddress.parse(self.parameters["maddr"])
+        except KeyError:
+            return NetworkAddress(self.host, self.port)
+
+    @property
+    def ttl(self):
+        return self.parameters["ttl"]
+
+    @property
+    def transport(self):
+        return self.parameters.get(
+            "transport", "TLS" if self.scheme == "sips" else None
+        )
+
 
 class CallerID(str):
     """SIP From/To header value with structured access and privacy-safe repr.
@@ -190,8 +208,7 @@ class CallerID(str):
     @property
     def display_name(self) -> str | None:
         """Display name from the From/To header, if present."""
-        m = re.match(r'^"([^"]+)"\s*<|^([^<"]+?)\s*<', self)
-        if m:
+        if m := re.match(r'^"([^"]+)"\s*<|^([^<"]+?)\s*<', self):
             return (m.group(1) or m.group(2) or "").strip() or None
         return None
 
@@ -533,3 +550,31 @@ class DigestQoP(enum.StrEnum):
 
     AUTH = "auth"
     AUTH_INT = "auth-int"
+
+
+def _mask_caller(header: str) -> str:
+    """Return a privacy-safe label from a SIP From/To header value.
+
+    Strips the `tag=` parameter, extracts the display name or SIP user part,
+    and replaces all but the last four characters with `*`.
+
+    Examples:
+    ```
+    >>> _mask_caller('"08001234567" <sip:08001234567@example.com>;tag=abc')
+    '*******4567'
+    >>> _mask_caller('sip:alice@example.com')
+    '*lice'
+    ```
+    """
+    # Drop the tag and any subsequent parameters
+    value = header.split(";")[0].strip()
+    # Extract display name: "Name" <sip:…> or Name <sip:…>
+    m = re.match(r'^"?([^"<]+?)"?\s*<', value)
+    name = m.group(1).strip() if m else None
+    if not name:
+        # Bare or angle-bracket URI: sip:user@host or <sip:user@host>
+        m = re.search(r"sips?:([^@>;\s]+)", value)
+        name = m.group(1) if m else value
+    if len(name) > 4:
+        return "*" * (len(name) - 4) + name[-4:]
+    return name
