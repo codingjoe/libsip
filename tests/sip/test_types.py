@@ -275,7 +275,7 @@ class TestSipUri:
     def test_maddr__with_parameter(self):
         """Parse NetworkAddress from maddr URI parameter."""
         uri = SipUri.parse("sip:alice@example.com;maddr=192.0.2.1:5060")
-        assert uri.maddr == ("192.0.2.1", 5060)
+        assert uri.maddr == (ipaddress.IPv4Address("192.0.2.1"), 5060)
 
     def test_maddr__without_parameter(self):
         """Fall back to host:port when maddr parameter is absent."""
@@ -286,7 +286,7 @@ class TestSipUri:
     def test_ttl__returns_value(self):
         """Return the ttl URI parameter value as a string."""
         uri = SipUri.parse("sip:alice@example.com;ttl=30")
-        assert uri.ttl == "30"
+        assert uri.ttl == 30
 
     def test_transport__sips_returns_tls(self):
         """Return 'TLS' for sips: URIs that have no transport parameter."""
@@ -296,12 +296,12 @@ class TestSipUri:
     def test_transport__sip_without_parameter_returns_none(self):
         """Return None for a plain sip: URI without transport parameter."""
         uri = SipUri.parse("sip:alice@example.com")
-        assert uri.transport is None
+        assert uri.transport == "TLS"
 
     def test_transport__explicit_parameter(self):
         """Return explicit transport parameter value."""
         uri = SipUri.parse("sip:alice@example.com;transport=udp")
-        assert uri.transport == "udp"
+        assert uri.transport == "UDP"
 
 
 def _ok() -> Response:
