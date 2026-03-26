@@ -26,6 +26,12 @@ from .types import (
 
 logger = logging.getLogger("voip.sip")
 
+#: RFC 5626 §4.4 keepalive PING sequence.
+PING: typing.Final[bytes] = b"\r\n\r\n"
+
+#: RFC 5626 §4.4 keepalive PONG reply.
+PONG: typing.Final[bytes] = b"\r\n"
+
 __all__ = [
     "SIP",
     "SessionInitiationProtocol",
@@ -124,7 +130,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             if self.transport is None:
                 return
             logger.info("PING", extra={"addr": self.local_address})
-            self.transport.write(b"\r\n\r\n")
+            self.transport.write(PING)
 
     def data_received(self, data: bytes) -> None:
         """Buffer incoming bytes and dispatch each complete frame."""
@@ -132,7 +138,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         for frame in self.extract_frames():
             self.dispatch_frame(frame)
 
-    def extract_frames(self) -> list[bytes]:
+    def extract_frames(self) -> typing.Generator[memoryview | bytes, None, None]:
         """Extract complete SIP messages and keepalive frames from [`recv_buffer`][voip.sip.protocol.SessionInitiationProtocol.recv_buffer].
 
         TCP is a stream protocol; a single [`data_received`][voip.sip.protocol.SessionInitiationProtocol.data_received]
@@ -140,15 +146,26 @@ class SessionInitiationProtocol(asyncio.Protocol):
         This method uses the `Content-Length` header for body framing per
         [RFC 3261 §18.3](https://datatracker.ietf.org/doc/html/rfc3261#section-18.3)
         and recognises [RFC 5626](https://datatracker.ietf.org/doc/html/rfc5626)
-        PING (`\\r\\n\\r\\n`) and PONG (`\\r\\n`) keepalive sequences.
+        [`PING`][voip.sip.protocol.PING] and [`PONG`][voip.sip.protocol.PONG] keepalive sequences.
 
         Each call mutates [`recv_buffer`][voip.sip.protocol.SessionInitiationProtocol.recv_buffer]
         in-place, consuming only the bytes that belong to complete frames.
 
-        Returns:
-            List of complete frame byte sequences ready for parsing or keepalive dispatch.
+        For SIP messages a [`memoryview`][] into the buffer is yielded — zero copy until
+        [`dispatch_frame`][voip.sip.protocol.SessionInitiationProtocol.dispatch_frame] converts
+        to [`bytes`][] for parsing.  The view is explicitly released and the consumed bytes
+        removed from the buffer before the next frame is extracted.
+
+        !!! warning
+            Each yielded [`memoryview`][] is only valid until the generator is advanced to
+            the next frame.  Callers **must not** hold a reference to the view after the
+            current loop iteration (i.e. after [`dispatch_frame`][voip.sip.protocol.SessionInitiationProtocol.dispatch_frame]
+            returns).  Use `bytes(frame)` to materialise the data if a longer-lived copy is needed.
+
+        Yields:
+            A [`memoryview`][] for each complete SIP message, or the [`PING`][voip.sip.protocol.PING] /
+            [`PONG`][voip.sip.protocol.PONG] constant for keepalive frames.
         """
-        frames = []
         while self.recv_buffer:
             if self.recv_buffer[0:1] != b"\r":
                 # SIP message: wait for the header-body separator.
@@ -167,56 +184,56 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 message_end = header_end + 4 + content_length
                 if len(self.recv_buffer) < message_end:
                     break  # incomplete body – wait for more data
-                frames.append(bytes(self.recv_buffer[:message_end]))
+                frame = memoryview(self.recv_buffer)[:message_end]
+                yield frame
+                frame.release()
                 del self.recv_buffer[:message_end]
-            elif len(self.recv_buffer) >= 4 and self.recv_buffer[:4] == b"\r\n\r\n":
-                # RFC 5626 PING
-                frames.append(b"\r\n\r\n")
+            elif len(self.recv_buffer) >= 4 and self.recv_buffer[:4] == PING:
+                yield PING
                 del self.recv_buffer[:4]
             elif len(self.recv_buffer) >= 3 and self.recv_buffer[2:3] == b"\r":
-                # Third byte is CR – could be the start of \r\n\r\n; wait for 4th byte.
+                # Third byte is CR – could be the start of PING; wait for 4th byte.
                 break
-            elif self.recv_buffer[:2] == b"\r\n":
-                # RFC 5626 PONG (2-byte sequence confirmed not to be a PING prefix).
-                frames.append(b"\r\n")
+            elif self.recv_buffer[:2] == PONG:
+                yield PONG
                 del self.recv_buffer[:2]
             else:
                 # Single CR or other incomplete sequence – wait for more data.
                 break
-        return frames
 
-    def dispatch_frame(self, frame: bytes) -> None:
+    def dispatch_frame(self, frame: memoryview | bytes) -> None:
         """Dispatch a single complete frame (SIP message or keepalive).
 
         Args:
-            frame: A complete frame as returned by
+            frame: A [`memoryview`][] (SIP message) or keepalive constant
+                ([`PING`][voip.sip.protocol.PING] / [`PONG`][voip.sip.protocol.PONG])
+                as yielded by
                 [`extract_frames`][voip.sip.protocol.SessionInitiationProtocol.extract_frames].
         """
         peer = NetworkAddress(*self.transport.get_extra_info("peername"))
-        match frame:
-            case b"\r\n":
-                logger.info("PONG", extra={"addr": peer})
-            case b"\r\n\r\n":
-                logger.info("PING", extra={"addr": peer})
-                if self.transport:
-                    logger.info("PONG", extra={"addr": self.local_address})
-                    self.transport.write(b"\r\n")
-            case _:
-                match Message.parse(frame):
-                    case Request() as request:
-                        logger.info(
-                            "Request received: %r",
-                            request,
-                            extra={"addr": peer},
-                        )
-                        self.request_received(request)
-                    case Response() as response:
-                        logger.info(
-                            "Response received %r",
-                            response,
-                            extra={"addr": peer},
-                        )
-                        self.response_received(response)
+        if frame == PONG:
+            logger.info("PONG", extra={"addr": peer})
+        elif frame == PING:
+            logger.info("PING", extra={"addr": peer})
+            if self.transport:
+                logger.info("PONG", extra={"addr": self.local_address})
+                self.transport.write(PONG)
+        else:
+            match Message.parse(bytes(frame)):
+                case Request() as request:
+                    logger.info(
+                        "Request received: %r",
+                        request,
+                        extra={"addr": peer},
+                    )
+                    self.request_received(request)
+                case Response() as response:
+                    logger.info(
+                        "Response received %r",
+                        response,
+                        extra={"addr": peer},
+                    )
+                    self.response_received(response)
 
     def send(self, message: Response | Request) -> None:
         """Serialize and send a SIP message over the TLS/TCP connection."""

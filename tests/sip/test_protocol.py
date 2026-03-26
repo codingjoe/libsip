@@ -7,7 +7,7 @@ import datetime
 import ipaddress
 
 from voip.sip.messages import Message, Response
-from voip.sip.protocol import SessionInitiationProtocol
+from voip.sip.protocol import PING, PONG, SessionInitiationProtocol
 from voip.sip.transactions import InviteTransaction
 from voip.sip.types import SIPMethod, SipUri
 from voip.types import NetworkAddress
@@ -363,15 +363,15 @@ class TestSessionInitiationProtocol:
     # ------------------------------------------------------------------
 
     def test_extract_frames__empty_buffer(self, rtp):
-        """Return an empty list when the receive buffer is empty."""
+        """Return an empty iterator when the receive buffer is empty."""
         session = self._make_session(rtp)
-        assert session.extract_frames() == []
+        assert [bytes(f) for f in session.extract_frames()] == []
 
     def test_extract_frames__complete_message(self, rtp):
         """Extract a single complete SIP message and clear the buffer."""
         session = self._make_session(rtp)
         session.recv_buffer.extend(INVITE_BYTES)
-        frames = session.extract_frames()
+        frames = [bytes(f) for f in session.extract_frames()]
         assert frames == [INVITE_BYTES]
         assert len(session.recv_buffer) == 0
 
@@ -379,7 +379,7 @@ class TestSessionInitiationProtocol:
         """Keep partial message bytes in the buffer until complete."""
         session = self._make_session(rtp)
         session.recv_buffer.extend(INVITE_BYTES[:20])
-        assert session.extract_frames() == []
+        assert [bytes(f) for f in session.extract_frames()] == []
         assert len(session.recv_buffer) == 20
 
     def test_extract_frames__two_coalesced_messages(self, rtp):
@@ -395,7 +395,7 @@ class TestSessionInitiationProtocol:
         )
         session = self._make_session(rtp)
         session.recv_buffer.extend(INVITE_BYTES + second)
-        frames = session.extract_frames()
+        frames = [bytes(f) for f in session.extract_frames()]
         assert len(frames) == 2
         assert frames[0] == INVITE_BYTES
         assert frames[1] == second
@@ -418,7 +418,7 @@ class TestSessionInitiationProtocol:
         message = headers + body
         session = self._make_session(rtp)
         session.recv_buffer.extend(message)
-        frames = session.extract_frames()
+        frames = [bytes(f) for f in session.extract_frames()]
         assert frames == [message]
         assert len(session.recv_buffer) == 0
 
@@ -437,48 +437,48 @@ class TestSessionInitiationProtocol:
         )
         session = self._make_session(rtp)
         session.recv_buffer.extend(headers + body[:5])
-        assert session.extract_frames() == []
+        assert [bytes(f) for f in session.extract_frames()] == []
         assert len(session.recv_buffer) == len(headers) + 5
 
     def test_extract_frames__ping(self, rtp):
         """Extract an RFC 5626 PING (CRLF CRLF) keepalive frame."""
         session = self._make_session(rtp)
-        session.recv_buffer.extend(b"\r\n\r\n")
-        frames = session.extract_frames()
-        assert frames == [b"\r\n\r\n"]
+        session.recv_buffer.extend(PING)
+        frames = [bytes(f) for f in session.extract_frames()]
+        assert frames == [PING]
         assert len(session.recv_buffer) == 0
 
     def test_extract_frames__pong(self, rtp):
         """Extract an RFC 5626 PONG (CRLF) keepalive frame."""
         session = self._make_session(rtp)
-        session.recv_buffer.extend(b"\r\n")
-        frames = session.extract_frames()
-        assert frames == [b"\r\n"]
+        session.recv_buffer.extend(PONG)
+        frames = [bytes(f) for f in session.extract_frames()]
+        assert frames == [PONG]
         assert len(session.recv_buffer) == 0
 
     def test_extract_frames__partial_keepalive_wait(self, rtp):
         """Buffer a partial PING (CRLF CR) without dispatching until the 4th byte arrives."""
         session = self._make_session(rtp)
         session.recv_buffer.extend(b"\r\n\r")
-        assert session.extract_frames() == []
+        assert [bytes(f) for f in session.extract_frames()] == []
         assert len(session.recv_buffer) == 3
 
     def test_extract_frames__ping_followed_by_message(self, rtp):
         """Extract a PING and a SIP message from the same buffer."""
         session = self._make_session(rtp)
-        session.recv_buffer.extend(b"\r\n\r\n" + INVITE_BYTES)
-        frames = session.extract_frames()
+        session.recv_buffer.extend(PING + INVITE_BYTES)
+        frames = [bytes(f) for f in session.extract_frames()]
         assert len(frames) == 2
-        assert frames[0] == b"\r\n\r\n"
+        assert frames[0] == PING
         assert frames[1] == INVITE_BYTES
 
     def test_extract_frames__pong_followed_by_message(self, rtp):
         """Extract a PONG and a SIP message coalesced in the same buffer."""
         session = self._make_session(rtp)
-        session.recv_buffer.extend(b"\r\n" + INVITE_BYTES)
-        frames = session.extract_frames()
+        session.recv_buffer.extend(PONG + INVITE_BYTES)
+        frames = [bytes(f) for f in session.extract_frames()]
         assert len(frames) == 2
-        assert frames[0] == b"\r\n"
+        assert frames[0] == PONG
         assert frames[1] == INVITE_BYTES
 
     def test_extract_frames__invalid_content_length(self, rtp):
@@ -495,14 +495,14 @@ class TestSessionInitiationProtocol:
         )
         session = self._make_session(rtp)
         session.recv_buffer.extend(message)
-        frames = session.extract_frames()
+        frames = [bytes(f) for f in session.extract_frames()]
         assert len(frames) == 1
 
     def test_extract_frames__single_cr_waits(self, rtp):
         """Keep a lone CR in the buffer without dispatching (incomplete keepalive)."""
         session = self._make_session(rtp)
         session.recv_buffer.extend(b"\r")
-        assert session.extract_frames() == []
+        assert [bytes(f) for f in session.extract_frames()] == []
         assert session.recv_buffer == bytearray(b"\r")
 
     # ------------------------------------------------------------------
