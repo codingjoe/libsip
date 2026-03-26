@@ -87,11 +87,7 @@ class Message(ByteSerializableObject, abc.ABC):
 
     @property
     def branch(self) -> str | None:
-        """Branch parameter from the top Via header (RFC 3261 §20.42).
-
-        Falls back to the Call-ID when the Via header contains no branch
-        (RFC 2543 compatibility).
-        """
+        """Branch parameter from the top Via header (RFC 3261 §20.42)."""
         _, uri = self.headers["Via"].split()
         return SipUri.parse(f"sip:{uri}").parameters["branch"]
 
@@ -176,7 +172,7 @@ class Dialog:
     A dialog is identified by the tuple of (Call-ID, From tag, To tag) and
     established by a non-final response to the INVITE, see also: [RFC 3261 §12]
 
-    [RFC 3261 $12]: https://datatracker.ietf.org/doc/html/rfc3261#section-12
+    [RFC 3261 §12]: https://datatracker.ietf.org/doc/html/rfc3261#section-12
 
     Args:
         uac: The user agent that initiated the dialog.

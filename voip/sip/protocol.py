@@ -106,7 +106,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         self.transport = transport
         # IPv6 sockets return a 4-tuple (host, port, flowinfo, scope_id);
         # we only need the first two elements.
-        host, port = transport.get_extra_info("sockname")
+        host, port = transport.get_extra_info("sockname")[:2]
         self.local_address = NetworkAddress(ipaddress.ip_address(host), port)
         self.is_secure = transport.get_extra_info("ssl_object") is not None
         try:
@@ -202,7 +202,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                     for m in SIPMethod
                     if hasattr(self.transaction_class, f"{m.lower()}_received")
                 ),
-                "OPTIONS",
+                SIPMethod.OPTIONS,
             )
         )
 
@@ -275,7 +275,16 @@ class SessionInitiationProtocol(asyncio.Protocol):
         Args:
             response: The parsed SIP response.
         """
-        self.transactions[response.branch].response_received(response)
+        try:
+            tx = self.transactions[response.branch]
+        except KeyError:
+            logger.warning(
+                "Received response with unknown branch %r: %r",
+                response.branch,
+                response,
+            )
+        else:
+            tx.response_received(response)
 
     @property
     def contact(self) -> str:

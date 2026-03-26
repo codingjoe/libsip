@@ -78,15 +78,13 @@ class Transaction:
 
     def __post_init__(self):
         if not self.branch.startswith(self.branch_prefix):
-            raise ValueError(
-                f"Branch parameter must not start with {self.branch_prefix!r}"
-            )
+            raise ValueError(f"Branch parameter must start with {self.branch_prefix!r}")
 
     @property
     def headers(self) -> dict[str, str]:
         """Return a dict of headers for this transaction."""
         return {
-            "Via": f"SIP/2.0/{self.sip.aor.parameters.get('transport', 'TLS').upper()} {self.sip.local_address};rport;branch={self.branch}",
+            "Via": f"SIP/2.0/{self.sip.aor.transport} {self.sip.local_address};rport;branch={self.branch}",
             "CSeq": f"{self.cseq} {self.method}",
         }
 
@@ -137,6 +135,7 @@ class RegistrationTransaction(Transaction):
     cseq: int = 1
 
     def __post_init__(self):
+        super().__post_init__()
         self.dialog = self.dialog or Dialog(uac=self.sip.aor)
         headers = (
             self.headers
@@ -170,7 +169,7 @@ class RegistrationTransaction(Transaction):
         self.sip.transactions.pop(self.branch)
         match response.status_code:
             case SIPStatus.OK:
-                logger.info("Registration successfull")
+                logger.info("Registration successful")
                 return
             case SIPStatus.UNAUTHORIZED | SIPStatus.PROXY_AUTHENTICATION_REQUIRED:
                 logger.debug(

@@ -178,13 +178,18 @@ class SipUri:
             return NetworkAddress(self.host, self.port)
 
     @property
-    def ttl(self):
-        return self.parameters["ttl"]
+    def ttl(self) -> int | None:
+        try:
+            return int(self.parameters["ttl"])
+        except KeyError:
+            return None
 
     @property
     def transport(self):
-        return self.parameters.get(
-            "transport", "TLS" if self.scheme == "sips" else None
+        return (
+            self.parameters.get("transport", "TLS").upper()
+            if self.scheme == "sip"
+            else "TLS"
         )
 
 

@@ -102,7 +102,7 @@ def voip(ctx, verbose: int = 0):
     metavar="HOST[:PORT]",
     callback=lambda ctx, param, value: NetworkAddress.parse(value),
     is_eager=False,
-    help="STUN server for RTP NAT traversal (use 'none' to disable).",
+    help="STUN server for RTP NAT traversal.",
 )
 @click.option(
     "--no-verify-tls",
@@ -181,7 +181,6 @@ def echo(ctx):
     from .audio import EchoCall  # noqa: PLC0415
 
     obj = ctx.obj
-    obj = ctx.obj
     aor = obj["aor"]
 
     class EchoInviteTransaction(InviteTransaction):
@@ -202,7 +201,7 @@ def echo(ctx):
                 rtp=rtp_protocol,
             ),
             aor.maddr,
-            aor.transport == "tls",
+            aor.transport == "TLS",
             obj["no_verify_tls"],
         )
 
@@ -258,7 +257,7 @@ def transcribe(ctx, stt_model):
                 rtp=rtp_protocol,
             ),
             aor.maddr,
-            aor.transport == "tls",
+            aor.transport == "TLS",
             obj["no_verify_tls"],
         )
 
@@ -359,7 +358,7 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
                 rtp=rtp_protocol,
             ),
             aor.maddr,
-            aor.transport == "tls",
+            aor.transport == "TLS",
             obj["no_verify_tls"],
         )
 
