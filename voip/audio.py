@@ -24,7 +24,7 @@ import voip.codecs as codecs
 from voip.codecs import RTPCodec
 from voip.codecs.base import PayloadDecoder
 from voip.rtp import RTPPacket, Session
-from voip.sdp.types import MediaDescription
+from voip.sdp.types import MediaDescription, RTPPayloadFormat
 
 __all__ = ["AudioCall", "EchoCall", "VoiceActivityCall"]
 
@@ -142,7 +142,7 @@ class AudioCall(Session):
         )
 
     @classmethod
-    def sdp_formats(cls) -> list:
+    def sdp_formats(cls) -> list[RTPPayloadFormat]:
         """Return all supported payload formats for outbound SDP offers.
 
         Lists all codecs in `supported_codecs` priority order so the remote

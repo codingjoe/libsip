@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import collections.abc
 import dataclasses
 import ipaddress
 import logging
@@ -175,7 +176,7 @@ async def _connect_sip(
 
 
 async def _connect_sip_once(
-    session_factory,
+    session_factory: collections.abc.Callable[[], SessionInitiationProtocol],
     proxy_addr: NetworkAddress,
     use_tls: bool,
     no_verify_tls: bool,

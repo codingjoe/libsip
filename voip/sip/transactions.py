@@ -677,7 +677,10 @@ class InviteTransaction(Transaction):
                         self._accept_call(response)
                     )
                 except RuntimeError:
-                    pass  # no running event loop in synchronous contexts
+                    logger.debug(
+                        "response_received called outside of an async context; "
+                        "200 OK will not be processed"
+                    )
             case _:
                 self.sip.transactions.pop(self.branch, None)
                 logger.warning(
@@ -739,10 +742,12 @@ class InviteTransaction(Transaction):
                     if connection is not None
                     else peer[0]
                     if peer
-                    else "0.0.0.0"  # noqa: S104
+                    else None
                 )
-                remote_rtp_address: NetworkAddress | None = NetworkAddress(
-                    remote_ip, remote_audio.port
+                remote_rtp_address: NetworkAddress | None = (
+                    NetworkAddress(remote_ip, remote_audio.port)
+                    if remote_ip is not None
+                    else None
                 )
             else:
                 remote_rtp_address = None
