@@ -141,6 +141,19 @@ class AudioCall(Session):
             f"Supported: {[c.encoding_name for c in cls.supported_codecs]!r}"
         )
 
+    @classmethod
+    def sdp_formats(cls) -> list:
+        """Return all supported payload formats for outbound SDP offers.
+
+        Lists all codecs in `supported_codecs` priority order so the remote
+        can select the best available codec.
+
+        Returns:
+            List of [`RTPPayloadFormat`][voip.sdp.types.RTPPayloadFormat]
+            objects for every codec in `supported_codecs`.
+        """
+        return [codec.to_payload_format() for codec in cls.supported_codecs]
+
     def packet_received(self, packet: RTPPacket, addr: tuple[str, int]) -> None:
         if packet.payload:
             asyncio.create_task(self.emit_audio(packet))

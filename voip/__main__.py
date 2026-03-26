@@ -11,7 +11,7 @@ from voip.rtp import RealtimeTransportProtocol
 from voip.sip import messages
 from voip.sip.protocol import SessionInitiationProtocol
 from voip.sip.transactions import InviteTransaction
-from voip.sip.types import SipUri
+from voip.sip.types import SIPMethod, SipUri
 from voip.types import NetworkAddress
 
 try:
@@ -172,6 +172,41 @@ async def _connect_sip(
             )
         await asyncio.sleep(backoff_secs)
         backoff_secs = min(backoff_secs * 2, 60)
+
+
+async def _connect_sip_once(
+    session_factory,
+    proxy_addr: NetworkAddress,
+    use_tls: bool,
+    no_verify_tls: bool,
+) -> None:
+    """Connect to a SIP proxy exactly once and wait until the session ends.
+
+    Unlike `_connect_sip`, this coroutine does not reconnect after the session
+    is closed.  Use it when a single outbound call should end the process.
+
+    Args:
+        session_factory: Callable that returns a new
+            [`SessionInitiationProtocol`][voip.sip.protocol.SessionInitiationProtocol]
+            instance.
+        proxy_addr: SIP proxy address as a `NetworkAddress`.
+        use_tls: Whether to establish a TLS connection.
+        no_verify_tls: When ``True``, skip TLS certificate verification.
+    """
+    loop = asyncio.get_running_loop()
+    ssl_context: ssl.SSLContext | None = None
+    if use_tls:
+        ssl_context = ssl.create_default_context()
+        if no_verify_tls:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+    _, protocol = await loop.create_connection(
+        session_factory,
+        host=str(proxy_addr[0]),
+        port=proxy_addr[1],
+        ssl=ssl_context,
+    )
+    await protocol.disconnected_event.wait()
 
 
 @sip.command()
@@ -356,6 +391,69 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
                 transaction_class=AgentInviteTransaction,
                 aor=aor,
                 rtp=rtp_protocol,
+            ),
+            aor.maddr,
+            aor.transport == "TLS",
+            obj["no_verify_tls"],
+        )
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass
+
+
+@sip.command()
+@click.argument("target")
+@click.pass_context
+def call(ctx, target: str):
+    """Initiate an outbound call to TARGET and echo the audio back.
+
+    TARGET is a SIP URI, e.g. ``sip:+15551234567@carrier.com``.
+    """
+    from .audio import EchoCall  # noqa: PLC0415
+
+    obj = ctx.obj
+    aor = obj["aor"]
+
+    try:
+        target_uri = SipUri.parse(target)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="TARGET") from exc
+
+    class OutboundInviteTransaction(InviteTransaction):
+        def bye_received(self, request: messages.Request) -> None:
+            super().bye_received(request)
+            self.sip.close()
+
+    @dataclasses.dataclass(kw_only=True, slots=True)
+    class OutboundConsoleMessageProtocol(ConsoleMessageProtocol):
+        """ConsoleMessageProtocol that initiates an outbound call after registration."""
+
+        outbound_target: str = dataclasses.field(default="")
+
+        def on_registered(self) -> None:
+            tx = OutboundInviteTransaction(
+                sip=self,
+                method=SIPMethod.INVITE,
+                cseq=1,
+            )
+            asyncio.create_task(
+                tx.make_call(self.outbound_target, call_class=EchoCall)
+            )
+
+    async def run():
+        _, rtp_protocol = await _connect_rtp(
+            aor.maddr,
+            obj["stun_server"],
+        )
+        await _connect_sip_once(
+            lambda: OutboundConsoleMessageProtocol(
+                verbose=obj.get("verbose", 0),
+                transaction_class=OutboundInviteTransaction,
+                aor=aor,
+                rtp=rtp_protocol,
+                outbound_target=str(target_uri),
             ),
             aor.maddr,
             aor.transport == "TLS",

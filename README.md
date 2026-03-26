@@ -35,6 +35,12 @@ A simple echo server can be started with:
 uvx 'voip[cli]' sip sips:alice:********@sip.example.com echo
 ````
 
+You can also initiate an outbound call to a phone number or SIP URI:
+
+```console
+uvx 'voip[cli]' sip sips:alice:********@sip.example.com call sip:+15551234567@sip.example.com
+```
+
 You can also talk to a local agent (needs [Ollama]):
 
 ```console

@@ -309,6 +309,13 @@ class SessionInitiationProtocol(asyncio.Protocol):
         else:
             tx.response_received(response)
 
+    def on_registered(self) -> None:
+        """Handle successful carrier registration.
+
+        Override in subclasses to initiate outbound calls or start other
+        post-registration activity. The base implementation is a no-op.
+        """
+
     @property
     def contact(self) -> str:
         """Return a ``Contact:`` header value for this UA.
