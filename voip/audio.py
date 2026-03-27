@@ -206,6 +206,16 @@ class AudioCall(Session):
         else:
             self.outbound_handle = None
 
+    def on_audio_sent(self) -> None:
+        """Handle completion of an outbound audio stream.
+
+        Called once the last RTP packet of an outbound stream has been
+        dispatched (i.e. `outbound_handle` transitions to ``None``).
+        The base implementation is a no-op.  Override in subclasses to
+        trigger post-audio actions, for example hanging up after
+        [`SayCall`][voip.ai.SayCall] finishes speaking.
+        """
+
     def _dispatch_next_packet(
         self,
         packets: Iterator[bytes],
@@ -216,6 +226,7 @@ class AudioCall(Session):
             payload = next(packets)
         except StopIteration:
             self.outbound_handle = None
+            self.on_audio_sent()
         else:
             self.send_packet(self.next_rtp_packet(payload), remote_addr)
             duration_seconds = self.rpt_packet_duration.total_seconds()

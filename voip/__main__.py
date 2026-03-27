@@ -210,14 +210,108 @@ async def _connect_sip_once(
     await protocol.disconnected_event.wait()
 
 
+def _make_outbound_factory(
+    *,
+    verbose: int,
+    aor: SipUri,
+    rtp_protocol: RealtimeTransportProtocol,
+    target_uri: SipUri,
+    call_class: type,
+    call_kwargs: dict,
+) -> collections.abc.Callable[[], ConsoleMessageProtocol]:
+    """Build a single-shot protocol factory that dials TARGET after registration.
+
+    Returns a factory suitable for `_connect_sip_once`.  The factory creates a
+    [`ConsoleMessageProtocol`][voip.__main__.ConsoleMessageProtocol] subclass
+    that calls `on_registered` to initiate an outbound INVITE and closes the
+    SIP session when a BYE is received.
+
+    Args:
+        verbose: Verbosity level forwarded to
+            [`ConsoleMessageProtocol`][voip.__main__.ConsoleMessageProtocol].
+        aor: Local address-of-record.
+        rtp_protocol: Shared RTP mux.
+        target_uri: SIP URI to dial.
+        call_class: Call handler class (e.g. `EchoCall`).
+        call_kwargs: Extra keyword arguments forwarded to `call_class`.
+
+    Returns:
+        A zero-argument factory returning a new protocol instance.
+    """
+    target = str(target_uri)
+
+    class OutboundInviteTransaction(InviteTransaction):
+        def bye_received(self, request: messages.Request) -> None:
+            super().bye_received(request)
+            self.sip.close()
+
+    @dataclasses.dataclass(kw_only=True, slots=True)
+    class OutboundProtocol(ConsoleMessageProtocol):
+        dial_target: str
+
+        def on_registered(self) -> None:
+            tx = OutboundInviteTransaction(
+                sip=self,
+                method=SIPMethod.INVITE,
+                cseq=1,
+            )
+            asyncio.create_task(
+                tx.make_call(self.dial_target, call_class=call_class, **call_kwargs)
+            )
+
+    def factory() -> ConsoleMessageProtocol:
+        return OutboundProtocol(
+            verbose=verbose,
+            transaction_class=OutboundInviteTransaction,
+            aor=aor,
+            rtp=rtp_protocol,
+            dial_target=target,
+        )
+
+    return factory
+
+
+def _parse_dial_target(dial: str | None) -> SipUri | None:
+    """Parse and validate a ``--dial TARGET`` CLI value.
+
+    Args:
+        dial: Raw string from the ``--dial`` option, or ``None`` when the
+            option is not supplied.
+
+    Returns:
+        A parsed [`SipUri`][voip.sip.types.SipUri], or ``None`` when *dial*
+        is ``None``.
+
+    Raises:
+        click.BadParameter: When *dial* is not a valid SIP URI.
+    """
+    if dial is None:
+        return None
+    try:
+        return SipUri.parse(dial)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--dial") from exc
+
+
 @sip.command()
+@click.option(
+    "--dial",
+    metavar="TARGET",
+    default=None,
+    help="Dial TARGET (a SIP URI) instead of waiting for an inbound call.",
+)
 @click.pass_context
-def echo(ctx):
-    """Echo the caller's speech back after they finish speaking."""
+def echo(ctx, dial: str | None):
+    """Echo the caller's speech back after they finish speaking.
+
+    Without ``--dial``, waits for inbound calls and echoes them.
+    With ``--dial TARGET``, registers and immediately dials TARGET.
+    """
     from .audio import EchoCall  # noqa: PLC0415
 
     obj = ctx.obj
     aor = obj["aor"]
+    target_uri = _parse_dial_target(dial)
 
     class EchoInviteTransaction(InviteTransaction):
         def invite_received(self, request: messages.Request) -> None:
@@ -229,17 +323,32 @@ def echo(ctx):
             aor.maddr,
             obj["stun_server"],
         )
-        await _connect_sip(
-            lambda: ConsoleMessageProtocol(
-                verbose=obj.get("verbose", 0),
-                transaction_class=EchoInviteTransaction,
-                aor=aor,
-                rtp=rtp_protocol,
-            ),
-            aor.maddr,
-            aor.transport == "TLS",
-            obj["no_verify_tls"],
-        )
+        if target_uri is None:
+            await _connect_sip(
+                lambda: ConsoleMessageProtocol(
+                    verbose=obj.get("verbose", 0),
+                    transaction_class=EchoInviteTransaction,
+                    aor=aor,
+                    rtp=rtp_protocol,
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
+        else:
+            await _connect_sip_once(
+                _make_outbound_factory(
+                    verbose=obj.get("verbose", 0),
+                    aor=aor,
+                    rtp_protocol=rtp_protocol,
+                    target_uri=target_uri,
+                    call_class=EchoCall,
+                    call_kwargs={},
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
 
     try:
         asyncio.run(run())
@@ -255,15 +364,26 @@ def echo(ctx):
     show_default=True,
     help="Whisper model size.",
 )
+@click.option(
+    "--dial",
+    metavar="TARGET",
+    default=None,
+    help="Dial TARGET (a SIP URI) instead of waiting for an inbound call.",
+)
 @click.pass_context
-def transcribe(ctx, stt_model):
-    """Transcribe incoming call audio."""
+def transcribe(ctx, stt_model, dial: str | None):
+    """Transcribe incoming call audio.
+
+    Without ``--dial``, waits for inbound calls and transcribes them.
+    With ``--dial TARGET``, registers and immediately dials TARGET.
+    """
     from faster_whisper import WhisperModel
 
     from .ai import TranscribeCall  # noqa: PLC0415
 
     obj = ctx.obj
     aor = obj["aor"]
+    target_uri = _parse_dial_target(dial)
 
     @dataclasses.dataclass(kw_only=True, slots=True)
     class TranscribingCall(TranscribeCall):
@@ -285,17 +405,32 @@ def transcribe(ctx, stt_model):
             aor.maddr,
             obj["stun_server"],
         )
-        await _connect_sip(
-            lambda: ConsoleMessageProtocol(
-                verbose=obj.get("verbose", 0),
-                transaction_class=TranscribeInviteTransaction,
-                aor=aor,
-                rtp=rtp_protocol,
-            ),
-            aor.maddr,
-            aor.transport == "TLS",
-            obj["no_verify_tls"],
-        )
+        if target_uri is None:
+            await _connect_sip(
+                lambda: ConsoleMessageProtocol(
+                    verbose=obj.get("verbose", 0),
+                    transaction_class=TranscribeInviteTransaction,
+                    aor=aor,
+                    rtp=rtp_protocol,
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
+        else:
+            await _connect_sip_once(
+                _make_outbound_factory(
+                    verbose=obj.get("verbose", 0),
+                    aor=aor,
+                    rtp_protocol=rtp_protocol,
+                    target_uri=target_uri,
+                    call_class=TranscribingCall,
+                    call_kwargs={"stt_model": WhisperModel(stt_model)},
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
 
     try:
         asyncio.run(run())
@@ -335,15 +470,36 @@ def transcribe(ctx, stt_model):
     envvar="LLM_SYSTEM_PROMPT",
     help=("System prompt for the language model."),
 )
+@click.option(
+    "--initial-prompt",
+    default="",
+    envvar="LLM_INITIAL_PROMPT",
+    help=(
+        "Initial message the agent says when the call connects.  "
+        "Useful with --dial to start the conversation proactively."
+    ),
+)
+@click.option(
+    "--dial",
+    metavar="TARGET",
+    default=None,
+    help="Dial TARGET (a SIP URI) instead of waiting for an inbound call.",
+)
 @click.pass_context
-def agent(ctx, stt_model, llm_model, voice, system_prompt):
-    """Register with a SIP carrier and handle calls with an AI voice agent."""
+def agent(ctx, stt_model, llm_model, voice, system_prompt, initial_prompt, dial: str | None):
+    """Register with a SIP carrier and handle calls with an AI voice agent.
+
+    Without ``--dial``, waits for inbound calls.
+    With ``--dial TARGET``, registers and immediately dials TARGET.
+    Use ``--initial-prompt`` with ``--dial`` to start the conversation.
+    """
     from faster_whisper import WhisperModel
 
     from .ai import AgentCall  # noqa: PLC0415
 
     obj = ctx.obj
     aor = obj["aor"]
+    target_uri = _parse_dial_target(dial)
 
     @dataclasses.dataclass(kw_only=True, slots=True)
     class AgentCallWithOutput(AgentCall):
@@ -386,17 +542,38 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
             aor.maddr,
             obj["stun_server"],
         )
-        await _connect_sip(
-            lambda: ConsoleMessageProtocol(
-                verbose=obj.get("verbose", 0),
-                transaction_class=AgentInviteTransaction,
-                aor=aor,
-                rtp=rtp_protocol,
-            ),
-            aor.maddr,
-            aor.transport == "TLS",
-            obj["no_verify_tls"],
-        )
+        if target_uri is None:
+            await _connect_sip(
+                lambda: ConsoleMessageProtocol(
+                    verbose=obj.get("verbose", 0),
+                    transaction_class=AgentInviteTransaction,
+                    aor=aor,
+                    rtp=rtp_protocol,
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
+        else:
+            await _connect_sip_once(
+                _make_outbound_factory(
+                    verbose=obj.get("verbose", 0),
+                    aor=aor,
+                    rtp_protocol=rtp_protocol,
+                    target_uri=target_uri,
+                    call_class=AgentCallWithOutput,
+                    call_kwargs={
+                        "stt_model": WhisperModel(stt_model),
+                        "llm_model": llm_model,
+                        "voice": voice,
+                        "system_prompt": system_prompt,
+                        "initial_prompt": initial_prompt,
+                    },
+                ),
+                aor.maddr,
+                aor.transport == "TLS",
+                obj["no_verify_tls"],
+            )
 
     try:
         asyncio.run(run())
@@ -406,13 +583,22 @@ def agent(ctx, stt_model, llm_model, voice, system_prompt):
 
 @sip.command()
 @click.argument("target")
+@click.argument("prompt")
+@click.option(
+    "--voice",
+    default="marius",
+    envvar="TTS_VOICE",
+    show_default=True,
+    help="Pocket TTS voice name or path to a conditioning audio file.",
+)
 @click.pass_context
-def call(ctx, target: str):
-    """Initiate an outbound call to TARGET and echo the audio back.
+def say(ctx, target: str, prompt: str, voice: str):
+    """Dial TARGET, say PROMPT using TTS, and hang up.
 
     TARGET is a SIP URI, e.g. ``sip:+15551234567@carrier.com``.
+    PROMPT is the text message to synthesise and transmit.
     """
-    from .audio import EchoCall  # noqa: PLC0415
+    from .ai import SayCall  # noqa: PLC0415
 
     obj = ctx.obj
     aor = obj["aor"]
@@ -422,37 +608,19 @@ def call(ctx, target: str):
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="TARGET") from exc
 
-    class OutboundInviteTransaction(InviteTransaction):
-        def bye_received(self, request: messages.Request) -> None:
-            super().bye_received(request)
-            self.sip.close()
-
-    @dataclasses.dataclass(kw_only=True, slots=True)
-    class OutboundConsoleMessageProtocol(ConsoleMessageProtocol):
-        """ConsoleMessageProtocol that initiates an outbound call after registration."""
-
-        outbound_target: str = dataclasses.field(default="")
-
-        def on_registered(self) -> None:
-            tx = OutboundInviteTransaction(
-                sip=self,
-                method=SIPMethod.INVITE,
-                cseq=1,
-            )
-            asyncio.create_task(tx.make_call(self.outbound_target, call_class=EchoCall))
-
     async def run():
         _, rtp_protocol = await _connect_rtp(
             aor.maddr,
             obj["stun_server"],
         )
         await _connect_sip_once(
-            lambda: OutboundConsoleMessageProtocol(
+            _make_outbound_factory(
                 verbose=obj.get("verbose", 0),
-                transaction_class=OutboundInviteTransaction,
                 aor=aor,
-                rtp=rtp_protocol,
-                outbound_target=str(target_uri),
+                rtp_protocol=rtp_protocol,
+                target_uri=target_uri,
+                call_class=SayCall,
+                call_kwargs={"text": prompt, "voice": voice},
             ),
             aor.maddr,
             aor.transport == "TLS",

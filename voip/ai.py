@@ -19,14 +19,14 @@ import ollama
 from faster_whisper import WhisperModel
 from pocket_tts import TTSModel
 
-from voip.audio import VoiceActivityCall
+from voip.audio import AudioCall, VoiceActivityCall
 
 if typing.TYPE_CHECKING:
     import pathlib
 
     import torch
 
-__all__ = ["TranscribeCall", "AgentCall"]
+__all__ = ["AgentCall", "SayCall", "TranscribeCall"]
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,7 @@ class AgentCall(TranscribeCall):
         default_factory=lambda: TTSModel.load_model()
     )
     voice: pathlib.Path | str | torch.Tensor = dataclasses.field(default="azelma")
+    initial_prompt: str = dataclasses.field(default="")
     audio_interrupt_duration: datetime.timedelta = datetime.timedelta(seconds=0.75)
     _voice_state: dict[str, dict[str, torch.Tensor]] = dataclasses.field(
         init=False, repr=False
@@ -156,6 +157,8 @@ class AgentCall(TranscribeCall):
                 "content": self.system_prompt,
             }
         ]
+        if self.initial_prompt:
+            asyncio.create_task(self.send_speech(self.initial_prompt))
 
     def transcription_received(self, text: str) -> None:
         self.cancel_outbound_audio()
@@ -203,3 +206,54 @@ class AgentCall(TranscribeCall):
             pass
         else:
             self._cancel_audio_handle = None
+
+
+@dataclasses.dataclass(kw_only=True, slots=True)
+class SayCall(AudioCall):
+    """Dial a number, say a message using TTS, and hang up.
+
+    Synthesises `text` with Pocket TTS immediately after the call is
+    established, sends the audio as outbound RTP, then closes the SIP
+    session once the last packet has been dispatched.
+
+    Example:
+        ```python
+        class MySession(SessionInitiationProtocol):
+            def on_registered(self) -> None:
+                tx = InviteTransaction(sip=self, method=SIPMethod.INVITE, cseq=1)
+                asyncio.create_task(
+                    tx.make_call("sip:bob@biloxi.com", call_class=SayCall, text="Hello!")
+                )
+        ```
+
+    Args:
+        text: The message to synthesise and transmit.
+        tts_model: Pre-loaded Pocket TTS model.  A new default model is
+            loaded when omitted.
+        voice: Voice name or conditioning audio accepted by Pocket TTS.
+    """
+
+    text: str
+    tts_model: TTSModel = dataclasses.field(
+        default_factory=lambda: TTSModel.load_model()
+    )
+    voice: pathlib.Path | str | torch.Tensor = dataclasses.field(default="marius")
+    _voice_state: dict[str, dict[str, torch.Tensor]] = dataclasses.field(
+        init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.tts_model = self.tts_model or TTSModel.load_model()
+        self._voice_state = self.tts_model.get_state_for_audio_prompt(self.voice)
+        asyncio.create_task(self._say())
+
+    async def _say(self) -> None:
+        audio = self.tts_model.generate_audio(self._voice_state, self.text)
+        await self.send_audio(
+            self.resample(audio.numpy(), self.tts_model.sample_rate, self.codec.sample_rate_hz)
+        )
+
+    def on_audio_sent(self) -> None:
+        """Close the SIP session after the audio has been fully dispatched."""
+        self.sip.close()
