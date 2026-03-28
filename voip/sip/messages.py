@@ -199,7 +199,7 @@ class Dialog:
     @property
     def from_header(self) -> str:
         """The logical sender of a request."""
-        return f"{self.uac.scheme}:{self.uac.user}@{socket.gethostname()};tag={self.local_tag}"
+        return f"{self.uac.scheme}:{self.uac.user}@{self.uac.host};tag={self.local_tag}"
 
     @property
     def to_header(self) -> str:

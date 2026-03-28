@@ -765,9 +765,7 @@ class InviteTransaction(Transaction):
 
         ack_branch = f"{Transaction.branch_prefix}-{uuid.uuid4()}"
         contact = response.headers.get("Contact")
-        ack_uri = (
-            contact.strip("<>").split(";")[0] if contact else str(self.request.uri)
-        )
+        ack_uri = contact.strip("<>").split(";")[0]
         self.sip.send(
             Request(
                 method=SIPMethod.ACK,
@@ -775,13 +773,15 @@ class InviteTransaction(Transaction):
                 headers={
                     "Via": (
                         f"SIP/2.0/{self.sip.aor.transport}"
-                        f" {self.sip.local_address};rport;branch={ack_branch}"
+                        f" {self.sip.rtp.public_address};rport;branch={ack_branch};alias"
                     ),
-                    "From": self.request.headers["From"],
+                    "Max-Forwards": "70",
+                    "From": response.headers["From"],
                     "To": response.headers["To"],
                     "Call-ID": self.dialog.call_id,
                     "CSeq": f"{self.cseq} {SIPMethod.ACK}",
-                    "Max-Forwards": "70",
+                    "Route": response.headers["Record-Route"],
+                    "Content-Length": 0,
                 },
             )
         )
