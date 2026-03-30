@@ -659,8 +659,8 @@ class TestSayCall:
 
     async def test_hang_up__sends_bye_and_closes_sip(self):
         """hang_up sends BYE and closes the SIP transport."""
-        from voip.sip.messages import Dialog
         from voip.rtp import RealtimeTransportProtocol
+        from voip.sip.messages import Dialog
 
         tts_mock = MagicMock()
         tts_mock.get_state_for_audio_prompt.return_value = MagicMock()

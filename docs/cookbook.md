@@ -201,10 +201,10 @@ session = SIP(
 
 ## Hanging Up a Call
 
-Every [`Session`][voip.rtp.Session] subclass exposes a
-[`hang_up`][voip.rtp.Session.hang_up] coroutine that sends a proper SIP BYE
+Every \[`Session`\][voip.rtp.Session] subclass exposes a
+\[`hang_up`\][voip.rtp.Session.hang_up] coroutine that sends a proper SIP BYE
 request (RFC 3261 §15) to terminate the active dialog and deregisters the RTP
-handler.  You can call it programmatically from within any call class:
+handler. You can call it programmatically from within any call class:
 
 ```python
 import asyncio
@@ -247,8 +247,8 @@ async def main():
 asyncio.run(main())
 ```
 
-[`hang_up`][voip.rtp.Session.hang_up] sends the BYE and cleans up the dialog
+\[`hang_up`\][voip.rtp.Session.hang_up] sends the BYE and cleans up the dialog
 and RTP handler — it does **not** close the SIP transport so that the same
-[`SIP`][voip.sip.protocol.SessionInitiationProtocol] instance can continue
-handling other calls.  Call `sip.close()` when you also want to tear down the
+\[`SIP`\][voip.sip.protocol.SessionInitiationProtocol] instance can continue
+handling other calls. Call `sip.close()` when you also want to tear down the
 transport.
