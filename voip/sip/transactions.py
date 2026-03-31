@@ -845,6 +845,8 @@ class ByeTransaction(Transaction):
     [RFC 3261 §17.1.2]: https://datatracker.ietf.org/doc/html/rfc3261#section-17.1.2
     """
 
+    method: SIPMethod = SIPMethod.BYE
+
     def __post_init__(self):
         self.cseq = self.dialog.outbound_cseq
         self.dialog.outbound_cseq += 1

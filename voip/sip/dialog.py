@@ -142,9 +142,8 @@ class Dialog:
         [RFC 3261 §15]: https://datatracker.ietf.org/doc/html/rfc3261#section-15
         """
         from voip.sip.transactions import ByeTransaction  # noqa: PLC0415
-        from voip.sip.types import SIPMethod  # noqa: PLC0415
 
-        tx = ByeTransaction(sip=self.sip, method=SIPMethod.BYE, dialog=self)
+        tx = ByeTransaction(sip=self.sip, dialog=self)
         try:
             await asyncio.wait_for(tx.wait(), timeout=self.BYE_ACK_TIMEOUT)
         except TimeoutError:
