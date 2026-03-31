@@ -249,8 +249,13 @@ class Dialog:
     BYE_ACK_TIMEOUT: typing.ClassVar[float] = 32.0
     """Seconds to wait for a 200 OK from the remote party after sending BYE.
 
-    Defaults to 64×T1 = 32 s (RFC 3261 §17.1.2).  Override in subclasses to
-    change the timeout.
+    Defaults to 64×T1 = 32 s — the standard non-INVITE transaction timeout
+    from [RFC 3261 §17.1.2].  The timeout lives on `Dialog` (rather than on
+    [`ByeTransaction`][voip.sip.transactions.ByeTransaction]) so that
+    application subclasses can configure it in one place alongside the other
+    call lifecycle hooks.  Override in subclasses to change the timeout.
+
+    [RFC 3261 §17.1.2]: https://datatracker.ietf.org/doc/html/rfc3261#section-17.1.2
     """
 
     uac: SipUri | None = None

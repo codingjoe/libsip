@@ -216,8 +216,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
         Always includes INVITE, ACK, BYE, CANCEL, and OPTIONS since
         [`InviteTransaction`][voip.sip.transactions.InviteTransaction] handles
-        all of these.  Additional methods (e.g. REGISTER) are included when
-        the session defines a corresponding ``<method_lower>_received`` handler.
+        all of these.  OPTIONS is handled directly in
+        [`request_received`][voip.sip.protocol.SessionInitiationProtocol.request_received]
+        without an ``options_received`` method, so it is added explicitly here.
+        Additional methods (e.g. REGISTER) are included when the session
+        defines a corresponding ``<method_lower>_received`` handler.
 
         Returns:
             Frozenset of [`SIPMethod`][voip.sip.types.SIPMethod] values.
@@ -232,6 +235,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
             for m in SIPMethod
             if hasattr(self, f"{m.lower()}_received")
         )
+        # OPTIONS is handled inline in request_received() without a dedicated
+        # handler method, so we add it to the allowed set explicitly.
         return core | extra | frozenset([SIPMethod.OPTIONS])
 
     @property

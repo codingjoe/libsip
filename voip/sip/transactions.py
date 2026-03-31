@@ -120,8 +120,7 @@ class Transaction:
         try:
             dialog = sip.dialogs[request.remote_tag, request.local_tag]
         except KeyError:
-            dialog_class = getattr(sip, "dialog_class", Dialog)
-            dialog = dialog_class.from_request(request)
+            dialog = sip.dialog_class.from_request(request)
         return cls(
             sip=sip,
             dialog=dialog,
