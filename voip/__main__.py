@@ -220,7 +220,7 @@ def _make_outbound_factory(
         def on_registered(self) -> None:
             dialog = OutboundDialog(sip=self)
             asyncio.create_task(
-                dialog.dial(self.dial_target, call_class=call_class, **call_kwargs)
+                dialog.dial(self.dial_target, session_class=call_class, **call_kwargs)
             )
 
     def factory() -> ConsoleMessageProtocol:
@@ -263,7 +263,7 @@ def echo(ctx, dial: str | None):
     class EchoDialog(dialog.Dialog):
         def call_received(self) -> None:
             self.ringing()
-            self.accept(call_class=EchoCall)
+            self.accept(session_class=EchoCall)
 
     async def run():
         _, rtp_protocol = await _connect_rtp(
@@ -339,7 +339,7 @@ def transcribe(ctx, stt_model, dial: str | None):
         def call_received(self) -> None:
             self.ringing()
             self.accept(
-                call_class=TranscribingCall,
+                session_class=TranscribingCall,
                 stt_model=WhisperModel(stt_model),
             )
 
@@ -470,7 +470,7 @@ def agent(
         def call_received(self) -> None:
             self.ringing()
             self.accept(
-                call_class=AgentCallWithOutput,
+                session_class=AgentCallWithOutput,
                 stt_model=WhisperModel(stt_model),
                 llm_model=llm_model,
                 voice=voice,

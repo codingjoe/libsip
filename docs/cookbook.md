@@ -33,7 +33,7 @@ class AutoAcceptDialog(Dialog):
 
     def call_received(self) -> None:
         self.ringing()
-        self.accept(call_class=PrintTranscribeCall)
+        self.accept(session_class=PrintTranscribeCall)
 
 
 async def main():
@@ -101,7 +101,7 @@ class MyCall(AgentCall):
 class MyDialog(Dialog):
     def call_received(self) -> None:
         self.ringing()
-        self.accept(call_class=MyCall)
+        self.accept(session_class=MyCall)
 
 
 class MySession(SIP):
@@ -252,7 +252,7 @@ class OneUtteranceCall(AudioCall):
 class MyDialog(Dialog):
     def call_received(self) -> None:
         self.ringing()
-        self.accept(call_class=OneUtteranceCall)
+        self.accept(session_class=OneUtteranceCall)
 
 
 class MySession(SIP):
@@ -316,7 +316,7 @@ class MySession(SIP):
     def on_registered(self) -> None:
         dialog = OutboundDialog(sip=self)
         asyncio.create_task(
-            dialog.dial("sip:+15551234567@carrier.com", call_class=MyCall)
+            dialog.dial("sip:+15551234567@carrier.com", session_class=MyCall)
         )
 
 

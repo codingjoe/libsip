@@ -86,7 +86,7 @@ class TranscribeInviteTransaction(InviteTransaction):
     def invite_received(self, request) -> None:
         self.ringing()
         self.answer(
-            call_class=TranscribingCall,
+            session_class=TranscribingCall,
             stt_model=WhisperModel("kyutai/stt-1b-en_fr-trfs", device="cuda"),
         )
 

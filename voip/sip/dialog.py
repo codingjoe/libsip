@@ -127,15 +127,19 @@ class Dialog:
         if self.invite_transaction is not None:
             self.invite_transaction.ringing()
 
-    def accept(self, *, call_class: type, **call_kwargs: typing.Any) -> None:
+    def accept(
+        self, *, session_class: type[Session], **session_kwargs: typing.Any
+    ) -> None:
         """Accept the inbound call and answer with 200 OK.
 
         Args:
-            call_class: Session subclass to create for this call.
-            **call_kwargs: Extra keyword arguments forwarded to `call_class`.
+            session_class: Session subclass to create for this call.
+            **session_kwargs: Extra keyword arguments forwarded to `call_class`.
         """
         if self.invite_transaction is not None:
-            self.invite_transaction.answer(call_class=call_class, **call_kwargs)
+            self.invite_transaction.answer(
+                session_class=session_class, **session_kwargs
+            )
 
     def reject(self, status_code: types.SIPStatus = types.SIPStatus.BUSY_HERE) -> None:
         """Reject the inbound call.
@@ -170,15 +174,15 @@ class Dialog:
         self,
         target: str,
         *,
-        call_class: type[Session],
-        **call_kwargs: typing.Any,
+        session_class: type[Session],
+        **session_kwargs: typing.Any,
     ) -> None:
         """Initiate an outbound call to *target* [RFC 3261 §13.1].
 
         Args:
             target: SIP URI of the callee (e.g. ``"sip:+15551234567@carrier.com"``).
-            call_class: Session subclass to create for this call.
-            **call_kwargs: Extra keyword arguments forwarded to `call_class`.
+            session_class: Session subclass to create for this call.
+            **session_kwargs: Extra keyword arguments forwarded to `call_class`.
 
         [RFC 3261 §13.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-13.1
         """
@@ -193,14 +197,17 @@ class Dialog:
             cseq=1,
             dialog=self,
         )
-        await tx.make_call(target, dialog=self, call_class=call_class, **call_kwargs)
+        await tx.make_call(
+            target, dialog=self, session_class=session_class, **session_kwargs
+        )
 
     @classmethod
-    def from_request(cls, request: messages.Request) -> Dialog:
+    def from_request(cls, request: messages.Request, **kwargs) -> Dialog:
         """Create a dialog from a request, extracting relevant headers."""
         return cls(
             call_id=request.headers["Call-ID"],
             local_tag=request.local_tag,
             remote_tag=request.remote_tag or str(uuid.uuid4()),
             remote_contact=request.headers.get("Contact"),
+            **kwargs,
         )

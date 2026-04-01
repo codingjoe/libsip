@@ -83,7 +83,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
             create dialogs for incoming calls.  Defaults to the base
             [Dialog][voip.sip.dialog.Dialog] which rejects all calls with
             ``486 Busy Here``.
-        registration_class: Transaction subclass to handle registration transactions.
         keepalive_interval: Keep-alive ping interval. Should be between 30 and 90 seconds.
 
     """
@@ -91,7 +90,6 @@ class SessionInitiationProtocol(asyncio.Protocol):
     aor: types.SipUri
     rtp: RealtimeTransportProtocol
     dialog_class: type[Dialog] = dataclasses.field(default=Dialog)
-    registration_class: type[RegistrationTransaction] = RegistrationTransaction
     keepalive_interval: datetime.timedelta = datetime.timedelta(seconds=30)
 
     keepalive_task: asyncio.Task | None = dataclasses.field(init=False, default=None)

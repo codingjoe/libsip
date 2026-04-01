@@ -455,7 +455,9 @@ class InviteTransaction(Transaction):
             )
         )
 
-    def answer(self, *, call_class: type[Session], **call_kwargs: typing.Any) -> None:
+    def answer(
+        self, *, session_class: type[Session], **session_kwargs: typing.Any
+    ) -> None:
         """Answer the call by setting up RTP and sending 200 OK with SDP.
 
         Example:
@@ -469,8 +471,8 @@ class InviteTransaction(Transaction):
             ```
 
         Args:
-            call_class: Session implementation that will be initialized.
-            **call_kwargs: Additional keyword arguments forwarded to the
+            session_class: Session implementation that will be initialized.
+            **session_kwargs: Additional keyword arguments forwarded to the
                 call class constructor.
 
         Raises:
@@ -492,7 +494,7 @@ class InviteTransaction(Transaction):
             None,
         )
         if remote_audio is not None:
-            negotiated_media = call_class.negotiate_codec(remote_audio)
+            negotiated_media = session_class.negotiate_codec(remote_audio)
         else:
             negotiated_media = MediaDescription(
                 media="audio",
@@ -503,21 +505,24 @@ class InviteTransaction(Transaction):
 
         use_srtp = negotiated_media.proto == "RTP/SAVP"
         srtp_session = SRTPSession.generate() if use_srtp else None
+        from .dialog import Dialog
 
-        dialog = Dialog.from_request(self.request)
-        dialog.sip = self.sip
-        dialog.local_party = f"{self.request.headers['To']};tag={dialog.remote_tag}"
-        dialog.remote_party = str(self.request.headers["From"])
-        dialog.route_set = list(self.request.headers.getlist("Record-Route"))
+        dialog = Dialog.from_request(
+            self.request,
+            sip=self.sip,
+            local_party=f"{self.request.headers['To']};tag={self.request.remote_tag}",
+            remote_party=str(self.request.headers["From"]),
+            route_set=list(self.request.headers.getlist("Record-Route")),
+        )
         self.sip.dialogs[dialog.remote_tag, dialog.local_tag] = dialog
 
-        call_handler = call_class(
+        call_handler = session_class(
             rtp=self.sip.rtp,
             caller=caller,
             media=negotiated_media,
             srtp=srtp_session,
             dialog=dialog,
-            **call_kwargs,
+            **session_kwargs,
         )
         if remote_audio is not None and remote_audio.port != 0:
             media_connection = remote_audio.connection
@@ -596,9 +601,9 @@ class InviteTransaction(Transaction):
         self,
         target: str,
         *,
-        call_class: type[Session],
         dialog: Dialog,
-        **call_kwargs: typing.Any,
+        session_class: type[Session],
+        **session_kwargs: typing.Any,
     ) -> Request:
         """Initiate an outgoing call to `target`.
 
@@ -612,17 +617,17 @@ class InviteTransaction(Transaction):
 
         Args:
             target: SIP URI of the callee (e.g. ``"sip:+15551234567@carrier.com"``).
-            call_class: Session implementation that will be initialized for the call.
+            session_class: Session implementation that will be initialized for the call.
             dialog: Existing dialog to use.  When ``None`` a new dialog is
                 created from the SIP session's AOR.
-            **call_kwargs: Additional keyword arguments forwarded to the
+            **session_kwargs: Additional keyword arguments forwarded to the
                 call class constructor.
 
         Returns:
             The INVITE [Request][voip.sip.messages.Request] that was sent.
         """
-        self.pending_call_class = call_class
-        self.pending_call_kwargs = call_kwargs
+        self.pending_call_class = session_class
+        self.pending_call_kwargs = session_kwargs
 
         target_uri = types.SipUri.parse(target)
         self.dialog = dialog
@@ -656,7 +661,7 @@ class InviteTransaction(Transaction):
                     media="audio",
                     port=rtp_public[1],
                     proto="RTP/AVP",
-                    fmt=call_class.sdp_formats(),
+                    fmt=session_class.sdp_formats(),
                     attributes=[Attribute(name="sendrecv")],
                 )
             ],
