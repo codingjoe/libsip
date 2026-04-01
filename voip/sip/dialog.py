@@ -9,6 +9,9 @@ import uuid
 from voip.sip import messages, transactions, types
 from voip.sip.types import SipUri
 
+if typing.TYPE_CHECKING:
+    from voip.rtp import Session
+
 logger = logging.getLogger("voip.sip")
 
 
@@ -39,8 +42,15 @@ class Dialog:
     [RFC 3261 §12]: https://datatracker.ietf.org/doc/html/rfc3261#section-12
     """
 
-    BYE_ACK_TIMEOUT: typing.ClassVar[float] = 32.0
-    """Seconds to wait for a 200 OK after sending BYE (64×T1, [RFC 3261 §17.1.2]).
+    T1: typing.ClassVar[datetime.timedelta] = datetime.timedelta(milliseconds=500)
+    """
+    Retransmission time according to [RFC 3261 §17.1.1].
+
+    [RFC 3261 §17.1.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-17.1.1
+    """
+
+    BYE_ACK_TIMEOUT: typing.ClassVar[datetime.timedelta] = 64 * T1
+    """Time to wait for a 200 OK after sending BYE (64×T1, [RFC 3261 §17.1.2]).
 
     [RFC 3261 §17.1.2]: https://datatracker.ietf.org/doc/html/rfc3261#section-17.1.2
     """
@@ -62,7 +72,7 @@ class Dialog:
     sip: transactions.SessionInitiationProtocol | None = dataclasses.field(
         default=None, compare=False, repr=False
     )
-    invite_tx: transactions.InviteTransaction | None = dataclasses.field(
+    invite_transaction: transactions.InviteTransaction | None = dataclasses.field(
         default=None, compare=False, repr=False
     )
 
@@ -114,8 +124,8 @@ class Dialog:
 
         [RFC 3261 §21.1.2]: https://datatracker.ietf.org/doc/html/rfc3261#section-21.1.2
         """
-        if self.invite_tx is not None:
-            self.invite_tx.ringing()
+        if self.invite_transaction is not None:
+            self.invite_transaction.ringing()
 
     def accept(self, *, call_class: type, **call_kwargs: typing.Any) -> None:
         """Accept the inbound call and answer with 200 OK.
@@ -124,8 +134,8 @@ class Dialog:
             call_class: Session subclass to create for this call.
             **call_kwargs: Extra keyword arguments forwarded to `call_class`.
         """
-        if self.invite_tx is not None:
-            self.invite_tx.answer(call_class=call_class, **call_kwargs)
+        if self.invite_transaction is not None:
+            self.invite_transaction.answer(call_class=call_class, **call_kwargs)
 
     def reject(self, status_code: types.SIPStatus = types.SIPStatus.BUSY_HERE) -> None:
         """Reject the inbound call.
@@ -133,8 +143,8 @@ class Dialog:
         Args:
             status_code: SIP response status code (default: 486 Busy Here).
         """
-        if self.invite_tx is not None:
-            self.invite_tx.reject(status_code)
+        if self.invite_transaction is not None:
+            self.invite_transaction.reject(status_code)
 
     async def bye(self) -> None:
         """Terminate the dialog by sending a SIP BYE request [RFC 3261 §15].
@@ -145,7 +155,9 @@ class Dialog:
 
         tx = ByeTransaction(sip=self.sip, dialog=self)
         try:
-            await asyncio.wait_for(tx.wait(), timeout=self.BYE_ACK_TIMEOUT)
+            await asyncio.wait_for(
+                tx.wait(), timeout=self.BYE_ACK_TIMEOUT.total_seconds()
+            )
         except TimeoutError:
             logger.warning(
                 "BYE for dialog %s was not acknowledged within %.0f s",
@@ -158,7 +170,7 @@ class Dialog:
         self,
         target: str,
         *,
-        call_class: type,
+        call_class: type[Session],
         **call_kwargs: typing.Any,
     ) -> None:
         """Initiate an outbound call to *target* [RFC 3261 §13.1].
@@ -181,7 +193,7 @@ class Dialog:
             cseq=1,
             dialog=self,
         )
-        await tx.make_call(target, call_class=call_class, **call_kwargs)
+        await tx.make_call(target, dialog=self, call_class=call_class, **call_kwargs)
 
     @classmethod
     def from_request(cls, request: messages.Request) -> Dialog:

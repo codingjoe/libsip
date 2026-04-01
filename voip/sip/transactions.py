@@ -366,7 +366,7 @@ class InviteTransaction(Transaction):
         Args:
             request: The SIP INVITE request.
         """
-        self.dialog.invite_tx = self
+        self.dialog.invite_transaction = self
         self.dialog.sip = self.sip
         self.dialog.call_received()
 
@@ -597,7 +597,7 @@ class InviteTransaction(Transaction):
         target: str,
         *,
         call_class: type[Session],
-        dialog: Dialog | None = None,
+        dialog: Dialog,
         **call_kwargs: typing.Any,
     ) -> Request:
         """Initiate an outgoing call to `target`.
@@ -621,18 +621,13 @@ class InviteTransaction(Transaction):
         Returns:
             The INVITE [Request][voip.sip.messages.Request] that was sent.
         """
-        from .dialog import Dialog
-
         self.pending_call_class = call_class
         self.pending_call_kwargs = call_kwargs
 
         target_uri = types.SipUri.parse(target)
-        if dialog is not None:
-            self.dialog = dialog
-            if self.dialog.uac is None:
-                self.dialog.uac = self.sip.aor
-        else:
-            self.dialog = Dialog(uac=self.sip.aor)
+        self.dialog = dialog
+        if self.dialog.uac is None:
+            self.dialog.uac = self.sip.aor
         self.dialog.sip = self.sip
 
         rtp_public = self.sip.rtp.public_address
