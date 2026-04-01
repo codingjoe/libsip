@@ -1,6 +1,6 @@
 # Cookbook
 
-To build anything we need to understand two fundamental concepts: **Dialogs and [Sessions](sessions.md).**
+To build anything we need to understand two fundamental concepts: **[Dialogs][voip.sip.Dialog] and [Sessions](sessions.md).**
 
 Dial, accept, reject, hold, transfer, etc. are part of a **dialog** between you and the remote party.
 
