@@ -479,6 +479,8 @@ class InviteTransaction(Transaction):
             NotImplementedError: When `negotiate_codec` raises (no supported
                 codec in the remote SDP offer).
         """
+        from .dialog import Dialog
+
         peer = (
             self.sip.transport.get_extra_info("peername")
             if self.sip.transport
@@ -505,7 +507,6 @@ class InviteTransaction(Transaction):
 
         use_srtp = negotiated_media.proto == "RTP/SAVP"
         srtp_session = SRTPSession.generate() if use_srtp else None
-        from .dialog import Dialog
 
         dialog = Dialog.from_request(
             self.request,
