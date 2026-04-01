@@ -17,7 +17,7 @@ from ..types import NetworkAddress
 from . import types
 from .dialog import Dialog
 from .messages import Message, Request, Response
-from .transactions import InviteTransaction, RegistrationTransaction, Transaction
+from .transactions import ByeTransaction, InviteTransaction, RegistrationTransaction, Transaction
 from .types import (
     SIPMethod,
     SIPStatus,
@@ -119,6 +119,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             loop = asyncio.get_running_loop()
             tx = RegistrationTransaction(sip=self, method=SIPMethod.REGISTER)
             self.transactions[tx.branch] = tx
+            loop.create_task(self.handle_registration(tx))
             self.keepalive_task = loop.create_task(self.send_keepalive())
         except RuntimeError:
             pass  # no running loop in synchronous test setups
@@ -130,6 +131,11 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 return
             logger.info("PING", extra={"addr": self.local_address})
             self.transport.write(PING)
+
+    async def handle_registration(self, tx: RegistrationTransaction) -> None:
+        """Await carrier registration and invoke [on_registered][voip.sip.protocol.SessionInitiationProtocol.on_registered]."""
+        await tx
+        self.on_registered()
 
     def data_received(self, data: bytes) -> None:
         self.recv_buffer.extend(data)
@@ -211,28 +217,16 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
     @property
     def allowed_methods(self) -> frozenset[SIPMethod]:
-        """SIP methods supported by this UA.
-
-        Always includes INVITE, ACK, BYE, CANCEL, and OPTIONS since
-        [InviteTransaction][voip.sip.transactions.InviteTransaction] handles
-        all of these.  OPTIONS is handled directly in
-        [request_received][voip.sip.protocol.SessionInitiationProtocol.request_received]
-        without an ``options_received`` method, so it is added explicitly here.
-        Additional methods (e.g. REGISTER) are included when the session
-        defines a corresponding ``<method_lower>_received`` handler.
-
-        Returns:
-            Frozenset of [SIPMethod][voip.sip.types.SIPMethod] values.
-        """
-        core = frozenset(
-            m for m in SIPMethod if hasattr(InviteTransaction, f"{m.lower()}_received")
+        """SIP methods supported by this UA."""
+        return frozenset(
+            {
+                SIPMethod.INVITE,
+                SIPMethod.ACK,
+                SIPMethod.BYE,
+                SIPMethod.CANCEL,
+                SIPMethod.OPTIONS,
+            }
         )
-        extra = frozenset(
-            m for m in SIPMethod if hasattr(self, f"{m.lower()}_received")
-        )
-        # OPTIONS is handled inline in request_received() without a dedicated
-        # handler method, so we add it to the allowed set explicitly.
-        return core | extra | frozenset([SIPMethod.OPTIONS])
 
     @property
     def allow_header(self) -> str:
@@ -262,8 +256,22 @@ class SessionInitiationProtocol(asyncio.Protocol):
         )
 
     def request_received(self, request: Request) -> None:
-        """Dispatch request to transaction methods."""
+        """Dispatch an incoming SIP request to the appropriate transaction."""
         match request.method:
+            case SIPMethod.INVITE:
+                asyncio.create_task(
+                    InviteTransaction.receive(request=request, sip=self)
+                )
+            case SIPMethod.ACK:
+                try:
+                    dialog = self.dialogs[request.remote_tag, request.local_tag]
+                    dialog.invite_transaction.ack_received(request)
+                except (KeyError, AttributeError):
+                    logger.warning("ACK for unknown dialog: %r", request)
+            case SIPMethod.BYE:
+                asyncio.create_task(
+                    ByeTransaction.receive(request=request, sip=self)
+                )
             case SIPMethod.CANCEL:
                 try:
                     tx = self.transactions[request.branch]
@@ -276,6 +284,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         )
                     )
                     return
+                tx.cancel_received(request)
             case SIPMethod.OPTIONS:
                 self.send(
                     Response.from_request(
@@ -285,17 +294,8 @@ class SessionInitiationProtocol(asyncio.Protocol):
                         headers={"Allow": self.allow_header},
                     )
                 )
-                return
             case _:
-                tx = InviteTransaction.from_request(request=request, sip=self)
-                self.transactions[request.branch] = tx
-        try:
-            handler: typing.Callable[[Request], Response | None] = getattr(
-                tx, f"{request.method.lower()}_received"
-            )
-        except AttributeError:
-            handler = self.method_not_allowed
-        handler(request)
+                self.method_not_allowed(request)
 
     def response_received(self, response: Response) -> None:
         """Delegate REGISTER responses to the registration transaction.

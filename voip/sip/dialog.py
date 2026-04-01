@@ -157,10 +157,10 @@ class Dialog:
         """
         from voip.sip.transactions import ByeTransaction  # noqa: PLC0415
 
-        tx = ByeTransaction(sip=self.sip, dialog=self)
         try:
             await asyncio.wait_for(
-                tx.wait(), timeout=self.BYE_ACK_TIMEOUT.total_seconds()
+                ByeTransaction.send(sip=self.sip, dialog=self),
+                timeout=self.BYE_ACK_TIMEOUT.total_seconds(),
             )
         except TimeoutError:
             logger.warning(
@@ -187,18 +187,13 @@ class Dialog:
         [RFC 3261 §13.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-13.1
         """
         from voip.sip.transactions import InviteTransaction  # noqa: PLC0415
-        from voip.sip.types import SIPMethod  # noqa: PLC0415
 
-        if self.uac is None and self.sip is not None:
-            self.uac = self.sip.aor
-        tx = InviteTransaction(
+        await InviteTransaction.send(
             sip=self.sip,
-            method=SIPMethod.INVITE,
-            cseq=1,
+            target=target,
             dialog=self,
-        )
-        await tx.make_call(
-            target, dialog=self, session_class=session_class, **session_kwargs
+            session_class=session_class,
+            **session_kwargs,
         )
 
     @classmethod
