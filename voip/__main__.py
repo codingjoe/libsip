@@ -12,7 +12,7 @@ from voip.ai import SayCall
 from voip.rtp import RealtimeTransportProtocol, Session
 from voip.sip import dialog, messages
 from voip.sip.protocol import SessionInitiationProtocol
-from voip.sip.types import SipUri
+from voip.sip.types import SipURI
 from voip.types import NetworkAddress
 
 try:
@@ -116,7 +116,7 @@ def sip(ctx, aor, stun_server, no_verify_tls):
     """Session Initiation Protocol (SIP)."""
     ctx.ensure_object(dict)
     try:
-        parsed_aor = SipUri.parse(aor)
+        parsed_aor = SipURI.parse(aor)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="AOR") from exc
 
@@ -200,9 +200,9 @@ async def _connect_sip_once(
 def _make_outbound_factory(
     *,
     verbose: int,
-    aor: SipUri,
+    aor: SipURI,
     rtp_protocol: RealtimeTransportProtocol,
-    target_uri: SipUri,
+    target_uri: SipURI,
     session_class: type[Session],
     session_kwargs: dict,
 ) -> collections.abc.Callable[[], ConsoleMessageProtocol]:
@@ -237,11 +237,11 @@ def _make_outbound_factory(
     return factory
 
 
-def _parse_dial_target(dial: str | None) -> SipUri | None:
+def _parse_dial_target(dial: str | None) -> SipURI | None:
     if dial is None:
         return None
     try:
-        return SipUri.parse(dial)
+        return SipURI.parse(dial)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--dial") from exc
 
@@ -541,7 +541,7 @@ def say(ctx, target: str, prompt: str, voice: str):
     aor = obj["aor"]
 
     try:
-        target_uri = SipUri.parse(target)
+        target_uri = SipURI.parse(target)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="TARGET") from exc
 

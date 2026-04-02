@@ -18,9 +18,9 @@
 
 ## Types
 
-::: voip.sip.SipUri
+::: voip.sip.SipURI
 
-::: voip.sip.TelUri
+::: voip.sip.TelURI
 
 ::: voip.sip.CallerID
 

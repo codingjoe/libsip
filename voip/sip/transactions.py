@@ -182,7 +182,7 @@ class RegistrationTransaction(Transaction):
         self.request = Request.from_dialog(
             dialog=self.dialog,
             method=SIPMethod.REGISTER,
-            uri=types.SipUri(host=self.sip.aor.host, scheme=self.sip.aor.scheme),
+            uri=types.SipURI(host=self.sip.aor.host, scheme=self.sip.aor.scheme),
             headers=headers,
         )
 
@@ -626,7 +626,7 @@ class InviteTransaction(Transaction):
         cls,
         *,
         sip: SessionInitiationProtocol,
-        target: types.SipUri,
+        target: types.SipURI,
         dialog: Dialog,
         session_class: type[Session],
         **session_kwargs: typing.Any,

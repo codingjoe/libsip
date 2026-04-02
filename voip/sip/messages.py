@@ -10,7 +10,7 @@ from urllib3 import HTTPHeaderDict
 from voip.sdp.messages import SessionDescription
 
 from ..types import ByteSerializableObject
-from .types import CallerID, SIPMethod, SIPStatus, SipUri
+from .types import CallerID, SIPMethod, SIPStatus, SipURI
 
 if typing.TYPE_CHECKING:
     from voip.sip.dialog import Dialog
@@ -105,7 +105,7 @@ class Message(ByteSerializableObject, abc.ABC):
     def branch(self) -> str | None:
         """Branch parameter from the top Via header (RFC 3261 §20.42)."""
         _, uri = self.headers["Via"].split()
-        return SipUri.parse(f"sip:{uri}").parameters["branch"]
+        return SipURI.parse(f"sip:{uri}").parameters["branch"]
 
     @property
     def remote_tag(self) -> str | None:
@@ -135,7 +135,7 @@ class Request(Message):
     """
 
     method: SIPMethod | str
-    uri: SipUri | str
+    uri: SipURI | str
 
     def _first_line(self) -> str:
         return f"{self.method} {self.uri} {self.version}"

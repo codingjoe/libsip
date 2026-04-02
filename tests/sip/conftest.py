@@ -8,7 +8,7 @@ from voip.rtp import RealtimeTransportProtocol, Session
 from voip.sdp.types import MediaDescription, RTPPayloadFormat
 from voip.sip.dialog import Dialog
 from voip.sip.protocol import SessionInitiationProtocol
-from voip.sip.types import SipUri
+from voip.sip.types import SipURI
 from voip.types import NetworkAddress
 
 
@@ -77,7 +77,7 @@ async def sip(
 ) -> SessionInitiationProtocol:
     """Return a connected SIP session with keepalive cancelled."""
     session = SessionInitiationProtocol(
-        aor=SipUri.parse("sips:alice:secret@example.com:5061"),
+        aor=SipURI.parse("sips:alice:secret@example.com:5061"),
         rtp=rtp,
         dialog_class=Dialog,
     )

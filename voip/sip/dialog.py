@@ -7,7 +7,7 @@ import typing
 import uuid
 
 from voip.sip import messages, transactions, types
-from voip.sip.types import SipUri
+from voip.sip.types import SipURI
 
 if typing.TYPE_CHECKING:
     from voip.rtp import Session
@@ -52,7 +52,7 @@ class Dialog:
     # https://datatracker.ietf.org/doc/html/rfc3261#section-17.1.2
     BYE_ACK_TIMEOUT: typing.ClassVar[datetime.timedelta] = 64 * T1
 
-    uac: SipUri = None
+    uac: SipURI = None
     call_id: str = dataclasses.field(
         default_factory=lambda: f"{uuid.uuid4()}@{socket.gethostname()}",
         compare=False,
@@ -61,8 +61,8 @@ class Dialog:
         default_factory=lambda: str(uuid.uuid4()), compare=True
     )
     remote_tag: str | None = dataclasses.field(default=None, compare=True)
-    remote_contact: SipUri | None = dataclasses.field(default=None, compare=True)
-    route_set: list[SipUri] = dataclasses.field(default_factory=list)
+    remote_contact: SipURI | None = dataclasses.field(default=None, compare=True)
+    route_set: list[SipURI] = dataclasses.field(default_factory=list)
     local_party: str | None = dataclasses.field(default=None, compare=False)
     remote_party: str | None = dataclasses.field(default=None, compare=False)
     outbound_cseq: int = dataclasses.field(default=1, compare=False)
@@ -177,7 +177,7 @@ class Dialog:
 
     async def dial(
         self,
-        target: SipUri,
+        target: SipURI,
         *,
         session_class: type[Session],
         **session_kwargs: typing.Any,

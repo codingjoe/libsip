@@ -95,7 +95,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
     """
 
-    aor: types.SipUri
+    aor: types.SipURI
     rtp: RealtimeTransportProtocol
     dialog_class: type[Dialog] = dataclasses.field(default=Dialog)
     keepalive_interval: datetime.timedelta = datetime.timedelta(seconds=30)

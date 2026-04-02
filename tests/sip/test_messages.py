@@ -4,7 +4,7 @@ import pytest
 from voip.sdp.messages import SessionDescription
 from voip.sip import messages
 from voip.sip.dialog import Dialog
-from voip.sip.types import SipUri
+from voip.sip.types import SipURI
 
 
 class TestHeaderMap:
@@ -233,7 +233,7 @@ class TestRequest:
     def test_from_dialog__merges_dialog_headers(self):
         """Merge the provided headers with the dialog's headers."""
         dialog = Dialog(
-            uac=SipUri.parse("sips:alice@example.com"),
+            uac=SipURI.parse("sips:alice@example.com"),
             local_tag="local-tag",
             remote_tag="remote-tag",
         )
@@ -292,7 +292,7 @@ class TestResponse:
         )
         request = messages.Message.parse(data)
         dialog = Dialog(
-            uac=SipUri.parse("sip:alice@atlanta.com"),
+            uac=SipURI.parse("sip:alice@atlanta.com"),
             remote_tag="server-tag",
         )
         response = messages.Response.from_request(

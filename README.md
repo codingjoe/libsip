@@ -70,7 +70,7 @@ import dataclasses
 import ssl
 from voip.ai import TranscribeCall
 from voip.sip.protocol import SIP
-from voip.sip.types import SipUri
+from voip.sip.types import SipURI
 from voip.sip.transactions import InviteTransaction
 from voip.rtp import RealtimeTransportProtocol
 from faster_whisper import WhisperModel
@@ -101,7 +101,7 @@ async def main():
     await loop.create_connection(
         lambda: SIP(
             rtp=rtp_protocol,
-            aor=SipUri.parse("sips:alice:********@example.com"),
+            aor=SipURI.parse("sips:alice:********@example.com"),
             transaction_class=TranscribeInviteTransaction,
         ),
         host="sip.example.com",

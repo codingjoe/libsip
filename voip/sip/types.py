@@ -6,8 +6,8 @@ __all__ = [
     "CallerID",
     "DigestAlgorithm",
     "DigestQoP",
-    "SipUri",
-    "TelUri",
+    "SipURI",
+    "TelURI",
     "SIPStatus",
     "SIPMethod",
 ]
@@ -22,7 +22,7 @@ if typing.TYPE_CHECKING:
     pass
 
 
-class SipUri(str):
+class SipURI(str):
     """A parsed SIP or SIPS URI per [RFC 3261 §19.1].
 
     Format: ``sip:user:password@host:port;uri-parameters?headers``
@@ -38,11 +38,11 @@ class SipUri(str):
     [RFC 2732]: https://datatracker.ietf.org/doc/html/rfc2732
 
     Examples:
-        >>> SipUri.parse("sip:alice@example.com")
+        >>> SipURI.parse("sip:alice@example.com")
         'sip:alice@example.com:5060'
-        >>> SipUri.parse("sips:+15551234567@carrier.com:5061")
+        >>> SipURI.parse("sips:+15551234567@carrier.com:5061")
         'sips:%2B15551234567@carrier.com:5061'
-        >>> SipUri.parse("sip:alice@[::1]:5060")
+        >>> SipURI.parse("sip:alice@[::1]:5060")
         'sip:alice@[::1]:5060'
 
     Args:
@@ -85,7 +85,7 @@ class SipUri(str):
         port: int | None = None,
         parameters: dict[str, str | None] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> SipUri:
+    ) -> SipURI:
         try:
             host = ipaddress.ip_address(host)
         except ValueError:
@@ -128,7 +128,7 @@ class SipUri(str):
         return instance
 
     @classmethod
-    def parse(cls, value: str) -> SipUri:
+    def parse(cls, value: str) -> SipURI:
         """
         Parse a SIP or SIPS URI string into a `SipUri` instance.
 
@@ -205,7 +205,7 @@ class SipUri(str):
         )
 
 
-class TelUri(str):
+class TelURI(str):
     """A tel: URI per [RFC 3966].
 
     Format: ``tel:phone-number;parameters``
@@ -217,9 +217,9 @@ class TelUri(str):
     [RFC 3966]: https://datatracker.ietf.org/doc/html/rfc3966
 
     Examples:
-        >>> TelUri.parse("tel:+15551234567")
+        >>> TelURI.parse("tel:+15551234567")
         'tel:+15551234567'
-        >>> TelUri.parse("tel:1234;phone-context=example.com")
+        >>> TelURI.parse("tel:1234;phone-context=example.com")
         'tel:1234;phone-context=example.com'
 
     Args:
@@ -243,7 +243,7 @@ class TelUri(str):
         cls,
         number: str,
         parameters: dict[str, str | None] | None = None,
-    ) -> TelUri:
+    ) -> TelURI:
         parameters = parameters or {}
         parts = [f"tel:{number}"]
         for name, val in parameters.items():
@@ -258,7 +258,7 @@ class TelUri(str):
         return instance
 
     @classmethod
-    def parse(cls, value: str) -> TelUri:
+    def parse(cls, value: str) -> TelURI:
         """Parse a tel: URI string into a `TelUri` instance.
 
         Returns:
@@ -270,7 +270,7 @@ class TelUri(str):
         if match := cls.TEL_URL_PATTERN.fullmatch(value):
             return cls(
                 number=match.group("number"),
-                parameters=dict(SipUri._parse_parameters(match.group("parameters")))
+                parameters=dict(SipURI._parse_parameters(match.group("parameters")))
                 if match.group("parameters")
                 else {},
             )
@@ -312,17 +312,17 @@ class CallerID(str):
         return None
 
     @property
-    def uri(self) -> SipUri | TelUri | None:
+    def uri(self) -> SipURI | TelURI | None:
         """Parsed SIP or tel URI embedded in the header value, if present."""
         if not (m := re.search(r"<?((?:sips?|tel):[^>\s]+)>?", self)):
             return None
         raw = m.group(1)
         try:
-            return SipUri.parse(raw)
+            return SipURI.parse(raw)
         except ValueError:
             pass
         try:
-            return TelUri.parse(raw)
+            return TelURI.parse(raw)
         except ValueError:
             return None
 
@@ -330,9 +330,9 @@ class CallerID(str):
     def user(self) -> str | None:
         """SIP user part or telephone number."""
         match self.uri:
-            case SipUri() as sip:
+            case SipURI() as sip:
                 return sip.user
-            case TelUri() as tel:
+            case TelURI() as tel:
                 return tel.number
             case _:
                 return None
@@ -341,7 +341,7 @@ class CallerID(str):
     def host(self) -> str | None:
         """Carrier domain extracted from the SIP URI."""
         match self.uri:
-            case SipUri() as sip:
+            case SipURI() as sip:
                 return str(sip.host)
             case _:
                 return None
