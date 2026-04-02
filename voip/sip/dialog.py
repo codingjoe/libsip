@@ -7,7 +7,7 @@ import typing
 import uuid
 
 from voip.sip import messages, transactions, types
-from voip.sip.types import SipURI
+from voip.sip.types import SipURI, TelURI
 
 if typing.TYPE_CHECKING:
     from voip.rtp import Session
@@ -177,7 +177,7 @@ class Dialog:
 
     async def dial(
         self,
-        target: SipURI,
+        target: SipURI | TelURI,
         *,
         session_class: type[Session],
         **session_kwargs: typing.Any,
@@ -186,7 +186,7 @@ class Dialog:
         Initiate an outbound call to *target*.
 
         Args:
-            target: SIP URI of the remote party (e.g. ``"sip:+15551234567@carrier.com"``).
+            target: SIP or tel URI of the remote party (e.g. ``"sip:+15551234567@carrier.com"`` or ``"tel:+15551234567"``).
             session_class: Session subclass to create for this call.
             **session_kwargs: Extra keyword arguments forwarded to `session_class`.
 

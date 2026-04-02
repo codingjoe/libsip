@@ -12,7 +12,7 @@ from voip.ai import SayCall
 from voip.rtp import RealtimeTransportProtocol, Session
 from voip.sip import dialog, messages
 from voip.sip.protocol import SessionInitiationProtocol
-from voip.sip.types import SipURI
+from voip.sip.types import SipURI, TelURI
 from voip.types import NetworkAddress
 
 try:
@@ -202,7 +202,7 @@ def _make_outbound_factory(
     verbose: int,
     aor: SipURI,
     rtp_protocol: RealtimeTransportProtocol,
-    target_uri: SipURI,
+    target_uri: SipURI | TelURI,
     session_class: type[Session],
     session_kwargs: dict,
 ) -> collections.abc.Callable[[], ConsoleMessageProtocol]:
@@ -237,11 +237,15 @@ def _make_outbound_factory(
     return factory
 
 
-def _parse_dial_target(dial: str | None) -> SipURI | None:
+def _parse_dial_target(dial: str | None) -> SipURI | TelURI | None:
     if dial is None:
         return None
     try:
         return SipURI.parse(dial)
+    except ValueError:
+        pass
+    try:
+        return TelURI.parse(dial)
     except ValueError as exc:
         raise click.BadParameter(str(exc), param_hint="--dial") from exc
 
@@ -541,9 +545,12 @@ def say(ctx, target: str, prompt: str, voice: str):
     aor = obj["aor"]
 
     try:
-        target_uri = SipURI.parse(target)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="TARGET") from exc
+        target_uri: SipURI | TelURI = SipURI.parse(target)
+    except ValueError:
+        try:
+            target_uri = TelURI.parse(target)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="TARGET") from exc
 
     async def run():
         _, rtp_protocol = await _connect_rtp(

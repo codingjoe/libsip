@@ -626,7 +626,7 @@ class InviteTransaction(Transaction):
         cls,
         *,
         sip: SessionInitiationProtocol,
-        target: types.SipURI,
+        target: types.SipURI | types.TelURI,
         dialog: Dialog,
         session_class: type[Session],
         **session_kwargs: typing.Any,
@@ -635,7 +635,7 @@ class InviteTransaction(Transaction):
 
         Args:
             sip: The SIP session to send from.
-            target: SIP URI of the callee (e.g. ``"sip:+15551234567@carrier.com"``).
+            target: SIP or tel URI of the callee (e.g. ``"sip:+15551234567@carrier.com"`` or ``"tel:+15551234567"``).
             dialog: The dialog to associate with this call.
             session_class: Session implementation that will be initialized for the call.
             **session_kwargs: Additional keyword arguments forwarded to the
