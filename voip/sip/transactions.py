@@ -646,6 +646,12 @@ class InviteTransaction(Transaction):
 
         [RFC 3261 §13.1]: https://datatracker.ietf.org/doc/html/rfc3261#section-13.1
         """
+        if isinstance(target, types.TelURI):
+            target = types.SipURI(
+                scheme=sip.aor.scheme,
+                host=sip.aor.host,
+                user=target.number,
+            )
         if dialog.uac is None:
             dialog.uac = sip.aor
         dialog.sip = sip
