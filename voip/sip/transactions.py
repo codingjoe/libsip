@@ -829,7 +829,7 @@ class InviteTransaction(Transaction):
         ack_branch = f"{Transaction.branch_prefix}-{uuid.uuid4()}"
         contact = response.headers.get("Contact")
         ack_uri = (
-            contact.strip("<>").split(";")[0] if contact else str(self.request.uri)
+            contact.split(";")[0].strip("<>") if contact else str(self.request.uri)
         )
 
         # Store BYE-ready dialog state now that dialog tags are finalised.
@@ -852,7 +852,7 @@ class InviteTransaction(Transaction):
                 "To": response.headers["To"],
                 "Call-ID": self.dialog.call_id,
                 "CSeq": f"{self.cseq} {SIPMethod.ACK}",
-                "Content-Length": 0,
+                "Content-Length": "0",
             }
         )
         for route in self.dialog.route_set:

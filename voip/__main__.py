@@ -206,7 +206,6 @@ def _make_outbound_factory(
     session_class: type[Session],
     session_kwargs: dict,
 ) -> collections.abc.Callable[[], ConsoleMessageProtocol]:
-    target = str(target_uri)
 
     class OutboundDialog(dialog.Dialog):
         def hangup_received(self) -> None:
@@ -215,7 +214,7 @@ def _make_outbound_factory(
 
     @dataclasses.dataclass(kw_only=True, slots=True)
     class OutboundProtocol(ConsoleMessageProtocol):
-        dial_target: str
+        dial_target: SipURI | TelURI
 
         def on_registered(self) -> None:
             dialog = OutboundDialog(sip=self)
@@ -231,7 +230,7 @@ def _make_outbound_factory(
             dialog_class=OutboundDialog,
             aor=aor,
             rtp=rtp_protocol,
-            dial_target=target,
+            dial_target=target_uri,
         )
 
     return factory

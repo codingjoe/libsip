@@ -22,6 +22,88 @@ if typing.TYPE_CHECKING:
     pass
 
 
+class TelURI(str):
+    """A tel: URI per [RFC 3966].
+
+    Format: ``tel:phone-number;parameters``
+
+    Behaves as a plain ``str`` holding the canonical URI.  Global numbers
+    (E.164) start with ``+``.  Local numbers carry a ``phone-context``
+    parameter identifying the dialling context.
+
+    [RFC 3966]: https://datatracker.ietf.org/doc/html/rfc3966
+
+    Examples:
+        >>> TelURI.parse("tel:+15551234567")
+        'tel:+15551234567'
+        >>> TelURI.parse("tel:1234;phone-context=example.com")
+        'tel:1234;phone-context=example.com'
+
+    Args:
+        number: The phone number, including any visual separators.
+        parameters: URI parameters as a mapping of name → value (`None` for flag parameters).
+
+    """
+
+    __slots__ = ("number", "parameters")
+
+    number: str
+    parameters: dict[str, str | None]
+
+    TEL_URL_PATTERN: typing.ClassVar[re.Pattern[str]] = re.compile(
+        r"^tel:(?P<number>[+0-9A-F*#().,-]+)"
+        r"(?P<parameters>;.*)?$",
+        re.IGNORECASE,
+    )
+
+    def __new__(
+        cls,
+        number: str,
+        parameters: dict[str, str | None] | None = None,
+    ) -> TelURI:
+        parameters = parameters or {}
+        parts = [f"tel:{number}"]
+        for name, val in parameters.items():
+            parts.append(
+                f";{urllib.parse.quote(name)}={urllib.parse.quote(val)}"
+                if val is not None
+                else f";{urllib.parse.quote(name)}"
+            )
+        instance = super().__new__(cls, "".join(parts))
+        instance.number = number
+        instance.parameters = parameters
+        return instance
+
+    @classmethod
+    def parse(cls, value: str) -> TelURI:
+        """Parse a tel: URI string into a `TelUri` instance.
+
+        Returns:
+            Parsed `TelUri` instance.
+
+        Raises:
+            ValueError: When the URI is malformed or uses an unsupported scheme.
+        """
+        if match := cls.TEL_URL_PATTERN.fullmatch(value):
+            return cls(
+                number=match.group("number"),
+                parameters=dict(SipURI._parse_parameters(match.group("parameters")))
+                if match.group("parameters")
+                else {},
+            )
+        raise ValueError(f"Invalid tel URI: {value!r}")
+
+    @property
+    def is_global(self) -> bool:
+        """Whether this is a global (E.164) number, starting with `+`."""
+        return self.number.startswith("+")
+
+    @property
+    def phone_context(self) -> str | None:
+        """The `phone-context` parameter value, if present."""
+        return self.parameters.get("phone-context")
+
+
 class SipURI(str):
     """A parsed SIP or SIPS URI per [RFC 3261 §19.1].
 
@@ -203,88 +285,6 @@ class SipURI(str):
             if self.scheme == "sip"
             else "TLS"
         )
-
-
-class TelURI(str):
-    """A tel: URI per [RFC 3966].
-
-    Format: ``tel:phone-number;parameters``
-
-    Behaves as a plain ``str`` holding the canonical URI.  Global numbers
-    (E.164) start with ``+``.  Local numbers carry a ``phone-context``
-    parameter identifying the dialling context.
-
-    [RFC 3966]: https://datatracker.ietf.org/doc/html/rfc3966
-
-    Examples:
-        >>> TelURI.parse("tel:+15551234567")
-        'tel:+15551234567'
-        >>> TelURI.parse("tel:1234;phone-context=example.com")
-        'tel:1234;phone-context=example.com'
-
-    Args:
-        number: The phone number, including any visual separators.
-        parameters: URI parameters as a mapping of name → value (`None` for flag parameters).
-
-    """
-
-    __slots__ = ("number", "parameters")
-
-    number: str
-    parameters: dict[str, str | None]
-
-    TEL_URL_PATTERN: typing.ClassVar[re.Pattern[str]] = re.compile(
-        r"^tel:(?P<number>[+0-9A-F*#().,-]+)"
-        r"(?P<parameters>;.*)?$",
-        re.IGNORECASE,
-    )
-
-    def __new__(
-        cls,
-        number: str,
-        parameters: dict[str, str | None] | None = None,
-    ) -> TelURI:
-        parameters = parameters or {}
-        parts = [f"tel:{number}"]
-        for name, val in parameters.items():
-            parts.append(
-                f";{urllib.parse.quote(name)}={urllib.parse.quote(val)}"
-                if val is not None
-                else f";{urllib.parse.quote(name)}"
-            )
-        instance = super().__new__(cls, "".join(parts))
-        instance.number = number
-        instance.parameters = parameters
-        return instance
-
-    @classmethod
-    def parse(cls, value: str) -> TelURI:
-        """Parse a tel: URI string into a `TelUri` instance.
-
-        Returns:
-            Parsed `TelUri` instance.
-
-        Raises:
-            ValueError: When the URI is malformed or uses an unsupported scheme.
-        """
-        if match := cls.TEL_URL_PATTERN.fullmatch(value):
-            return cls(
-                number=match.group("number"),
-                parameters=dict(SipURI._parse_parameters(match.group("parameters")))
-                if match.group("parameters")
-                else {},
-            )
-        raise ValueError(f"Invalid tel URI: {value!r}")
-
-    @property
-    def is_global(self) -> bool:
-        """Whether this is a global (E.164) number, starting with `+`."""
-        return self.number.startswith("+")
-
-    @property
-    def phone_context(self) -> str | None:
-        """The `phone-context` parameter value, if present."""
-        return self.parameters.get("phone-context")
 
 
 class CallerID(str):
