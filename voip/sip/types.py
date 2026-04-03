@@ -249,13 +249,15 @@ class CallerID(str):
 
     @property
     def user(self) -> str | None:
-        """SIP user part or telephone number."""
-        return self.uri.user if self.uri else None
+        """SIP user part (phone number or username)."""
+        if m := re.search(r"sips?:([^@>;\s]+)@", self):
+            return m.group(1)
 
     @property
-    def host(self) -> str | ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    def host(self) -> str | None:
         """Carrier domain extracted from the SIP URI."""
-        return self.uri.host if self.uri else None
+        if m := re.search(r"sips?:[^@>;\s]+@([^>;)\s,]+)", self):
+            return m.group(1)
 
     @property
     def tag(self) -> str | None:

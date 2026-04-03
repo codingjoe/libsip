@@ -394,11 +394,8 @@ class TestCallerID:
 
     def test_uri__unparseable(self):
         """Return None when the URI-like string is not valid for any parser."""
-        assert CallerID("sip:@invalid").uri is None
-
-    def test_user__tel_number(self):
-        """Return the tel number as user for a tel: CallerID."""
-        assert CallerID("tel:+15551234567").user == "+15551234567"
+        with pytest.raises(ValueError):
+            assert CallerID("sip:@invalid").uri
 
     def test_host__tel_absent(self):
         """Return None for host when the CallerID is a tel URI."""

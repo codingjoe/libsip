@@ -26,7 +26,6 @@ plugins:
         python:
           load_external_modules: true
           options:
-            locale: en
             docstring_style: google
             show_root_heading: true
             heading_level: 3
