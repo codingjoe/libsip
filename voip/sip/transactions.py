@@ -364,8 +364,8 @@ class InviteTransaction(Transaction):
     SIP layer creates one instance per incoming INVITE, keyed by Via branch
     (RFC 3261 §17.1.3).
 
-    For inbound call handling, subclass [Dialog][voip.sip.dialog.Dialog]
-    and override [call_received][voip.sip.dialog.Dialog.call_received]:
+    For inbound call handling, subclass [Dialog][voip.sip.Dialog]
+    and override [call_received][voip.sip.Dialog.call_received]:
 
     ```python
     class MyDialog(Dialog):
@@ -484,8 +484,8 @@ class InviteTransaction(Transaction):
         """Answer the call by setting up RTP and sending 200 OK with SDP.
 
         Example:
-            Call from within [Dialog.call_received][voip.sip.dialog.Dialog.call_received]
-            via [Dialog.accept][voip.sip.dialog.Dialog.accept]:
+            Call from within [Dialog.call_received][voip.sip.Dialog.call_received]
+            via [Dialog.accept][voip.sip.Dialog.accept]:
 
             ```python
             class MyDialog(Dialog):
@@ -920,7 +920,7 @@ class ByeTransaction(Transaction):
         """Handle an incoming BYE from the remote party [RFC 3261 §15.1.2].
 
         Sends 200 OK, removes the dialog, and notifies the application via
-        [hangup_received][voip.sip.dialog.Dialog.hangup_received].
+        [hangup_received][voip.sip.Dialog.hangup_received].
 
         Args:
             request: The incoming SIP BYE request.

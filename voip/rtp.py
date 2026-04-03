@@ -142,7 +142,7 @@ class Session:
         Terminate the call by sending a SIP BYE request [RFC 3261 §15].
 
         Deregisters this call from the RTP multiplexer, then delegates the
-        BYE signaling to [Dialog.bye][voip.sip.dialog.Dialog.bye], which
+        BYE signaling to [Dialog.bye][voip.sip.Dialog.bye], which
         constructs and sends the BYE request, removes the dialog from the
         SIP session's registry, and awaits the 200 OK acknowledgment.
 

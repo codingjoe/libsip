@@ -87,9 +87,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
     Args:
         aor: SIP Address of Record (AOR) to register with the carrier.
         rtp: Shared RTP mux for call media.
-        dialog_class: [Dialog][voip.sip.dialog.Dialog] subclass used to
+        dialog_class: [Dialog][voip.sip.Dialog] subclass used to
             create dialogs for incoming calls.  Defaults to the base
-            [Dialog][voip.sip.dialog.Dialog] which rejects all calls with
+            [Dialog][voip.sip.Dialog] which rejects all calls with
             ``486 Busy Here``.
         keepalive_interval: Keep-alive ping interval. Should be between 30 and 90 seconds.
 

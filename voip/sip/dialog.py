@@ -103,9 +103,9 @@ class Dialog:
         """
         Called when an INVITE is received from the remote party.
 
-        Override in subclasses to [accept][voip.sip.dialog.Dialog.accept],
-        [ring][voip.sip.dialog.Dialog.ringing],
-        or [reject][voip.sip.dialog.Dialog.reject] the call.
+        Override in subclasses to [answer][voip.sip.Dialog.answer],
+        [ring][voip.sip.Dialog.ringing],
+        or [reject][voip.sip.Dialog.reject] the call.
 
         The base implementation rejects with a busy signal.
         """  # noqa: D401

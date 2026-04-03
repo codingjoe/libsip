@@ -57,26 +57,9 @@ class SipURI(str):
         >>> SipURI.parse("sip:alice@[::1]:5060")
         'sip:alice@[::1]:5060'
 
-    Args:
-        scheme: URI scheme — `sip` or `sips`.
-        host: Host as a bare string — no brackets for IPv6 addresses.
-        user: SIP user part (phone number or username).
-        password: Optional password in the user-info component.
-        port: Port number. 5061 for `sips:` and 5060 for `sip:`.
-        parameters: URI parameters as a mapping of name → value (`None` for flag parameters).
-        headers: SIP headers as a mapping of name → value.
-
     """
 
     __slots__ = ("scheme", "host", "user", "password", "port", "parameters", "headers")
-
-    scheme: str
-    host: str | ipaddress.IPv6Address | ipaddress.IPv4Address
-    user: str | None
-    password: str | None
-    port: int
-    parameters: dict[str, str | None]
-    headers: dict[str, str]
 
     SIP_URL_PATTERN: typing.ClassVar[re.Pattern[str]] = re.compile(
         r"^(?P<scheme>sips?):"

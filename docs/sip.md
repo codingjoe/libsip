@@ -7,9 +7,10 @@
         - call_received
         - hangup_received
         - ringing
-        - accept
+        - answer
         - reject
         - dial
+        - bye
 
 ::: voip.sip.SessionInitiationProtocol
     options:
@@ -23,3 +24,5 @@
 ::: voip.sip.CallerID
 
 ::: voip.sip.SIPStatus
+
+::: voip.sdp.types
