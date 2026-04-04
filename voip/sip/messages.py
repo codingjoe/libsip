@@ -3,10 +3,12 @@
 import abc
 import dataclasses
 import logging
+import platform
 import typing
 
 from urllib3 import HTTPHeaderDict
 
+import voip
 from voip.sdp.messages import SessionDescription
 
 from ..types import ByteSerializableObject
@@ -22,6 +24,13 @@ logger = logging.getLogger("voip.sip")
 #: Headers whose values are parsed as `CallerID` objects.
 CALLER_IDS_HEADERS = frozenset({"From", "To", "Route", "Record-Route", "Contact"})
 
+#: User-Agent header value to use in generated messages.
+USER_AGENT = (
+    f"VoIP/{voip.__version__}"
+    f" {platform.python_implementation()}/{platform.python_version()}"
+    f" {platform.system()}/{platform.platform()}"
+)
+
 
 class SIPHeaderDict(ByteSerializableObject, HTTPHeaderDict):
     """Header map for SIP messages, mapping header names to their values."""
@@ -35,7 +44,7 @@ class SIPHeaderDict(ByteSerializableObject, HTTPHeaderDict):
         for line in data.decode().split("\r\n"):
             name, sep, value = line.partition(":")
             if not sep:
-                raise ValueError(f"Invalid header: {data!r}")
+                raise ValueError(f"Invalid header: {line!r}")
             name = name.strip()
             value = value.strip()
             self.add(name, CallerID(value) if name in CALLER_IDS_HEADERS else value)

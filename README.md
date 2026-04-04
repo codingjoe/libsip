@@ -26,7 +26,7 @@ Check your ISP's documentation or router for details.
 You will need a SIP AOR (URI), which looks like this:
 
 ```INI
-sip:USER:PASSSWORD@SIP_SERVER;transport=TCP
+sip:USER:PASSWORD@SIP_SERVER;transport=TCP
 ```
 
 > [!NOTE]

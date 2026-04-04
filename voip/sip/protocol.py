@@ -16,7 +16,7 @@ from voip.rtp import RealtimeTransportProtocol
 from ..types import NetworkAddress
 from . import types
 from .dialog import Dialog
-from .messages import Message, Request, Response
+from .messages import USER_AGENT, Message, Request, Response
 from .transactions import (
     ByeTransaction,
     InviteTransaction,
@@ -214,6 +214,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def send(self, message: Response | Request) -> None:
         """Serialize and send a SIP message over the TLS/TCP connection."""
         logger.debug("Sending %r", message)
+        message.headers.setdefault("User-Agent", USER_AGENT)
         if self.transport is not None:
             self.transport.write(bytes(message))
 

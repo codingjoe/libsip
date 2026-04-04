@@ -6,7 +6,7 @@ from voip.sip.messages import Response
 from voip.sip.types import CallerID
 
 
-class TestSipUri:
+class TestSipURI:
     @pytest.mark.parametrize(
         "uri_str, expected_uri_obj",
         [

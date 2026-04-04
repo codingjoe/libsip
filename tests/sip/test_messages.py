@@ -7,7 +7,7 @@ from voip.sip.dialog import Dialog
 from voip.sip.types import SipURI
 
 
-class TestHeaderMap:
+class TestSIPHeaderDict:
     def test_init(self):
         """Initialize a HeaderMap with a dictionary of headers."""
         headers = messages.SIPHeaderDict(
@@ -40,6 +40,17 @@ class TestHeaderMap:
         assert bytes(headers) == (
             b"From: Alice\r\nRoute: sip:proxy.example.com\r\nRoute: sip:example.com\r\n"
         )
+
+    def test_parse(self):
+        """Parse headers from bytes."""
+        data = b"From: Alice\r\nRoute: sip:proxy.example.com\r\nRoute: sip:example.com"
+        headers = messages.SIPHeaderDict.parse(data)
+        assert headers["From"] == "Alice"
+        assert headers.getlist("Route") == ["sip:proxy.example.com", "sip:example.com"]
+
+    def test_parse__empty(self):
+        with pytest.raises(ValueError, match="Invalid header: ''"):
+            messages.SIPHeaderDict.parse(b"")
 
 
 class TestMessage:

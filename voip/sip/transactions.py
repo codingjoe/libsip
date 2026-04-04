@@ -11,7 +11,6 @@ import secrets
 import typing
 import uuid
 
-import voip
 from voip.rtp import Session
 from voip.sdp.messages import SessionDescription
 from voip.sdp.types import (
@@ -210,7 +209,7 @@ class RegistrationTransaction(Transaction):
                 )
                 challenge_key = "Proxy-Authenticate" if is_proxy else "WWW-Authenticate"
                 params = self.parse_auth_challenge(
-                    response.headers[challenge_key] or ""
+                    response.headers.get(challenge_key, "")
                 )
                 realm = params.get("realm", "")
                 nonce = params.get("nonce", "")
@@ -426,6 +425,8 @@ class InviteTransaction(Transaction):
         """
         self.sip.transactions.pop(self.branch, None)
         self.complete()
+
+    def cancel_received(self, request: Request) -> None:
         """Handle a CANCEL request for a pending INVITE.
 
         Args:
@@ -702,7 +703,6 @@ class InviteTransaction(Transaction):
                 "Call-ID": dialog.call_id,
                 "Route": f"<sip:{str(rtp_public[0])}:5060;transport=tcp;lr>",
                 "Allow": sip.allow_header,
-                "User-Agent": f"python/voip/{voip.__version__}",
                 "Content-Type": "application/sdp",
             },
             body=sdp_offer,
@@ -720,7 +720,7 @@ class InviteTransaction(Transaction):
         match response.status_code // 100:
             case 1:  # trying/ringing
                 pass
-            case SIPStatus.OK:
+            case 2:  # OK
                 self._start_call(response)
                 self.ack(response)
             case _:  # any other terminal response
@@ -803,7 +803,7 @@ class InviteTransaction(Transaction):
         callee_tag = response.remote_tag
         self.dialog.remote_tag = our_tag
         self.dialog.local_tag = callee_tag
-        if response.status == SIPStatus.OK:
+        if response.status_code == SIPStatus.OK:
             self.sip.dialogs[(our_tag, callee_tag)] = self.dialog
 
         ack_branch = f"{Transaction.branch_prefix}-{uuid.uuid4()}"
@@ -895,7 +895,6 @@ class ByeTransaction(Transaction):
                 "To": dialog.remote_party,
                 "Call-ID": dialog.call_id,
                 "CSeq": f"{cseq} {SIPMethod.BYE}",
-                "User-Agent": f"python/voip/{voip.__version__}",
                 "Content-Length": "0",
             }
         )

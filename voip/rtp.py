@@ -19,7 +19,7 @@ from voip.stun import STUNProtocol
 from voip.types import ByteSerializableObject, NetworkAddress
 
 if TYPE_CHECKING:
-    from voip.sip.messages import Dialog
+    from voip.sip.dialog import Dialog
     from voip.sip.types import CallerID
 
 __all__ = ["RTP", "Session", "RTPPacket", "RTPPayloadType", "RealtimeTransportProtocol"]

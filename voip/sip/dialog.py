@@ -120,7 +120,7 @@ class Dialog:
 
     def ringing(self) -> None:
         """
-        Send the report party a ringing signal.
+        Send a ringing signal to the remote party.
 
         This is optional but recommended for good user experience.
         If not called, the caller will hear silence until the call is accepted or rejected.
@@ -169,7 +169,7 @@ class Dialog:
             )
         except TimeoutError:
             logger.warning(
-                "BYE for dialog %s was not acknowledged within %.0f s",
+                "BYE for dialog %s was not acknowledged within %r",
                 self.call_id,
                 self.BYE_ACK_TIMEOUT,
             )

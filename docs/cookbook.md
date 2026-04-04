@@ -235,7 +235,7 @@ import ssl
 import numpy as np
 
 from voip.audio import AudioCall
-from voip.sip.messages import Dialog
+from voip.sip.dialog import Dialog
 from voip.sip.protocol import SIP
 
 
@@ -295,7 +295,7 @@ import asyncio
 import ssl
 
 from voip.audio import AudioCall
-from voip.sip.messages import Dialog
+from voip.sip.dialog import Dialog
 from voip.sip.protocol import SIP
 
 
