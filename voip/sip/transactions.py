@@ -88,7 +88,7 @@ class Transaction(asyncio.Future):
     def headers(self) -> dict[str, str]:
         """Return a dict of headers for this transaction."""
         return {
-            "Via": f"SIP/2.0/{self.sip.aor.transport} {self.sip.rtp.public_address};rport;branch={self.branch}",
+            "Via": f"SIP/2.0/{self.sip.aor.transport} {self.sip.public_address};rport;branch={self.branch}",
             "CSeq": f"{self.cseq} {self.method}",
         }
 
@@ -571,7 +571,7 @@ class InviteTransaction(Transaction):
 
         record_route = self.request.headers.get("Record-Route")
         session_id = str(secrets.randbelow(2**32) + 1)
-        rtp_public = self.sip.rtp.public_address
+        rtp_public = self.sip.public_address
         sdp_media_attributes = [Attribute(name="sendrecv")]
         if srtp_session is not None:
             sdp_media_attributes.append(
@@ -825,7 +825,7 @@ class InviteTransaction(Transaction):
             {
                 "Via": (
                     f"SIP/2.0/{self.sip.aor.transport}"
-                    f" {self.sip.rtp.public_address};rport;branch={ack_branch};alias"
+                    f" {self.sip.public_address};rport;branch={ack_branch};alias"
                 ),
                 "Max-Forwards": "70",
                 "From": response.headers["From"],
