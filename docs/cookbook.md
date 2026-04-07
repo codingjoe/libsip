@@ -151,7 +151,7 @@ class RecordCall(AudioCall):
 
 ## Sending Audio to the Caller
 
-Use [\_send_rtp_audio][voip.audio.AudioCall.\_send_rtp_audio] inside any
+Use [send_audio][voip.audio.AudioCall.send_audio] inside any
 [AudioCall][voip.audio.AudioCall] subclass to stream float32 PCM back to
 the caller using the negotiated codec:
 
@@ -159,14 +159,14 @@ the caller using the negotiated codec:
 import asyncio
 import numpy as np
 import soundfile as sf
-from voip.audio import AudioCall, SAMPLE_RATE
+from voip.audio import AudioCall
 
 
 class GreetingCall(AudioCall):
     async def play_greeting(self) -> None:
         audio, file_rate = sf.read("greeting.wav", dtype="float32", always_2d=False)
-        resampled = self._resample(audio, file_rate, SAMPLE_RATE)
-        await self._send_rtp_audio(resampled)
+        resampled = self.resample(audio, file_rate, self.sampling_rate_hz)
+        await self.send_audio(resampled)
 ```
 
 ## Low-Level RTP Packet Handling
@@ -234,12 +234,12 @@ import ssl
 
 import numpy as np
 
-from voip.audio import AudioCall
+from voip.audio import VoiceActivityCall
 from voip.sip.dialog import Dialog
 from voip.sip.protocol import SIP
 
 
-class OneUtteranceCall(AudioCall):
+class OneUtteranceCall(VoiceActivityCall):
     """Hang up as soon as the first voice utterance is received."""
 
     async def voice_received(self, audio: np.ndarray) -> None:
@@ -295,6 +295,7 @@ import asyncio
 import ssl
 
 from voip.audio import AudioCall
+from voip.sip import SipURI
 from voip.sip.dialog import Dialog
 from voip.sip.protocol import SIP
 
@@ -316,7 +317,9 @@ class MySession(SIP):
     def on_registered(self) -> None:
         dialog = OutboundDialog(sip=self)
         asyncio.create_task(
-            dialog.dial("sip:+15551234567@carrier.com", session_class=MyCall)
+            dialog.dial(
+                SipURI.parse("sip:+15551234567@carrier.com"), session_class=MyCall
+            )
         )
 
 

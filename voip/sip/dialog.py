@@ -26,7 +26,7 @@ class Dialog:
     class MyDialog(Dialog):
         def call_received(self) -> None:
             self.ringing()
-            self.accept(session_class=MyCall)
+            self.answer(session_class=MyCall)
 
     class MySession(SessionInitiationProtocol):
         dialog_class = MyDialog
