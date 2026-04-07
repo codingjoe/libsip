@@ -117,21 +117,33 @@ class SessionInitiationProtocol(asyncio.Protocol):
     def __post_init__(self):
         self.public_address = self.public_address or self.rtp.public_address
 
-    def add_dialog(self, dialog: Dialog) -> None:
+    def register_dialog(self, dialog: Dialog) -> None:
         """Register *dialog* keyed by ``(dialog.local_tag, dialog.remote_tag)``."""
-        self._dialogs[dialog.local_tag, dialog.remote_tag] = dialog
+        if dialog.remote_tag is None:
+            logger.warning("Dialog without remote tag cannot be registered: %r", dialog)
+        else:
+            self._dialogs[dialog.local_tag, dialog.remote_tag] = dialog
 
-    def del_dialog(self, dialog: Dialog) -> None:
+    def drop_dialog(self, dialog: Dialog) -> None:
         """Remove *dialog* from the registry."""
-        self._dialogs.pop((dialog.local_tag, dialog.remote_tag), None)
+        if dialog.remote_tag is None:
+            logger.warning("Dialog without remote tag cannot be removed: %r", dialog)
+        else:
+            try:
+                del self._dialogs[dialog.local_tag, dialog.remote_tag]
+            except KeyError:
+                logger.warning("Dialog not found for removal: %r", dialog)
 
-    def add_transaction(self, tx: Transaction) -> None:
+    def register_transaction(self, tx: Transaction) -> None:
         """Register *tx* by its branch parameter."""
         self._transactions[tx.branch] = tx
 
-    def del_transaction(self, tx: Transaction) -> None:
+    def drop_transaction(self, tx: Transaction) -> None:
         """Remove *tx* from the registry."""
-        self._transactions.pop(tx.branch, None)
+        try:
+            del self._transactions[tx.branch]
+        except KeyError:
+            logger.warning("Transaction not found for removal: %r", tx)
 
     def connection_made(self, transport: asyncio.Transport) -> None:  # type: ignore[override]
         """Store the TLS/TCP transport and start RTP mux + carrier registration."""
@@ -140,7 +152,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         try:
             loop = asyncio.get_running_loop()
             tx = RegistrationTransaction(sip=self, method=SIPMethod.REGISTER)
-            self._transactions[tx.branch] = tx
+            self.register_transaction(tx)
             loop.create_task(self.handle_registration(tx))
             self.keepalive_task = loop.create_task(self.send_keepalive())
         except RuntimeError:
@@ -286,7 +298,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
                 )
             case SIPMethod.ACK:
                 # For non-2xx ACKs the INVITE tx is still present; route by branch.
-                tx = self._transactions.get(request.branch)
+                tx = self._transactions[request.branch]
                 if isinstance(tx, InviteTransaction):
                     tx.ack_received(request)
                     return

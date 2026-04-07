@@ -173,7 +173,7 @@ class Dialog:
                 self.call_id,
                 self.BYE_ACK_TIMEOUT,
             )
-        self.sip.del_dialog(self)
+        self.sip.drop_dialog(self)
 
     async def dial(
         self,

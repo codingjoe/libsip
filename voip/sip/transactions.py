@@ -193,7 +193,7 @@ class RegistrationTransaction(Transaction):
         Args:
             response: The parsed SIP response.
         """
-        self.sip.del_transaction(self)
+        self.sip.drop_transaction(self)
         match response.status_code:
             case SIPStatus.OK:
                 logger.info("Registration successful")
@@ -260,7 +260,7 @@ class RegistrationTransaction(Transaction):
                         method=self.method,
                         authorization=auth_value,
                     )
-                self.sip.add_transaction(tx)
+                self.sip.register_transaction(tx)
                 tx.add_done_callback(self.forward_result)
             case _:
                 raise NotImplementedError(
@@ -408,7 +408,7 @@ class InviteTransaction(Transaction):
         [RFC 3261 §13.3]: https://datatracker.ietf.org/doc/html/rfc3261#section-13.3
         """
         tx = cls.from_request(request=request, sip=sip)
-        sip.add_transaction(tx)
+        sip.register_transaction(tx)
         tx.dialog.invite_transaction = tx
         tx.dialog.sip = sip
         tx.dialog.call_received()
@@ -423,7 +423,7 @@ class InviteTransaction(Transaction):
         Args:
             request: The SIP ACK request.
         """
-        self.sip.del_transaction(self)
+        self.sip.drop_transaction(self)
         self.complete()
 
     def cancel_received(self, request: Request) -> None:
@@ -432,8 +432,8 @@ class InviteTransaction(Transaction):
         Args:
             request: The SIP CANCEL request.
         """
-        self.sip.del_transaction(self)
-        self.sip.del_dialog(self.dialog)
+        self.sip.drop_transaction(self)
+        self.sip.drop_dialog(self.dialog)
         self.send_response(
             Response.from_request(
                 request,
@@ -535,7 +535,7 @@ class InviteTransaction(Transaction):
         )
         self.dialog.remote_party = str(self.request.headers["From"])
         self.dialog.route_set = list(self.request.headers.getlist("Record-Route"))
-        self.sip.add_dialog(self.dialog)
+        self.sip.register_dialog(self.dialog)
 
         call_handler = session_class(
             rtp=self.sip.rtp,
@@ -703,12 +703,12 @@ class InviteTransaction(Transaction):
             },
             body=sdp_offer,
         )
-        sip.add_transaction(tx)
+        sip.register_transaction(tx)
         sip.send(tx.request)
         try:
             return await tx
         except asyncio.CancelledError:
-            sip.del_transaction(tx)
+            sip.drop_transaction(tx)
             raise
 
     def response_received(self, response: Response) -> None:
@@ -799,8 +799,8 @@ class InviteTransaction(Transaction):
             self.dialog.route_set = list(
                 reversed(list(response.headers.getlist("Record-Route")))
             )
-            self.sip.add_dialog(self.dialog)
-        self.sip.del_transaction(self)
+            self.sip.register_dialog(self.dialog)
+        self.sip.drop_transaction(self)
 
         ack_branch = f"{Transaction.branch_prefix}-{uuid.uuid4()}"
         contact = response.headers.get("Contact")
@@ -887,12 +887,12 @@ class ByeTransaction(Transaction):
         for route in dialog.route_set:
             headers.add("Route", route)
         tx.request = Request(method=SIPMethod.BYE, uri=request_uri, headers=headers)
-        sip.add_transaction(tx)
+        sip.register_transaction(tx)
         sip.send(tx.request)
         try:
             return await tx
         except asyncio.CancelledError:
-            sip.del_transaction(tx)
+            sip.drop_transaction(tx)
             raise
 
     @classmethod
@@ -917,7 +917,7 @@ class ByeTransaction(Transaction):
         [RFC 3261 §15.1.2]: https://datatracker.ietf.org/doc/html/rfc3261#section-15.1.2
         """
         tx = cls.from_request(request=request, sip=sip)
-        sip.del_dialog(tx.dialog)
+        sip.drop_dialog(tx.dialog)
         tx.send_response(
             Response.from_request(
                 request,
@@ -937,7 +937,7 @@ class ByeTransaction(Transaction):
             response: The parsed SIP response to our BYE request.
         """
         if response.status_code >= 200:
-            self.sip.del_transaction(self)
+            self.sip.drop_transaction(self)
             self.complete()
             logger.debug(
                 "BYE acknowledged: %s %s", response.status_code, response.phrase
