@@ -80,10 +80,10 @@ async def connect_rtp(
         A ``(transport, protocol)`` tuple for the new RTP endpoint.
     """
     loop = asyncio.get_running_loop()
-    rtp_bind = "::" if isinstance(proxy_addr[0], ipaddress.IPv6Address) else "0.0.0.0"  # noqa: S104
+    rtp_bind_address = "::" if isinstance(proxy_addr[0], ipaddress.IPv6Address) else "0.0.0.0"  # noqa: S104
     return await loop.create_datagram_endpoint(
         lambda: RealtimeTransportProtocol(stun_server_address=stun_server),
-        local_addr=(rtp_bind, 0),
+        local_addr=(rtp_bind_address, 0),
     )
 
 

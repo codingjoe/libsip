@@ -46,6 +46,12 @@ the full connection lifecycle internally.
 
 ::: voip.mcp.connect_sip
 
+## Environment variable helpers
+
+::: voip.mcp.read_aor
+
+::: voip.mcp.read_stun_server
+
 ## Session classes
 
 ::: voip.mcp.HangupDialog
