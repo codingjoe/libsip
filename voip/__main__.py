@@ -117,10 +117,16 @@ def voip(ctx, verbose: int = 0):
     default="stdio",
     show_default=True,
 )
-def mcp(aor: SipURI, stun_server: NetworkAddress, no_verify_tls: bool, transport: str):
-    from .mcp import mcp  # noqa: PLC0415
+def mcp(aor: str, stun_server: NetworkAddress, no_verify_tls: bool, transport: str):
+    import os  # noqa: PLC0415
 
-    asyncio.run(mcp.run_async(transport=transport))
+    from .mcp import mcp as voip_mcp  # noqa: PLC0415
+
+    os.environ.setdefault("SIP_AOR", aor)
+    os.environ.setdefault("STUN_SERVER", str(stun_server))
+    if no_verify_tls:
+        os.environ.setdefault("SIP_NO_VERIFY_TLS", "1")
+    asyncio.run(voip_mcp.run_async(transport=transport))
 
 
 @voip.group()
