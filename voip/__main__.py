@@ -94,7 +94,12 @@ def voip(ctx, verbose: int = 0):
 
 
 @voip.command()
-@click.argument("aor", metavar="AOR", envvar="SIP_AOR")
+@click.argument(
+    "aor",
+    metavar="AOR",
+    envvar="SIP_AOR",
+    callback=lambda ctx, param, value: SipURI.parse(value),
+)
 @click.option(
     "--stun-server",
     envvar="STUN_SERVER",
@@ -117,20 +122,27 @@ def voip(ctx, verbose: int = 0):
     default="stdio",
     show_default=True,
 )
-def mcp(aor: str, stun_server: NetworkAddress, no_verify_tls: bool, transport: str):
-    import os  # noqa: PLC0415
+def mcp(aor: SipURI, stun_server: NetworkAddress, no_verify_tls: bool, transport: str):
+    from .mcp import run
 
-    from .mcp import mcp as voip_mcp  # noqa: PLC0415
-
-    os.environ.setdefault("SIP_AOR", aor)
-    os.environ.setdefault("STUN_SERVER", str(stun_server))
-    if no_verify_tls:
-        os.environ.setdefault("SIP_NO_VERIFY_TLS", "1")
-    asyncio.run(voip_mcp.run_async(transport=transport))
+    asyncio.run(
+        run(
+            lambda: None,
+            aor,
+            stun_server=stun_server,
+            no_verify_tls=no_verify_tls,
+            transport=transport,
+        )
+    )
 
 
 @voip.group()
-@click.argument("aor", metavar="AOR", envvar="SIP_AOR")
+@click.argument(
+    "aor",
+    metavar="AOR",
+    envvar="SIP_AOR",
+    callback=lambda ctx, param, value: SipURI.parse(value),
+)
 @click.option(
     "--stun-server",
     envvar="STUN_SERVER",
@@ -151,14 +163,9 @@ def mcp(aor: str, stun_server: NetworkAddress, no_verify_tls: bool, transport: s
 def sip(ctx, aor, stun_server, no_verify_tls):
     """Session Initiation Protocol (SIP)."""
     ctx.ensure_object(dict)
-    try:
-        parsed_aor = SipURI.parse(aor)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc), param_hint="AOR") from exc
-
     ctx.obj.update(
-        aor=parsed_aor,
-        proxy_addr=parsed_aor.maddr,
+        aor=aor,
+        proxy_addr=aor.maddr,
         stun_server=stun_server,
         no_verify_tls=no_verify_tls,
     )

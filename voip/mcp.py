@@ -8,43 +8,25 @@ Requires the ``mcp`` extra: ``pip install voip[mcp]``.
 """
 
 import asyncio
-import collections.abc
 import dataclasses
-import ipaddress
-import os
-import ssl
+import threading
 import typing
 
 from fastmcp import Context, FastMCP
-from fastmcp.exceptions import ToolError
 from mcp.types import SamplingMessage, TextContent
 
 import voip
-from voip.ai import SayCall, TranscribeCall, TTSMixin
-from voip.rtp import RealtimeTransportProtocol
-from voip.sip import dialog
+from voip import ai
+from voip.ai import SayCall
+from voip.sip import Dialog
 from voip.sip.protocol import SessionInitiationProtocol
 from voip.sip.types import SipURI, parse_uri
 from voip.types import NetworkAddress
 
 __all__ = [
     "mcp",
-    "run",
-    "HangupDialog",
     "MCPAgentCall",
-    "DEFAULT_STUN_SERVER",
-    "DEFAULT_SYSTEM_PROMPT",
 ]
-
-#: Default STUN server used when *rtp_stun_server* is not provided to [`run`][voip.mcp.run].
-DEFAULT_STUN_SERVER: typing.Final[str] = "stun.cloudflare.com:3478"
-
-#: Default system prompt for [`MCPAgentCall`][voip.mcp.MCPAgentCall].
-DEFAULT_SYSTEM_PROMPT: typing.Final[str] = (
-    "You are a person on a phone call."
-    " Keep your answers very brief and conversational."
-    " YOU MUST NEVER USE NON-VERBAL CHARACTERS IN YOUR RESPONSES!"
-)
 
 mcp = FastMCP(
     "VoIP",
@@ -53,92 +35,11 @@ mcp = FastMCP(
     website_url="https://codingjoe.dev/VoIP/",
 )
 
-
-class HangupDialog(dialog.Dialog):
-    """Dialog that closes the SIP transport when the remote party hangs up.
-
-    When used as *dialog_class* in [`run`][voip.mcp.run], the SIP transport is
-    closed after a remote BYE, which unblocks `run` and ends the session.
-    """
-
-    def hangup_received(self) -> None:
-        """Close the SIP transport on receiving a remote BYE."""
-        if self.sip is not None:
-            self.sip.close()
-
-
-async def run(
-    fn: collections.abc.Callable[[SessionInitiationProtocol], None],
-    aor: SipURI,
-    dialog_class: type[dialog.Dialog] = HangupDialog,
-    *,
-    no_verify_tls: bool = False,
-    rtp: NetworkAddress | None = None,
-    rtp_stun_server: NetworkAddress | None = None,
-) -> None:
-    """Run a SIP session and call *fn* once registered.
-
-    This is a start-and-block function, similar to [`mcp.run`][fastmcp.FastMCP.run]:
-    it sets up RTP (unless an external address is provided), establishes the SIP/TLS
-    connection derived from *aor*, calls *fn* with the registered SIP session, and
-    suspends until the transport is closed.
-
-    The transport protocol (TLS vs plain TCP) and proxy address are read from *aor*
-    directly — no extra arguments are needed.
-
-    Args:
-        fn: Called when the SIP session is registered. Receives the
-            [`SessionInitiationProtocol`][voip.sip.protocol.SessionInitiationProtocol]
-            instance. May use [`asyncio.create_task`][] for async work.
-        aor: SIP Address of Record, e.g. ``sip:alice@carrier.example``. The host,
-            port, and ``transport`` parameter are used to connect to the SIP proxy.
-        dialog_class: [`Dialog`][voip.sip.Dialog] subclass used for inbound calls.
-            Defaults to [`HangupDialog`][voip.mcp.HangupDialog], which closes the SIP
-            transport on remote BYE.
-        no_verify_tls: Disable TLS certificate verification. Insecure; for testing
-            only. Defaults to ``False``.
-        rtp: External RTP server address (e.g. for ffmpeg). When ``None`` (default),
-            a [`RealtimeTransportProtocol`][voip.rtp.RealtimeTransportProtocol]
-            endpoint is created automatically.
-        rtp_stun_server: STUN server for RTP NAT traversal. Defaults to
-            ``stun.cloudflare.com:3478``. Ignored when *rtp* is supplied.
-    """
-    loop = asyncio.get_running_loop()
-
-    if rtp is None:
-        stun_server = rtp_stun_server or NetworkAddress.parse(DEFAULT_STUN_SERVER)
-        rtp_bind_address = "::" if isinstance(aor.maddr[0], ipaddress.IPv6Address) else "0.0.0.0"  # noqa: S104
-        _, rtp_protocol = await loop.create_datagram_endpoint(
-            lambda: RealtimeTransportProtocol(stun_server_address=stun_server),
-            local_addr=(rtp_bind_address, 0),
-        )
-    else:
-        rtp_protocol = RealtimeTransportProtocol()
-        rtp_protocol.public_address = rtp
-
-    ssl_context: ssl.SSLContext | None = None
-    if aor.transport == "TLS":
-        ssl_context = ssl.create_default_context()
-        if no_verify_tls:
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-
-    @dataclasses.dataclass(kw_only=True, slots=True)
-    class InlineProtocol(SessionInitiationProtocol):
-        def on_registered(self) -> None:
-            fn(self)
-
-    _, protocol = await loop.create_connection(
-        lambda: InlineProtocol(aor=aor, rtp=rtp_protocol, dialog_class=dialog_class),
-        host=str(aor.maddr[0]),
-        port=aor.maddr[1],
-        ssl=ssl_context,
-    )
-    await protocol.disconnected_event.wait()
+connection_pool = threading.local()
 
 
 @dataclasses.dataclass(kw_only=True, slots=True)
-class MCPAgentCall(TTSMixin, TranscribeCall):
+class MCPAgentCall(ai.AgentCall):
     """Agent call that generates voice responses via MCP sampling.
 
     Transcribes the remote party's speech with
@@ -154,20 +55,6 @@ class MCPAgentCall(TTSMixin, TranscribeCall):
     """
 
     ctx: Context
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    initial_prompt: str = ""
-
-    _messages: list[dict[str, str]] = dataclasses.field(
-        init=False, repr=False, default_factory=list
-    )
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        if self.initial_prompt:
-            self._messages.append(
-                {"role": "assistant", "content": self.initial_prompt}
-            )
-            asyncio.create_task(self.send_speech(self.initial_prompt))
 
     @property
     def transcript(self) -> str:
@@ -195,9 +82,7 @@ class MCPAgentCall(TTSMixin, TranscribeCall):
         """Sample the MCP client LLM and speak the reply."""
         sampling_messages = [
             SamplingMessage(
-                role=typing.cast(
-                    typing.Literal["user", "assistant"], msg["role"]
-                ),
+                role=typing.cast(typing.Literal["user", "assistant"], msg["role"]),
                 content=TextContent(type="text", text=msg["content"]),
             )
             for msg in self._messages
@@ -224,28 +109,17 @@ async def say(ctx: Context, target: str, prompt: str = "") -> None:
             or ``"sip:alice@example.com"``.
         prompt: Text to speak during the call.
     """
-    aor_str = os.environ.get("SIP_AOR")
-    if not aor_str:
-        raise ToolError("SIP_AOR environment variable is not set.")
-    aor = SipURI.parse(aor_str)
-    no_verify_tls = os.environ.get("SIP_NO_VERIFY_TLS", "").lower() in ("1", "true")
-    stun_str = os.environ.get("STUN_SERVER")
-    stun_server = NetworkAddress.parse(stun_str) if stun_str else None
-    target_uri = parse_uri(target, aor)
+    target_uri: SipURI = SipURI.parse(target)
 
-    def on_registered(sip: SessionInitiationProtocol) -> None:
-        d = HangupDialog(sip=sip)
-        asyncio.create_task(d.dial(target_uri, session_class=SayCall, text=prompt))
-
-    await run(on_registered, aor, no_verify_tls=no_verify_tls, rtp_stun_server=stun_server)
+    dialog = Dialog(sip=connection_pool.sip)
+    await dialog.dial(target_uri, session_class=SayCall, text=prompt)
 
 
 @mcp.tool
 async def call(
-    ctx: Context,
     target: str,
     initial_prompt: str = "",
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    system_prompt: str = None,
 ) -> str:
     """Call a phone number, hold a conversation, and return the transcript.
 
@@ -255,7 +129,6 @@ async def call(
     party hangs up.
 
     Args:
-        ctx: FastMCP context (injected automatically by the framework).
         target: Phone number or SIP URI to call, e.g. ``"tel:+1234567890"``
             or ``"sip:alice@example.com"``.
         initial_prompt: Opening message spoken when the call connects.
@@ -264,36 +137,31 @@ async def call(
     Returns:
         The full conversation transcript with ``Caller:`` / ``Agent:`` prefixes.
     """
-    aor_str = os.environ.get("SIP_AOR")
-    if not aor_str:
-        raise ToolError("SIP_AOR environment variable is not set.")
-    aor = SipURI.parse(aor_str)
-    no_verify_tls = os.environ.get("SIP_NO_VERIFY_TLS", "").lower() in ("1", "true")
-    stun_str = os.environ.get("STUN_SERVER")
-    stun_server = NetworkAddress.parse(stun_str) if stun_str else None
-    target_uri = parse_uri(target, aor)
-    sessions: list[MCPAgentCall] = []
+    target_uri = parse_uri(target, connection_pool.sip.aor)
+    dialog = Dialog(sip=connection_pool.sip)
+    await dialog.dial(target_uri, session_class=MCPAgentCall)
+    return dialog.session.transcript
 
-    @dataclasses.dataclass(kw_only=True, slots=True)
-    class CallSession(MCPAgentCall):
-        def __post_init__(self) -> None:
-            super().__post_init__()
-            sessions.append(self)
 
-    def on_registered(sip: SessionInitiationProtocol) -> None:
-        d = HangupDialog(sip=sip)
-        asyncio.create_task(
-            d.dial(
-                target_uri,
-                session_class=CallSession,
-                ctx=ctx,
-                system_prompt=system_prompt,
-                initial_prompt=initial_prompt,
-            )
+async def run(
+    fn: typing.Callable[[], None],
+    aor: SipURI,
+    *,
+    no_verify_tls: bool = False,
+    stun_server: NetworkAddress | None = None,
+    transport=None,
+) -> None:
+    """Run the MCP agent."""
+    connection_pool.sip: SessionInitiationProtocol = (
+        await SessionInitiationProtocol.run(
+            fn,
+            aor,
+            Dialog,
+            no_verify_tls=no_verify_tls,
+            stun_server=stun_server,
         )
-
-    await run(on_registered, aor, no_verify_tls=no_verify_tls, rtp_stun_server=stun_server)
-    return sessions[0].transcript if sessions else ""
+    )
+    await mcp.run_async(transport=transport)
 
 
 if __name__ == "__main__":  # pragma: no cover
