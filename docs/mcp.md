@@ -1,10 +1,8 @@
 # MCP Server
 
-The `voip` package ships a ready-made [Model Context Protocol (MCP)][MCP] server that
+The `voip` package ships a ready-made [Model Context Protocol (MCP)][mcp] server that
 exposes `say` and `call` tools so that any MCP client (e.g. Claude Code) can make phone
 calls on your behalf.
-
-[MCP]: https://modelcontextprotocol.io/
 
 ## Claude Code setup
 
@@ -15,7 +13,9 @@ Add the server to your MCP config (see [Claude Code MCP docs][cc-mcp]):
   "mcpServers": {
     "voip": {
       "command": "voip",
-      "args": ["mcp"],
+      "args": [
+        "mcp"
+      ],
       "env": {
         "SIP_AOR": "sip:youruser@carrier.example"
       }
@@ -24,10 +24,8 @@ Add the server to your MCP config (see [Claude Code MCP docs][cc-mcp]):
 }
 ```
 
-Set `SIP_AOR` to your SIP address-of-record.  The transport (TLS vs TCP) and proxy
+Set `SIP_AOR` to your SIP address-of-record. The transport (TLS vs TCP) and proxy
 address are derived from the URI automatically.
-
-[cc-mcp]: https://docs.anthropic.com/en/docs/claude-code/mcp
 
 ## Tools
 
@@ -42,3 +40,6 @@ address are derived from the URI automatically.
 ::: voip.mcp.HangupDialog
 
 ::: voip.mcp.MCPAgentCall
+
+[cc-mcp]: https://docs.anthropic.com/en/docs/claude-code/mcp
+[mcp]: https://modelcontextprotocol.io/
