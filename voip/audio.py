@@ -18,7 +18,6 @@ from collections.abc import Iterator
 from typing import ClassVar
 
 import numpy as np
-import pytest
 
 import voip.codecs as codecs
 from voip.codecs import RTPCodec
@@ -277,49 +276,6 @@ class AudioCall(Session):
             audio: Float32 mono PCM array at `RESAMPLING_RATE_HZ` Hz.
             rms: Root Mean Square of the decoded PCM, as a proxy for signal strength.
         """
-
-
-@pytest.mark.asyncio
-async def test_send_audio_with_empty_packet_iterator_does_not_schedule_packets() -> (
-    None
-):
-    empty_audio = np.array([], dtype=np.float32)
-
-    class EmptyPacketCodec:
-        def __init__(self) -> None:
-            self.payload_type = 0
-            self.timestamp_increment = 160
-            self.sample_rate_hz = 8000
-
-        def packetize(self, audio: np.ndarray) -> Iterator[bytes]:
-            return iter(())
-
-    class SingleCallRtp:
-        def __init__(self, call: AudioCall, remote_addr: tuple[str, int]) -> None:
-            self.calls = {remote_addr: call}
-
-    call = object.__new__(AudioCall)
-    remote_addr = ("127.0.0.1", 4000)
-    codec = EmptyPacketCodec()
-    send_calls: list[tuple[RTPPacket, tuple[str, int]]] = []
-
-    def send_packet(packet: RTPPacket, addr: tuple[str, int]) -> None:
-        send_calls.append((packet, addr))
-
-    call.codec = codec
-    call.rtp_sequence_number = 0
-    call.rtp_timestamp = 0
-    call.rtp_ssrc = 1
-    call.rpt_packet_duration = datetime.timedelta(milliseconds=20)
-    call.outbound_handle = None
-    call.rtp = SingleCallRtp(call, remote_addr)
-    call.send_audio_lock = asyncio.Lock()
-    call.send_packet = send_packet
-
-    await AudioCall.send_audio(call, empty_audio)
-
-    assert call.outbound_handle is None
-    assert send_calls == []
 
 
 @dataclasses.dataclass(kw_only=True)
