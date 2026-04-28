@@ -110,10 +110,9 @@ async def call(
 ) -> str:
     """Call a phone number, hold a conversation, and return the transcript.
 
-    Dials *target*, optionally speaks *initial_prompt*, then drives the
-    conversation via [`MCPAgentCall`][voip.mcp.MCPAgentCall] (which samples
-    the MCP client's language model for each reply).  Returns once the remote
-    party hangs up.
+    Dials `target`, optionally speaks `initial_prompt`, then drives a conversation.
+
+    Returns once the remote party hangs up.
 
     Args:
         target: Phone number or SIP URI to call, e.g. `"tel:+1234567890"`
