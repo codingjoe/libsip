@@ -11,6 +11,7 @@ Add the server to your MCP config (see [Claude Code MCP docs][cc-mcp]):
 {
   "mcpServers": {
     "VoIP": {
+      "type": "stdio",
       "command": "uvx",
       "args": [
         "-y",
