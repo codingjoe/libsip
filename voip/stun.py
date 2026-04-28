@@ -137,9 +137,9 @@ class STUNProtocol(asyncio.DatagramProtocol):
     ) -> None:
         """Called when the socket is ready and the reachable address is known.
 
-        When STUN is configured, *addr* is the **public** ``(ip, port)``
+        When STUN is configured, *addr* is the **public** `(ip, port)`
         discovered from the STUN Binding Response and this method is called
-        by `datagram_received`.  When ``stun_server_address=None``,
+        by `datagram_received`.  When `stun_server_address=None`,
         *addr* is the local socket address and this method is called
         synchronously from `connection_made`.
 
@@ -148,7 +148,7 @@ class STUNProtocol(asyncio.DatagramProtocol):
 
         Args:
             transport: The UDP transport bound to this protocol.
-            addr: Reachable ``(host, port)`` — public when STUN is used,
+            addr: Reachable `(host, port)` — public when STUN is used,
                 local otherwise.
         """  # noqa: D401
 
@@ -157,10 +157,10 @@ class STUNProtocol(asyncio.DatagramProtocol):
 
         Args:
             data: Raw bytes to transmit.
-            addr: Destination ``(host, port)``.
+            addr: Destination `(host, port)`.
         """
         if self.transport is not None:
-            self.transport.sendto(data, addr)
+            self.transport.sendto(data, (str(addr[0]), addr[1]))
 
     def close(self) -> None:
         """Close the underlying UDP transport."""

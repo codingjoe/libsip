@@ -754,7 +754,7 @@ class InviteTransaction(Transaction):
             )
 
         if self.pending_call_class is not None:
-            self.session = self.pending_call_class(
+            self.dialog.session = self.pending_call_class(
                 rtp=self.sip.rtp,
                 caller=CallerID(str(self.sip.aor)),
                 media=negotiated_media,
@@ -762,7 +762,6 @@ class InviteTransaction(Transaction):
                 dialog=self.dialog,
                 **self.pending_call_kwargs,
             )
-            self.dialog.session = self.session
             if remote_audio is not None and remote_audio.port != 0:
                 media_connection = remote_audio.connection
                 session_connection = response.body.connection if response.body else None
@@ -781,7 +780,7 @@ class InviteTransaction(Transaction):
                 )
             else:
                 remote_rtp_address = None
-            self.sip.rtp.register_call(remote_rtp_address, self.session)
+            self.sip.rtp.register_call(remote_rtp_address, self.dialog.session)
             if remote_rtp_address is not None:
                 self.sip.rtp.send(b"\x00", remote_rtp_address)
 
