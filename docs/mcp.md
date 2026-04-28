@@ -10,13 +10,15 @@ Add the server to your MCP config (see [Claude Code MCP docs][cc-mcp]):
 ```json
 {
   "mcpServers": {
-    "voip": {
-      "command": "voip",
+    "VoIP": {
+      "command": "uvx",
       "args": [
+        "-y",
+        "voip[mcp]",
         "mcp"
       ],
       "env": {
-        "SIP_AOR": "sip:youruser@carrier.example"
+        "SIP_AOR": "${input:voip-sip-aor}"
       }
     }
   }
