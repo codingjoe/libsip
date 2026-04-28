@@ -1,8 +1,7 @@
 # MCP Server
 
-The `voip` package ships a ready-made [Model Context Protocol (MCP)][mcp] server that
-exposes `say` and `call` tools so that any MCP client (e.g. Claude Code) can make phone
-calls on your behalf.
+The `voip` package ships a ready-made [Model Context Protocol (MCP)][mcp] server
+that exposes tools to make phone calls on your behalf to any MCP client.
 
 ## Claude Code setup
 
@@ -32,12 +31,6 @@ address are derived from the URI automatically.
 ::: voip.mcp.say
 
 ::: voip.mcp.call
-
-## Session lifecycle
-
-::: voip.mcp.run
-
-::: voip.mcp.MCPAgentCall
 
 [cc-mcp]: https://docs.anthropic.com/en/docs/claude-code/mcp
 [mcp]: https://modelcontextprotocol.io/

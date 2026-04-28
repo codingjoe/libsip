@@ -6,11 +6,11 @@ watch:
 nav:
   - Usage:
       - Quickstart: index.md
+      - MCP Server: mcp.md
       - Cookbook: cookbook.md
       - Sessions: sessions.md
       - SIP: sip.md
       - Codecs: codecs.md
-      - MCP Server: mcp.md
   - Features:
       - Feature Roadmap: feature_roadmap.md
       - Contributing: contributing.md
