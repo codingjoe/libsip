@@ -31,6 +31,14 @@ except ImportError as e:
 logger = logging.getLogger("voip")
 
 
+def _parse_sip_uri(ctx, param, value) -> SipURI:
+    """Parse a SIP URI."""
+    try:
+        return SipURI.parse(value)
+    except ValueError as e:
+        raise click.BadParameter(str(e)) from e
+
+
 @dataclasses.dataclass(kw_only=True, slots=True)
 class ConsoleMessageProtocol(SessionInitiationProtocol):
     """Pretty print SIP messages to stdout using pygments."""
@@ -98,7 +106,7 @@ def voip(ctx, verbose: int = 0):
     "aor",
     metavar="AOR",
     envvar="SIP_AOR",
-    callback=lambda ctx, param, value: SipURI.parse(value),
+    callback=_parse_sip_uri,
 )
 @click.option(
     "--stun-server",
@@ -141,7 +149,7 @@ def mcp(aor: SipURI, stun_server: NetworkAddress, no_verify_tls: bool, transport
     "aor",
     metavar="AOR",
     envvar="SIP_AOR",
-    callback=lambda ctx, param, value: SipURI.parse(value),
+    callback=_parse_sip_uri,
 )
 @click.option(
     "--stun-server",
