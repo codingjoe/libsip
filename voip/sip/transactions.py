@@ -754,7 +754,7 @@ class InviteTransaction(Transaction):
             )
 
         if self.pending_call_class is not None:
-            call_handler = self.pending_call_class(
+            self.dialog.session = self.pending_call_class(
                 rtp=self.sip.rtp,
                 caller=CallerID(str(self.sip.aor)),
                 media=negotiated_media,
@@ -780,7 +780,7 @@ class InviteTransaction(Transaction):
                 )
             else:
                 remote_rtp_address = None
-            self.sip.rtp.register_call(remote_rtp_address, call_handler)
+            self.sip.rtp.register_call(remote_rtp_address, self.dialog.session)
             if remote_rtp_address is not None:
                 self.sip.rtp.send(b"\x00", remote_rtp_address)
 
