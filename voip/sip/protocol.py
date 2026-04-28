@@ -146,13 +146,15 @@ class SessionInitiationProtocol(asyncio.Protocol):
         from *aor* directly — no extra arguments are needed.
 
         Args:
-            fn: Called when the SIP session is registered. Receives no
-                arguments. May use [`asyncio.create_task`][] for async work.
+            fn: Called when the SIP session is registered, before
+                `run` returns. Receives no arguments. May use
+                [`asyncio.create_task`][] for async work.
             aor: SIP Address of Record, e.g. ``sip:alice@carrier.example``.
                 The host, port, and ``transport`` parameter are used to connect
                 to the SIP proxy.
             dialog_class: [`Dialog`][voip.sip.Dialog] subclass used for
-                inbound calls.
+                inbound calls. Defaults to the base
+                [`Dialog`][voip.sip.Dialog], which rejects all calls.
             no_verify_tls: Disable TLS certificate verification. Insecure; for
                 testing only. Defaults to ``False``.
             stun_server: STUN server for RTP NAT traversal. Defaults to
