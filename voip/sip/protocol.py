@@ -115,7 +115,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
     transport: asyncio.Transport | None = dataclasses.field(init=False, default=None)
     is_secure: bool = dataclasses.field(init=False, default=False)
     recv_buffer: bytearray = dataclasses.field(init=False, default_factory=bytearray)
-    ready_callback: typing.Callable[[], None] = None
+    ready_callback: typing.Callable[[], None] | None = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self):
         self.public_address = self.public_address or self.rtp.public_address
@@ -134,16 +136,15 @@ class SessionInitiationProtocol(asyncio.Protocol):
 
         This is a start-and-block function, similar to [`mcp.run`][fastmcp.FastMCP.run]:
         it sets up RTP (unless an external address is provided), establishes the SIP/TLS
-        connection derived from *aor*, calls *fn* with the registered SIP session, and
-        suspends until the transport is closed.
+        connection derived from *aor*, calls *fn* after the SIP session is registered,
+        and suspends until the transport is closed.
 
         The transport protocol (TLS vs plain TCP) and proxy address are read from *aor*
         directly — no extra arguments are needed.
 
         Args:
-            fn: Called when the SIP session is registered. Receives the
-                [`SessionInitiationProtocol`][voip.sip.protocol.SessionInitiationProtocol]
-                instance. May use [`asyncio.create_task`][] for async work.
+            fn: Called when the SIP session is registered. Receives no arguments.
+                May use [`asyncio.create_task`][] for async work.
             aor: SIP Address of Record, e.g. ``sip:alice@carrier.example``. The host,
                 port, and ``transport`` parameter are used to connect to the SIP proxy.
             dialog_class: [`Dialog`][voip.sip.Dialog] subclass used for inbound calls.
