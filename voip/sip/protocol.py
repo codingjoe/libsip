@@ -112,6 +112,9 @@ class SessionInitiationProtocol(asyncio.Protocol):
     disconnected_event: asyncio.Event = dataclasses.field(
         init=False, default_factory=asyncio.Event
     )
+    registered_event: asyncio.Event = dataclasses.field(
+        init=False, default_factory=asyncio.Event
+    )
     transport: asyncio.Transport | None = dataclasses.field(init=False, default=None)
     is_secure: bool = dataclasses.field(init=False, default=False)
     recv_buffer: bytearray = dataclasses.field(init=False, default_factory=bytearray)
@@ -134,26 +137,30 @@ class SessionInitiationProtocol(asyncio.Protocol):
     ) -> SessionInitiationProtocol:
         """Run a SIP session and call *fn* once registered.
 
-        This is a start-and-block function, similar to [`mcp.run`][fastmcp.FastMCP.run]:
-        it sets up RTP (unless an external address is provided), establishes the SIP/TLS
-        connection derived from *aor*, calls *fn* after the SIP session is registered,
-        and suspends until the transport is closed.
+        Establishes RTP and SIP/TLS connections derived from *aor*, then
+        **suspends until SIP registration is confirmed** before returning the
+        ready protocol.  After this call returns, the MCP server (or any other
+        caller) may safely place outbound calls.
 
-        The transport protocol (TLS vs plain TCP) and proxy address are read from *aor*
-        directly — no extra arguments are needed.
+        The transport protocol (TLS vs plain TCP) and proxy address are read
+        from *aor* directly — no extra arguments are needed.
 
         Args:
-            fn: Called when the SIP session is registered. Receives no arguments.
-                May use [`asyncio.create_task`][] for async work.
-            aor: SIP Address of Record, e.g. ``sip:alice@carrier.example``. The host,
-                port, and ``transport`` parameter are used to connect to the SIP proxy.
-            dialog_class: [`Dialog`][voip.sip.Dialog] subclass used for inbound calls.
-                Defaults to [`HangupDialog`][voip.mcp.HangupDialog], which closes the SIP
-                transport on remote BYE.
-            no_verify_tls: Disable TLS certificate verification. Insecure; for testing
-                only. Defaults to ``False``.
+            fn: Called when the SIP session is registered. Receives no
+                arguments. May use [`asyncio.create_task`][] for async work.
+            aor: SIP Address of Record, e.g. ``sip:alice@carrier.example``.
+                The host, port, and ``transport`` parameter are used to connect
+                to the SIP proxy.
+            dialog_class: [`Dialog`][voip.sip.Dialog] subclass used for
+                inbound calls.
+            no_verify_tls: Disable TLS certificate verification. Insecure; for
+                testing only. Defaults to ``False``.
             stun_server: STUN server for RTP NAT traversal. Defaults to
-                ``stun.cloudflare.com:3478``. Ignored when *rtp* is supplied.
+                ``stun.cloudflare.com:3478``.
+
+        Returns:
+            The registered [`SessionInitiationProtocol`][voip.sip.protocol.SessionInitiationProtocol]
+            instance, ready to place calls.
         """
         loop = asyncio.get_running_loop()
 
@@ -180,6 +187,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
             port=aor.maddr[1],
             ssl=ssl_context,
         )
+        await protocol.registered_event.wait()
         return protocol
 
     def register_dialog(self, dialog: Dialog) -> None:
@@ -425,6 +433,7 @@ class SessionInitiationProtocol(asyncio.Protocol):
         Override in subclasses to initiate outbound calls or start other
         post-registration activity. The base implementation is a no-op.
         """
+        self.registered_event.set()
         if self.ready_callback is not None:
             self.ready_callback()
 

@@ -456,3 +456,34 @@ class TestRun:
 
         _, kwargs = mock_sip_run.call_args
         assert kwargs["stun_server"] is stun
+
+
+# ---------------------------------------------------------------------------
+# SessionInitiationProtocol.registered_event
+# ---------------------------------------------------------------------------
+
+
+class TestRegisteredEvent:
+    def test_registered_event__set_by_on_registered(self) -> None:
+        """on_registered() sets registered_event so run() can unblock."""
+        protocol = SessionInitiationProtocol.__new__(SessionInitiationProtocol)
+        protocol.registered_event = asyncio.Event()
+        protocol.ready_callback = None
+
+        assert not protocol.registered_event.is_set()
+        protocol.on_registered()
+        assert protocol.registered_event.is_set()
+
+    def test_registered_event__ready_callback_called_after_event(self) -> None:
+        """ready_callback is invoked after registered_event is set."""
+        call_order: list[str] = []
+        protocol = SessionInitiationProtocol.__new__(SessionInitiationProtocol)
+        protocol.registered_event = asyncio.Event()
+
+        def _cb() -> None:
+            call_order.append("cb" if protocol.registered_event.is_set() else "early")
+
+        protocol.ready_callback = _cb
+        protocol.on_registered()
+
+        assert call_order == ["cb"]
