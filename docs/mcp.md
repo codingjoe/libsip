@@ -19,15 +19,14 @@ Add the server to your MCP config (see [Claude Code MCP docs][cc-mcp]):
         "mcp"
       ],
       "env": {
-        "SIP_AOR": "${input:voip-sip-aor}"
+        "SIP_AOR": "sip:****:****@example.com:5060?transport=tcp"
       }
     }
   }
 }
 ```
 
-Set `SIP_AOR` to your SIP address-of-record. The transport (TLS vs TCP) and proxy
-address are derived from the URI automatically.
+Set `SIP_AOR` to your SIP address-of-record.
 
 ## Tools
 
