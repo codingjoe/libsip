@@ -161,10 +161,13 @@ class TestRespond:
     async def test_respond__speaks_reply(self) -> None:
         """respond() speaks the LLM reply and appends it to _messages."""
         ctx = make_mock_context("Nice to meet you.")
-        agent = make_agent_call(ctx=ctx, messages=[
-            {"role": "system", "content": "Be helpful."},
-            {"role": "user", "content": "Hi"},
-        ])
+        agent = make_agent_call(
+            ctx=ctx,
+            messages=[
+                {"role": "system", "content": "Be helpful."},
+                {"role": "user", "content": "Hi"},
+            ],
+        )
         with patch.object(agent, "send_speech", new_callable=AsyncMock) as mock_send:
             await agent.respond()
 
@@ -174,10 +177,13 @@ class TestRespond:
     async def test_respond__filters_system_from_sampling(self) -> None:
         """System messages are not forwarded to ctx.sample."""
         ctx = make_mock_context("OK")
-        agent = make_agent_call(ctx=ctx, messages=[
-            {"role": "system", "content": "secret"},
-            {"role": "user", "content": "hello"},
-        ])
+        agent = make_agent_call(
+            ctx=ctx,
+            messages=[
+                {"role": "system", "content": "secret"},
+                {"role": "user", "content": "hello"},
+            ],
+        )
         with patch.object(agent, "send_speech", new_callable=AsyncMock):
             await agent.respond()
 
@@ -199,9 +205,12 @@ class TestRespond:
     async def test_respond__empty_reply_is_silent(self) -> None:
         """An empty or whitespace-only reply does not call send_speech."""
         ctx = make_mock_context("   ")
-        agent = make_agent_call(ctx=ctx, messages=[
-            {"role": "user", "content": "hello"},
-        ])
+        agent = make_agent_call(
+            ctx=ctx,
+            messages=[
+                {"role": "user", "content": "hello"},
+            ],
+        )
         with patch.object(agent, "send_speech", new_callable=AsyncMock) as mock_send:
             await agent.respond()
 
@@ -385,7 +394,10 @@ class TestRun:
 
         fn = MagicMock()
         with patch.object(
-            SessionInitiationProtocol, "run", new_callable=AsyncMock, return_value=mock_protocol
+            SessionInitiationProtocol,
+            "run",
+            new_callable=AsyncMock,
+            return_value=mock_protocol,
         ):
             with patch.object(voip.mcp.mcp, "run_async", new_callable=AsyncMock):
                 await run(fn, aor)
@@ -398,9 +410,14 @@ class TestRun:
         mock_protocol = MagicMock(spec=SessionInitiationProtocol)
 
         with patch.object(
-            SessionInitiationProtocol, "run", new_callable=AsyncMock, return_value=mock_protocol
+            SessionInitiationProtocol,
+            "run",
+            new_callable=AsyncMock,
+            return_value=mock_protocol,
         ):
-            with patch.object(voip.mcp.mcp, "run_async", new_callable=AsyncMock) as mock_run:
+            with patch.object(
+                voip.mcp.mcp, "run_async", new_callable=AsyncMock
+            ) as mock_run:
                 await run(lambda: None, aor, transport="stdio")
 
         mock_run.assert_awaited_once_with(transport="stdio")
@@ -411,7 +428,10 @@ class TestRun:
         mock_protocol = MagicMock(spec=SessionInitiationProtocol)
 
         with patch.object(
-            SessionInitiationProtocol, "run", new_callable=AsyncMock, return_value=mock_protocol
+            SessionInitiationProtocol,
+            "run",
+            new_callable=AsyncMock,
+            return_value=mock_protocol,
         ) as mock_sip_run:
             with patch.object(voip.mcp.mcp, "run_async", new_callable=AsyncMock):
                 await run(lambda: None, aor, no_verify_tls=True)
@@ -426,7 +446,10 @@ class TestRun:
         mock_protocol = MagicMock(spec=SessionInitiationProtocol)
 
         with patch.object(
-            SessionInitiationProtocol, "run", new_callable=AsyncMock, return_value=mock_protocol
+            SessionInitiationProtocol,
+            "run",
+            new_callable=AsyncMock,
+            return_value=mock_protocol,
         ) as mock_sip_run:
             with patch.object(voip.mcp.mcp, "run_async", new_callable=AsyncMock):
                 await run(lambda: None, aor, stun_server=stun)
